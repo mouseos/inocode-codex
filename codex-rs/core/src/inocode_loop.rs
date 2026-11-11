@@ -53,7 +53,35 @@ pub(crate) fn record_request(
     if !metrics_enabled() {
         return;
     }
-    let Some(usage) = usage else { return };
+    if let Some(record) = build_request_record(
+        codex_inocode_stats::now_ms(),
+        &thread_id.to_string(),
+        model,
+        provider,
+        account,
+        usage,
+        generation,
+        rate_limits,
+    ) {
+        codex_inocode_stats::record_global(&record);
+    }
+}
+
+/// The statistics record of one completed request. The 5-hour and weekly readings are told apart
+/// by window length, and the snapshot's `limit_id` is kept so that families (`codex`, `claude`)
+/// are never compared with each other.
+#[allow(clippy::too_many_arguments)]
+fn build_request_record(
+    ts_ms: u64,
+    thread_id: &str,
+    model: &str,
+    provider: &str,
+    account: Option<String>,
+    usage: Option<&TokenUsage>,
+    generation: std::time::Duration,
+    rate_limits: Option<&codex_protocol::protocol::RateLimitSnapshot>,
+) -> Option<codex_inocode_stats::RequestRecord> {
+    let usage = usage?;
     let n = |v: i64| u64::try_from(v).unwrap_or(0);
     let input = n(usage.input_tokens);
     let cached = n(usage.cached_input_tokens).min(input);
@@ -76,13 +104,14 @@ pub(crate) fn record_request(
             );
         }
     }
-    codex_inocode_stats::record_global(&codex_inocode_stats::RequestRecord {
-        ts_ms: codex_inocode_stats::now_ms(),
+    Some(codex_inocode_stats::RequestRecord {
+        ts_ms,
         source: "live".into(),
         thread_id: thread_id.to_string(),
         model: model.to_string(),
         provider: provider.to_string(),
         account,
+        limit_id: rate_limits.and_then(|l| l.limit_id.clone()),
         uncached_input: input - cached,
         cached_input: cached,
         output,
@@ -91,7 +120,7 @@ pub(crate) fn record_request(
         tok_per_s: codex_inocode_stats::RequestRecord::speed(output, gen_ms),
         five_hour,
         weekly,
-    });
+    })
 }
 
 pub(crate) fn record_wait_agent_call(thread_id: ThreadId) {
@@ -514,5 +543,90 @@ mod tests {
         let obs = build_observation("apply_patch", "{}", true, "Success");
         assert!(obs.changed_files);
         assert!(!obs.failed());
+    }
+
+    fn snapshot(limit_id: &str) -> codex_protocol::protocol::RateLimitSnapshot {
+        use codex_protocol::protocol::RateLimitWindow;
+        codex_protocol::protocol::RateLimitSnapshot {
+            limit_id: Some(limit_id.into()),
+            limit_name: None,
+            normal_model_slug: None,
+            primary: Some(RateLimitWindow {
+                used_percent: 42.0,
+                window_minutes: Some(300),
+                resets_at: Some(1_794_398_400),
+            }),
+            secondary: Some(RateLimitWindow {
+                used_percent: 18.75,
+                window_minutes: Some(10_080),
+                resets_at: Some(1_794_744_000),
+            }),
+            credits: None,
+            individual_limit: None,
+            spend_control_reached: None,
+            plan_type: None,
+            rate_limit_reached_type: None,
+        }
+    }
+
+    #[test]
+    fn a_claude_response_records_both_windows_under_its_own_family() {
+        let usage = TokenUsage {
+            input_tokens: 1_000,
+            cached_input_tokens: 400,
+            output_tokens: 200,
+            ..Default::default()
+        };
+        let claude = build_request_record(
+            5,
+            "t",
+            "claude-x",
+            "anthropic",
+            Some("main".into()),
+            Some(&usage),
+            std::time::Duration::from_secs(4),
+            Some(&snapshot("claude")),
+        )
+        .expect("record");
+        assert_eq!(claude.limit_id.as_deref(), Some("claude"));
+        assert_eq!(claude.uncached_input, 600);
+        assert_eq!(claude.cached_input, 400);
+        assert_eq!(claude.tok_per_s, Some(50.0));
+        let five = claude.five_hour.expect("5h");
+        assert_eq!((five.used_percent, five.resets_at), (42.0, Some(1_794_398_400)));
+        let week = claude.weekly.expect("7d");
+        assert_eq!((week.used_percent, week.resets_at), (18.75, Some(1_794_744_000)));
+
+        let codex = build_request_record(
+            6,
+            "t",
+            "gpt-x",
+            "openai",
+            None,
+            Some(&usage),
+            std::time::Duration::from_secs(4),
+            Some(&snapshot("codex")),
+        )
+        .expect("record");
+        assert_eq!(codex.limit_id.as_deref(), Some("codex"));
+        assert_ne!(codex.limit_id, claude.limit_id);
+
+        // No usage, no record; no snapshot, no readings.
+        assert!(
+            build_request_record(7, "t", "m", "p", None, None, std::time::Duration::ZERO, None)
+                .is_none()
+        );
+        let bare = build_request_record(
+            8,
+            "t",
+            "m",
+            "p",
+            None,
+            Some(&usage),
+            std::time::Duration::from_secs(1),
+            None,
+        )
+        .expect("record");
+        assert!(bare.five_hour.is_none() && bare.weekly.is_none() && bare.limit_id.is_none());
     }
 }

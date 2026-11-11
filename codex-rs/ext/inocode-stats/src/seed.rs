@@ -135,6 +135,11 @@ fn requests_of_file(path: &Path) -> std::io::Result<Vec<RequestRecord>> {
             model: model.clone(),
             provider: "openai".into(),
             account: None,
+            limit_id: payload
+                .get("rate_limits")
+                .and_then(|l| l.get("limit_id"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
             uncached_input: input - cached,
             cached_input: cached,
             output: u(last, "output_tokens"),

@@ -310,6 +310,7 @@ mod tests {
             model: "gpt-x".into(),
             provider: "openai".into(),
             account: Some("main".into()),
+            limit_id: Some("codex".into()),
             uncached_input: 100_000,
             cached_input: 0,
             output: 10_000,

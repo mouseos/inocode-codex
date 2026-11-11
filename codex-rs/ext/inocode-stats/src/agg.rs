@@ -64,10 +64,14 @@ fn same_reset(a: Option<i64>, b: Option<i64>) -> bool {
 
 /// `records` must be sorted by time.
 fn steps(records: &[RequestRecord], w: Window) -> Vec<Step> {
-    let mut series: BTreeMap<(&str, &str), Vec<usize>> = BTreeMap::new();
+    let mut series: BTreeMap<(&str, &str, &str), Vec<usize>> = BTreeMap::new();
     for (i, r) in records.iter().enumerate() {
         series
-            .entry((r.provider.as_str(), r.account.as_deref().unwrap_or("")))
+            .entry((
+                r.provider.as_str(),
+                r.account.as_deref().unwrap_or(""),
+                r.limit_id.as_deref().unwrap_or(""),
+            ))
             .or_default()
             .push(i);
     }
@@ -555,6 +559,7 @@ mod tests {
             model: model.into(),
             provider: "openai".into(),
             account: Some("a".into()),
+            limit_id: None,
             uncached_input: uncached,
             cached_input: cached,
             output: out,
@@ -633,6 +638,33 @@ mod tests {
         let last = rows.last().unwrap().five_hour.unwrap().used_percent;
         let first = rows[0].five_hour.unwrap().used_percent;
         assert!((total - (last - first)).abs() < 1e-6, "{total}");
+    }
+
+    #[test]
+    fn claude_and_openai_quota_readings_are_never_mixed() {
+        // Alternating requests of two providers with unrelated percentages. Compared with each
+        // other they would produce big jumps and resets; per family each series climbs by 1.
+        let mut rows = Vec::new();
+        for i in 0..10u64 {
+            let mut a = rec(100 + i * 2, "gpt", 1000, 0, 100, 50.0 + i as f64, 1.0);
+            a.limit_id = Some("codex".into());
+            let mut c = rec(101 + i * 2, "claude-x", 1000, 0, 100, 10.0 + i as f64, 1.0);
+            c.provider = "anthropic".into();
+            c.limit_id = Some("claude".into());
+            rows.push(a);
+            rows.push(c);
+        }
+        let out = summarize(&rows, &Query::default(), 1);
+        let used = |m: &str| out.iter().find(|r| r.model == m).unwrap().five_hour_percent;
+        assert!((used("gpt") - 9.0).abs() < 1e-9, "{}", used("gpt"));
+        assert!((used("claude-x") - 9.0).abs() < 1e-9, "{}", used("claude-x"));
+        // Same provider id but another family: still separate.
+        let mut same_provider = rows.clone();
+        for r in &mut same_provider {
+            r.provider = "openai".into();
+        }
+        let out = summarize(&same_provider, &Query::default(), 1);
+        assert!((out.iter().map(|m| m.five_hour_percent).sum::<f64>() - 18.0).abs() < 1e-9);
     }
 
     #[test]

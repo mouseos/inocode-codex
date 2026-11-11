@@ -40,6 +40,10 @@ pub struct RequestRecord {
     /// Account alias (never an e-mail address).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// The rate-limit family the readings belong to (`codex`, `claude`, ...). Readings of
+    /// different families are never compared with each other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit_id: Option<String>,
     pub uncached_input: u64,
     pub cached_input: u64,
     pub output: u64,
