@@ -370,22 +370,18 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
             }
             Ok(Some(InocodeAccountsLoginCancelResponse {}.into()))
         }
-        ClientRequest::InocodeAccountsPolicyRead { .. } => Ok(Some(
+        ClientRequest::InocodeAccountsPolicyRead { params, .. } => Ok(Some(
             InocodeAccountsPolicyReadResponse {
-                policy: to_policy(pool()?.policy()),
+                policy: to_policy(pool_of(group_of(params.provider.as_deref())?)?.policy()),
             }
             .into(),
         )),
         ClientRequest::InocodeAccountsPolicyWrite { params, .. } => {
-            let policy = from_policy(params.policy)?;
-            let mut saved = None;
-            for pool in all_pools() {
-                saved = Some(
-                    pool.set_policy(policy.clone())
-                        .map_err(|err| invalid_params(err.to_string()))?,
-                );
-            }
-            let saved = saved.ok_or_else(|| internal_error("the account pool is not ready yet"))?;
+            // Each provider has its own policy; the other provider's is left alone.
+            let target = pool_of(group_of(params.provider.as_deref())?)?;
+            let saved = target
+                .set_policy(from_policy(params.policy)?)
+                .map_err(|err| invalid_params(err.to_string()))?;
             Ok(Some(
                 InocodeAccountsPolicyWriteResponse {
                     policy: to_policy(saved),
@@ -950,7 +946,7 @@ mod tests {
 
         let policy = handle(ClientRequest::InocodeAccountsPolicyRead {
             request_id: id(5),
-            params: InocodeAccountsPolicyReadParams {},
+            params: InocodeAccountsPolicyReadParams { provider: None },
         })
         .await
         .expect("policy")

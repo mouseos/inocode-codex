@@ -391,7 +391,12 @@ pub struct InocodeAccountsLoginCancelResponse {}
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
-pub struct InocodeAccountsPolicyReadParams {}
+pub struct InocodeAccountsPolicyReadParams {
+    /// `openai` (default) or `claude`: each provider has its own policy.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub provider: Option<String>,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
@@ -405,6 +410,10 @@ pub struct InocodeAccountsPolicyReadResponse {
 #[ts(export_to = "v2/")]
 pub struct InocodeAccountsPolicyWriteParams {
     pub policy: InocodeAccountPolicy,
+    /// `openai` (default) or `claude`.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub provider: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
