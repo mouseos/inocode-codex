@@ -81,6 +81,7 @@ codex-utils-git-discovery = { workspace = true }
 codex-utils-head-tail-buffer = { workspace = true }
 codex-utils-image = { workspace = true }
 codex-utils-home-dir = { workspace = true }
+codex-inocode-evidence = { workspace = true }
 codex-inocode-flags = { workspace = true }
 codex-inocode-ledger = { workspace = true }
 codex-inocode-knowledge = { workspace = true }

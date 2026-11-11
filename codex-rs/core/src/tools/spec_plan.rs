@@ -15,6 +15,9 @@ use crate::tools::handlers::ExecCommandHandler;
 use crate::tools::handlers::ExecCommandHandlerOptions;
 use crate::tools::handlers::GetContextRemainingHandler;
 use crate::tools::handlers::ReadMessageHandler;
+use crate::tools::handlers::RecordEvidenceHandler;
+use crate::tools::handlers::SearchEvidenceHandler;
+use crate::tools::handlers::VerifyEvidenceDocumentHandler;
 use crate::tools::handlers::ListAvailablePluginsToInstallHandler;
 use crate::tools::handlers::ListMcpResourceTemplatesHandler;
 use crate::tools::handlers::ListMcpResourcesHandler;
@@ -1371,6 +1374,14 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
 
     if codex_inocode_flags::load().read_message_enabled {
         registry.add(ReadMessageHandler);
+    }
+
+    // Evidence database tools: how the model records what it found, with its source (Direct, so
+    // code mode sees them as `tools.record_evidence` and the model does not need tool_search).
+    if codex_inocode_flags::load().evidence_enabled {
+        registry.add(RecordEvidenceHandler);
+        registry.add(SearchEvidenceHandler);
+        registry.add(VerifyEvidenceDocumentHandler);
     }
 
     let current_time_reminder_enabled = features.enabled(Feature::CurrentTimeReminder);
