@@ -875,6 +875,28 @@ pub struct InocodeMessage {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub parsed: Option<InocodeParsedMessage>,
+    /// Id of the message as an item of the receiver's history (`#<turn>.@<n>`, readable with
+    /// `inocode/messages/resolve` on `toThread`). Null when it is not in the history yet.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub id: Option<String>,
+    /// The message this one answers (`#<turn>.<item>` or `#<turn>.@<n>`) in the history of
+    /// `replyThread`.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub reply_to: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub reply_thread: Option<String>,
+    /// Threads of the sender and the receiver, when known.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub from_thread: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub to_thread: Option<String>,
+    /// One line for a list: the telegraphic `summary`/`q`/`a`/... value, else the first line.
+    pub summary: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -1629,6 +1651,8 @@ pub enum InocodeMessageRole {
     User,
     Assistant,
     Tool,
+    /// A message from another agent (`#<turn>.@<n>`).
+    Agent,
 }
 
 /// `#<turn>.<item>` is the 1-based position in the turn list and in that turn's items (every
@@ -1671,6 +1695,13 @@ pub struct InocodeMessagesResolveResponse {
     /// The complete text, or its first `maxChars` characters.
     pub text: String,
     pub truncated: bool,
+    /// Sender and receiver (agent paths) when `role` is `agent`.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub from: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub to: Option<String>,
 }
 
 // ------------------------------------------- sessions/slim (huge rollout rescue)

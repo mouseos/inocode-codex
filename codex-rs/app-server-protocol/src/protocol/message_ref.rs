@@ -13,6 +13,8 @@ use serde_json::Value;
 pub enum MessageSelector {
     /// `#<turn>.<item>`, both 1-based.
     Position { turn: usize, item: usize },
+    /// `#<turn>.@<n>`: the n-th agent-to-agent message received in that turn (both 1-based).
+    Mail { turn: usize, n: usize },
     /// `ThreadItem.id`.
     ItemId(String),
 }
@@ -21,12 +23,20 @@ pub enum MessageSelector {
 pub fn parse_message_ref(text: &str) -> MessageSelector {
     let trimmed = text.trim();
     let bare = trimmed.strip_prefix('#').unwrap_or(trimmed).trim();
-    if let Some((t, i)) = bare.split_once('.')
-        && let (Ok(turn), Ok(item)) = (t.parse::<usize>(), i.parse::<usize>())
-        && turn >= 1
-        && item >= 1
-    {
-        return MessageSelector::Position { turn, item };
+    if let Some((t, i)) = bare.split_once('.') {
+        if let Some(n) = i.strip_prefix('@')
+            && let (Ok(turn), Ok(n)) = (t.parse::<usize>(), n.parse::<usize>())
+            && turn >= 1
+            && n >= 1
+        {
+            return MessageSelector::Mail { turn, n };
+        }
+        if let (Ok(turn), Ok(item)) = (t.parse::<usize>(), i.parse::<usize>())
+            && turn >= 1
+            && item >= 1
+        {
+            return MessageSelector::Position { turn, item };
+        }
     }
     MessageSelector::ItemId(bare.to_string())
 }
@@ -36,6 +46,8 @@ pub enum MessageRole {
     User,
     Assistant,
     Tool,
+    /// A message from another agent.
+    Agent,
 }
 
 impl MessageRole {
@@ -44,6 +56,7 @@ impl MessageRole {
             Self::User => "user",
             Self::Assistant => "assistant",
             Self::Tool => "tool",
+            Self::Agent => "agent",
         }
     }
 }
@@ -57,6 +70,9 @@ pub struct ResolvedMessage {
     pub item_id: String,
     pub role: MessageRole,
     pub text: String,
+    /// Sender and receiver (agent paths) of an agent-to-agent message.
+    pub from: Option<String>,
+    pub to: Option<String>,
 }
 
 /// Text of an item: the words of a user or assistant message, the plan, the reasoning, or for
@@ -125,6 +141,8 @@ pub fn resolve_message(turns: &[Turn], selector: &MessageSelector) -> Option<Res
             let i = t.items.get(item.checked_sub(1)?)?;
             Some((*turn, *item, t, i))
         }
+        // Agent messages are not items of the built history; the rollout reader finds them.
+        MessageSelector::Mail { .. } => return None,
         MessageSelector::ItemId(id) => turns.iter().enumerate().find_map(|(ti, t)| {
             t.items
                 .iter()
@@ -142,6 +160,8 @@ pub fn resolve_message(turns: &[Turn], selector: &MessageSelector) -> Option<Res
         item_id: item.id().to_string(),
         role,
         text,
+        from: None,
+        to: None,
     })
 }
 
@@ -225,6 +245,14 @@ mod tests {
         assert_eq!(
             parse_message_ref(" 2.1 "),
             MessageSelector::Position { turn: 2, item: 1 }
+        );
+        assert_eq!(
+            parse_message_ref("#3.@2"),
+            MessageSelector::Mail { turn: 3, n: 2 }
+        );
+        assert_eq!(
+            parse_message_ref("#3.@0"),
+            MessageSelector::ItemId("3.@0".into())
         );
         assert_eq!(
             parse_message_ref("#0.1"),

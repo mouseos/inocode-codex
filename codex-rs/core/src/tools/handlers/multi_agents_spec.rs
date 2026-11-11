@@ -216,11 +216,18 @@ pub fn create_send_message_tool() -> ToolSpec {
             ))
             .with_encrypted(),
         ),
+        (
+            "reply_to".to_string(),
+            JsonSchema::string(Some(
+                "Optional. When this answers a specific message, its id in your own history, such as `#12.3`. If the content of a message you are answering is not visible in your history, read it with read_message."
+                    .to_string(),
+            )),
+        ),
     ]);
 
     ToolSpec::Function(ResponsesApiTool {
         name: "send_message".to_string(),
-        description: "Send a message to an existing agent. The message will be delivered promptly. Does not trigger a new turn."
+        description: "Send a message to an existing agent. The message will be delivered promptly. Does not trigger a new turn. When the message answers a specific message, set reply_to to that message's id; a message that begins with a reply marker (`[返信 #ID「hint」 thread:...]` or a `reply_to:` line) answers the message with that id, which you can read with read_message (pass its thread)."
             .to_string(),
         strict: false,
         defer_loading: None,
@@ -248,6 +255,13 @@ pub fn create_followup_task_tool() -> ToolSpec {
                 "Message text to send to the target agent.".to_string(),
             ))
             .with_encrypted(),
+        ),
+        (
+            "reply_to".to_string(),
+            JsonSchema::string(Some(
+                "Optional. When this answers a specific message, its id in your own history, such as `#12.3`. If the content of a message you are answering is not visible in your history, read it with read_message."
+                    .to_string(),
+            )),
         ),
     ]);
 

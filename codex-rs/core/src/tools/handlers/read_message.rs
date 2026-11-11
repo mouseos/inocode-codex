@@ -147,6 +147,7 @@ impl ToolExecutor<ToolInvocation> for ReadMessageHandler {
             let Some((found, _turn_count)) = looked_up else {
                 let what = match &selector {
                     MessageSelector::Position { turn, item } => format!("#{turn}.{item}"),
+                    MessageSelector::Mail { turn, n } => format!("#{turn}.@{n}"),
                     MessageSelector::ItemId(id) => format!("item id {id}"),
                 };
                 return Err(FunctionCallError::RespondToModel(format!(
@@ -155,13 +156,23 @@ impl ToolExecutor<ToolInvocation> for ReadMessageHandler {
             };
             // A long text is replaced by a preview and a file path by the same mechanism as any
             // other large tool output when it is recorded in the history.
+            let id = match found.role {
+                codex_app_server_protocol::MessageRole::Agent => {
+                    format!("#{}.@{}", found.turn_number, found.item_number)
+                }
+                _ => format!("#{}.{}", found.turn_number, found.item_number),
+            };
+            let route = match (&found.from, &found.to) {
+                (Some(from), Some(to)) => format!("from: {from}\nto: {to}\n"),
+                _ => String::new(),
+            };
             let text = format!(
-                "kind: {}\nturn: {}\nid: #{}.{} ({})\n\n{}",
+                "kind: {}\nturn: {}\nid: {} ({})\n{}\n{}",
                 found.role.as_str(),
                 found.turn_number,
-                found.turn_number,
-                found.item_number,
+                id,
                 found.item_id,
+                route,
                 found.text
             );
             Ok(boxed_tool_output(FunctionToolOutput::from_text(

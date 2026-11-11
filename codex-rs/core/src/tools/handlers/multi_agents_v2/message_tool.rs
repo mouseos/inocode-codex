@@ -19,6 +19,9 @@ use crate::tools::context::FunctionToolOutput;
 pub(crate) struct SendMessageArgs {
     pub(crate) target: String,
     pub(crate) message: String,
+    /// The message this one answers: `#<turn>.<item>` in the sender's own history.
+    #[serde(default)]
+    pub(crate) reply_to: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,6 +30,9 @@ pub(crate) struct SendMessageArgs {
 pub(crate) struct FollowupTaskArgs {
     pub(crate) target: String,
     pub(crate) message: String,
+    /// The message this one answers: `#<turn>.<item>` in the sender's own history.
+    #[serde(default)]
+    pub(crate) reply_to: Option<String>,
 }
 
 pub(super) fn message_content(message: String) -> Result<String, FunctionCallError> {
@@ -44,9 +50,18 @@ pub(super) async fn handle_message_string_tool(
     mode: MessageDeliveryMode,
     target: String,
     message: String,
+    reply_to: Option<String>,
     analytics: &mut ToolCallAnalytics,
 ) -> Result<FunctionToolOutput, FunctionCallError> {
     let message = message_content(message)?;
+    let reply_to = reply_to.map(|r| r.trim().to_string()).filter(|r| !r.is_empty());
+    if let Some(reply) = &reply_to
+        && !codex_inocode_protocol::is_valid_message_ref(reply)
+    {
+        return Err(FunctionCallError::RespondToModel(format!(
+            "reply_to must look like `#12.3` (turn.item in your own history), got `{reply}`"
+        )));
+    }
     let ToolInvocation {
         session,
         turn,
@@ -54,6 +69,20 @@ pub(super) async fn handle_message_string_tool(
         source,
         ..
     } = invocation;
+    // A reply carries the id of the message it answers (and whose history that id is in), so the
+    // receiver can read it with `read_message`.
+    let message = match &reply_to {
+        Some(reply) => {
+            let hint = reply_hint(&session, reply).await;
+            codex_inocode_protocol::attach_reply(
+                &message,
+                reply,
+                Some(&session.thread_id.to_string()),
+                hint.as_deref(),
+            )
+        }
+        None => message,
+    };
     let logged_text = message.clone();
     let receiver_thread_id = resolve_agent_target(&session, &turn, &target).await?;
     analytics.set_receiver(receiver_thread_id);
@@ -84,7 +113,7 @@ pub(super) async fn handle_message_string_tool(
     let receiver_agent_path = receipt.metadata.agent_path.ok_or_else(|| {
         FunctionCallError::RespondToModel("target agent is missing an agent_path".to_string())
     })?;
-    crate::inocode_loop::log_agent_message(
+    crate::inocode_loop::log_agent_message_with(
         session.thread_id,
         turn.session_source
             .get_agent_path()
@@ -98,6 +127,12 @@ pub(super) async fn handle_message_string_tool(
             "send_message"
         },
         &logged_text,
+        crate::inocode_loop::AgentMessageMeta {
+            reply_thread: reply_to.is_some().then(|| session.thread_id.to_string()),
+            reply_to,
+            from_thread: Some(session.thread_id.to_string()),
+            to_thread: Some(receiver_thread_id.to_string()),
+        },
     );
     emit_sub_agent_activity(
         &session,
@@ -114,4 +149,23 @@ pub(super) async fn handle_message_string_tool(
     .await;
 
     Ok(FunctionToolOutput::from_text(String::new(), Some(true)))
+}
+
+/// The first words of the message `reply` names in the sender's own history, for the one-line
+/// marker in front of a free-text reply. Best effort: none when it cannot be read.
+async fn reply_hint(session: &crate::session::session::Session, reply: &str) -> Option<String> {
+    let selector = codex_app_server_protocol::parse_message_ref(reply);
+    if matches!(selector, codex_app_server_protocol::MessageSelector::ItemId(_)) {
+        return None;
+    }
+    let _ = session.flush_rollout().await;
+    let path = session.current_rollout_path().await.ok().flatten()?;
+    let found = tokio::task::spawn_blocking(move || {
+        crate::inocode_message_ref::resolve_in_rollout(&path, &selector)
+    })
+    .await
+    .ok()?
+    .ok()??;
+    let text: String = found.0.text.chars().take(20).collect();
+    Some(text.replace('\n', " "))
 }

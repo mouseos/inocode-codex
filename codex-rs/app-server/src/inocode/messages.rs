@@ -53,8 +53,29 @@ pub(crate) fn to_message(root_thread_id: &str, m: &LoggedMessage) -> InocodeMess
         to: m.to.clone(),
         delivery: m.delivery.clone(),
         text: m.text.clone(),
+        summary: summary_of(&m.text, parsed.as_ref()),
         parsed,
+        id: None,
+        reply_to: m.reply_to.clone(),
+        reply_thread: m.reply_thread.clone(),
+        from_thread: m.from_thread.clone(),
+        to_thread: m.to_thread.clone(),
     }
+}
+
+/// One line for a list view.
+fn summary_of(text: &str, parsed: Option<&InocodeParsedMessage>) -> String {
+    let from_fields = parsed.and_then(|p| {
+        ["summary", "q", "a", "reason", "task"]
+            .iter()
+            .find_map(|key| p.fields.iter().find(|f| f.key == *key))
+            .map(|f| f.value.clone())
+    });
+    let line = from_fields
+        .or_else(|| text.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_string))
+        .unwrap_or_default();
+    let line = line.lines().next().unwrap_or_default();
+    line.chars().take(120).collect()
 }
 
 pub(crate) fn list_in(
@@ -146,9 +167,12 @@ fn response_of(
             codex_app_server_protocol::MessageRole::User => InocodeMessageRole::User,
             codex_app_server_protocol::MessageRole::Assistant => InocodeMessageRole::Assistant,
             codex_app_server_protocol::MessageRole::Tool => InocodeMessageRole::Tool,
+            codex_app_server_protocol::MessageRole::Agent => InocodeMessageRole::Agent,
         },
         text,
         truncated,
+        from: found.from,
+        to: found.to,
     }
 }
 
@@ -216,11 +240,69 @@ async fn resolve(
     resolve_at(path, &params).await
 }
 
+/// Gives each message the id it has in the receiver's history, matching it to the agent message
+/// recorded there (same sender, same text; the n-th such message goes to the n-th match).
+pub(crate) fn assign_ids(
+    messages: &mut [InocodeMessage],
+    mail_by_thread: &std::collections::HashMap<String, Vec<codex_core::inocode_message_ref::MailEntry>>,
+) {
+    let mut used: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    for m in messages.iter_mut() {
+        let Some(thread) = m.to_thread.clone() else {
+            continue;
+        };
+        let Some(entries) = mail_by_thread.get(&thread) else {
+            continue;
+        };
+        let wanted = m.text.trim();
+        let hit = entries.iter().find(|e| {
+            !used.contains(&(thread.clone(), e.id.clone()))
+                && e.author == m.from
+                && (e.content.trim() == wanted || e.content.contains(wanted))
+        });
+        if let Some(entry) = hit {
+            used.insert((thread, entry.id.clone()));
+            m.id = Some(entry.id.clone());
+        }
+    }
+}
+
+/// Reads the receivers' histories (one rollout per receiving thread) and sets the ids.
+async fn with_ids(mut response: InocodeMessagesListResponse) -> InocodeMessagesListResponse {
+    let Ok(codex_home) = codex_core::config::find_codex_home() else {
+        return response;
+    };
+    let mut mail = std::collections::HashMap::new();
+    let threads: std::collections::HashSet<String> = response
+        .messages
+        .iter()
+        .filter_map(|m| m.to_thread.clone())
+        .collect();
+    for thread in threads {
+        let Ok(Some(path)) =
+            codex_rollout::find_thread_path_by_id_str(&codex_home, &thread, None).await
+        else {
+            continue;
+        };
+        if let Ok(Ok(entries)) = tokio::task::spawn_blocking(move || {
+            codex_core::inocode_message_ref::mail_in_rollout(&path)
+        })
+        .await
+        {
+            mail.insert(thread, entries);
+        }
+    }
+    assign_ids(&mut response.messages, &mail);
+    response
+}
+
 pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
     match request {
         ClientRequest::InocodeMessagesResolve { params, .. } => Ok(Some(resolve(params).await?.into())),
         ClientRequest::InocodeMessagesList { params, .. } => Ok(Some(
-            list_in(&codex_inocode_flags::inocode_home(), &params).into(),
+            with_ids(list_in(&codex_inocode_flags::inocode_home(), &params))
+                .await
+                .into(),
         )),
         other => Err(unknown_method(other.method_name())),
     }
@@ -237,6 +319,7 @@ mod tests {
             to: "/root/b".into(),
             delivery: delivery.into(),
             text: text.into(),
+            ..Default::default()
         }
     }
 
@@ -284,5 +367,66 @@ mod tests {
         );
         assert_eq!(via_child.messages.len(), 1);
         assert_eq!(via_child.next_cursor.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn a_reply_keeps_its_target_threads_and_a_one_line_summary() {
+        let mut m = logged(
+            9,
+            "send_message",
+            "ANSWER
+a: use WAL
+reply_to: #4.2
+reply_thread: thr-a
+conf: high",
+        );
+        m.reply_to = Some("#4.2".into());
+        m.reply_thread = Some("thr-a".into());
+        m.from_thread = Some("thr-a".into());
+        m.to_thread = Some("thr-b".into());
+        let out = to_message("root", &m);
+        assert_eq!(out.reply_to.as_deref(), Some("#4.2"));
+        assert_eq!(out.reply_thread.as_deref(), Some("thr-a"));
+        assert_eq!(out.to_thread.as_deref(), Some("thr-b"));
+        assert_eq!(out.summary, "use WAL");
+        let free = to_message("root", &logged(10, "send_message", "[返信 #1.1「hi」 thread:t]
+ok
+more"));
+        assert_eq!(free.summary, "[返信 #1.1「hi」 thread:t]");
+        assert!(free.reply_to.is_none() && free.id.is_none());
+    }
+
+    #[test]
+    fn a_message_gets_the_id_it_has_in_the_receivers_history() {
+        use codex_core::inocode_message_ref::MailEntry;
+        let mut a = logged(1, "send_message", "ASK
+q: where?
+conf: low");
+        a.from_thread = Some("thr-a".into());
+        a.to_thread = Some("thr-b".into());
+        let mut b = logged(2, "send_message", "ASK
+q: where?
+conf: low");
+        b.to_thread = Some("thr-b".into());
+        let mut lone = to_message("root", &logged(3, "final", "done"));
+        let mut messages = vec![to_message("root", &a), to_message("root", &b)];
+        let entry = |id: &str| MailEntry {
+            id: id.into(),
+            author: "/root/a".into(),
+            recipient: "/root/b".into(),
+            content: "ASK
+q: where?
+conf: low".into(),
+        };
+        let mail = std::collections::HashMap::from([(
+            "thr-b".to_string(),
+            vec![entry("#2.@1"), entry("#5.@1")],
+        )]);
+        assign_ids(&mut messages, &mail);
+        // Two identical messages take the two matches in order.
+        assert_eq!(messages[0].id.as_deref(), Some("#2.@1"));
+        assert_eq!(messages[1].id.as_deref(), Some("#5.@1"));
+        assign_ids(std::slice::from_mut(&mut lone), &mail);
+        assert!(lone.id.is_none());
     }
 }

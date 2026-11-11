@@ -97,6 +97,7 @@ pub enum ProtocolError {
     MissingKey(&'static str),
     MissingField(String),
     BadConfidence(String),
+    BadReplyTo(String),
 }
 
 impl fmt::Display for ProtocolError {
@@ -111,6 +112,9 @@ impl fmt::Display for ProtocolError {
             ProtocolError::MissingField(k) => write!(f, "missing required key `{k}`"),
             ProtocolError::BadConfidence(c) => {
                 write!(f, "conf must be high, med or low, got `{c}`")
+            }
+            ProtocolError::BadReplyTo(r) => {
+                write!(f, "reply_to must look like `#12.3` or `#12.@2`, got `{r}`")
             }
         }
     }
@@ -147,8 +151,14 @@ impl Message {
             .map(|(_, v)| v.as_str())
     }
 
-    /// Checks that every required key for the kind is present and non-empty.
+    /// Checks that every required key for the kind is present and non-empty, and that the
+    /// optional `reply_to` (the message this one answers) is a well-formed reference.
     pub fn validate(&self) -> Result<(), ProtocolError> {
+        if let Some(reply) = self.get("reply_to")
+            && !is_valid_message_ref(reply)
+        {
+            return Err(ProtocolError::BadReplyTo(reply.to_string()));
+        }
         for key in self.kind.required_keys() {
             if self.get(key).is_none_or(|v| v.trim().is_empty()) {
                 return Err(ProtocolError::MissingField((*key).to_string()));
@@ -203,6 +213,43 @@ impl Message {
     }
 }
 
+/// `#<turn>.<item>` (an item of a thread's history) or `#<turn>.@<n>` (the n-th agent message
+/// received in that turn). Both numbers are 1-based.
+pub fn is_valid_message_ref(text: &str) -> bool {
+    let Some(rest) = text.trim().strip_prefix('#') else {
+        return false;
+    };
+    let Some((turn, item)) = rest.split_once('.') else {
+        return false;
+    };
+    let number = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()) && s != "0";
+    number(turn) && number(item.strip_prefix('@').unwrap_or(item))
+}
+
+/// The message with `reply_to` (and, when known, `reply_thread`) added before `conf` — or, for
+/// free text, a first line `[reply_to #T.I thread:<id>]` followed by the text.
+pub fn attach_reply(text: &str, reply_to: &str, reply_thread: Option<&str>, hint: Option<&str>) -> String {
+    if let Ok(mut message) = Message::parse(text) {
+        if message.get("reply_to").is_none() {
+            message.fields.push(("reply_to".into(), reply_to.trim().to_string()));
+            if let Some(thread) = reply_thread {
+                message.fields.push(("reply_thread".into(), thread.to_string()));
+            }
+        }
+        return message.render();
+    }
+    let mut head = format!("[返信 {}", reply_to.trim());
+    if let Some(hint) = hint.filter(|h| !h.is_empty()) {
+        head.push_str(&format!("「{hint}」"));
+    }
+    if let Some(thread) = reply_thread {
+        head.push_str(&format!(" thread:{thread}"));
+    }
+    head.push_str("]\n");
+    head.push_str(text);
+    head
+}
+
 fn push_field(out: &mut String, key: &str, value: &str) {
     out.push('\n');
     out.push_str(key);
@@ -240,7 +287,7 @@ pub fn append_to_instructions(existing: Option<&str>) -> String {
 
 /// Verbatim message log: one JSON line per message under
 /// `<INOCODE_HOME>/messages/<thread_id>.jsonl`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoggedMessage {
     pub ts_ms: u64,
@@ -249,6 +296,17 @@ pub struct LoggedMessage {
     /// `send_message` (no wake) or `followup_task` (wakes the target).
     pub delivery: String,
     pub text: String,
+    /// The message this one answers (`#T.I` or `#T.@N`), as the sender sees it in its own history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+    /// Thread whose history `reply_to` points into (the sender's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_thread: Option<String>,
+    /// Threads of the sender and the receiver, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_thread: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_thread: Option<String>,
 }
 
 fn log_path(inocode_home: &Path, thread_id: &str) -> std::path::PathBuf {
@@ -455,6 +513,7 @@ conf: med").unwrap();
             to: "/root".into(),
             delivery: "final".into(),
             text: "done".into(),
+            ..Default::default()
         };
         log_message_global("kid-g", &msg);
         let (root, got) = loop {
@@ -476,9 +535,42 @@ conf: med").unwrap();
             to: "/root/b".into(),
             delivery: "send_message".into(),
             text: "ASK\nq: x\nconf: low".into(),
+            ..Default::default()
         };
         log_message(dir.path(), "thread/1", &msg).unwrap();
         log_message(dir.path(), "thread/1", &msg).unwrap();
         assert_eq!(read_log(dir.path(), "thread/1"), vec![msg.clone(), msg]);
+    }
+
+    #[test]
+    fn reply_to_is_optional_and_checked() {
+        assert!(is_valid_message_ref("#12.3"));
+        assert!(is_valid_message_ref("#1.@2"));
+        assert!(!is_valid_message_ref("12.3"));
+        assert!(!is_valid_message_ref("#0.1"));
+        assert!(!is_valid_message_ref("#1.@"));
+        assert!(!is_valid_message_ref("#a.b"));
+        let ok = "ANSWER\na: yes\nreply_to: #4.2\nconf: high";
+        let m = Message::parse(ok).unwrap();
+        assert_eq!(m.get("reply_to"), Some("#4.2"));
+        assert_eq!(m.render(), ok);
+        assert_eq!(
+            Message::parse("ANSWER\na: yes\nreply_to: soon\nconf: high"),
+            Err(ProtocolError::BadReplyTo("soon".into()))
+        );
+        // Without reply_to the old messages are unchanged.
+        assert!(Message::parse("ANSWER\na: yes\nconf: high").is_ok());
+    }
+
+    #[test]
+    fn a_reply_is_attached_to_telegraphic_and_free_text() {
+        let tele = attach_reply("ANSWER\na: yes\nconf: high", "#4.2", Some("thr-1"), None);
+        assert_eq!(
+            tele,
+            "ANSWER\na: yes\nreply_to: #4.2\nreply_thread: thr-1\nconf: high"
+        );
+        assert!(Message::parse(&tele).is_ok());
+        let free = attach_reply("ok, done", "#4.@1", Some("thr-1"), Some("Can you check"));
+        assert_eq!(free, "[返信 #4.@1「Can you check」 thread:thr-1]\nok, done");
     }
 }

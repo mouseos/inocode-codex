@@ -131,6 +131,15 @@ pub(crate) fn record_clarification(thread_id: ThreadId) {
     record(thread_id, MetricEvent::Clarification);
 }
 
+/// Who a logged agent message answers and which threads it travelled between.
+#[derive(Default)]
+pub(crate) struct AgentMessageMeta {
+    pub(crate) reply_to: Option<String>,
+    pub(crate) reply_thread: Option<String>,
+    pub(crate) from_thread: Option<String>,
+    pub(crate) to_thread: Option<String>,
+}
+
 /// Stores an agent-to-agent message verbatim under `INOCODE_HOME/messages/<thread>.jsonl`.
 pub(crate) fn log_agent_message(
     thread_id: ThreadId,
@@ -138,6 +147,17 @@ pub(crate) fn log_agent_message(
     to: &str,
     delivery: &str,
     text: &str,
+) {
+    log_agent_message_with(thread_id, from, to, delivery, text, AgentMessageMeta::default());
+}
+
+pub(crate) fn log_agent_message_with(
+    thread_id: ThreadId,
+    from: &str,
+    to: &str,
+    delivery: &str,
+    text: &str,
+    meta: AgentMessageMeta,
 ) {
     let flags = InocodeFlags::load();
     if !flags.protocol_enabled && !flags.peer_messaging_enabled {
@@ -158,6 +178,10 @@ pub(crate) fn log_agent_message(
             to: to.to_string(),
             delivery: delivery.to_string(),
             text: text.to_string(),
+            reply_to: meta.reply_to,
+            reply_thread: meta.reply_thread,
+            from_thread: meta.from_thread,
+            to_thread: meta.to_thread,
         },
     );
 }

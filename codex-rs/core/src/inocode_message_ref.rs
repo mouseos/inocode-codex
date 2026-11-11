@@ -11,6 +11,7 @@
 //! extended. A resolution seeks to the turn and reads just that turn. Offsets address the original
 //! JSONL bytes, so compressed (zstd) rollouts work through the seekable reader.
 
+use codex_app_server_protocol::MessageRole;
 use codex_app_server_protocol::MessageSelector;
 use codex_app_server_protocol::ResolvedMessage;
 use codex_app_server_protocol::build_turns_from_rollout_items;
@@ -208,6 +209,64 @@ fn resolve_in_turn(
     Some(found)
 }
 
+/// An agent-to-agent message received in a turn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MailEntry {
+    /// `#<turn>.@<n>`.
+    pub id: String,
+    pub author: String,
+    pub recipient: String,
+    pub content: String,
+}
+
+fn mail_of(items: &[RolloutItem]) -> Vec<(String, String, String)> {
+    items
+        .iter()
+        .filter_map(|i| match i {
+            RolloutItem::InterAgentCommunication(c) => Some((
+                c.author.to_string(),
+                c.recipient.to_string(),
+                c.content.clone(),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Every agent-to-agent message in the rollout with its id, oldest first. Blocking; reads one
+/// turn at a time.
+pub fn mail_in_rollout(rollout: &Path) -> std::io::Result<Vec<MailEntry>> {
+    let index = load_index(rollout)?;
+    let mut reader = codex_rollout::open_rollout_seekable_reader(rollout, || false)?;
+    let mut out = Vec::new();
+    for span in &index.spans {
+        let items = read_turn(&mut reader, &index, span.turn)?;
+        for (n, (author, recipient, content)) in mail_of(&items).into_iter().enumerate() {
+            out.push(MailEntry {
+                id: format!("#{}.@{}", span.turn, n + 1),
+                author,
+                recipient,
+                content,
+            });
+        }
+    }
+    Ok(out)
+}
+
+fn resolve_mail(items: &[RolloutItem], span: &TurnSpan, n: usize) -> Option<ResolvedMessage> {
+    let (author, recipient, content) = mail_of(items).into_iter().nth(n.checked_sub(1)?)?;
+    Some(ResolvedMessage {
+        turn_number: span.turn,
+        item_number: n,
+        turn_id: span.turn_id.clone(),
+        item_id: format!("mail-{}.{n}", span.turn),
+        role: MessageRole::Agent,
+        text: content,
+        from: Some(author),
+        to: Some(recipient),
+    })
+}
+
 /// The file-wide number of the turn with `turn_id`. Blocking.
 pub fn turn_number_of(rollout: &Path, turn_id: &str) -> std::io::Result<Option<usize>> {
     Ok(load_index(rollout)?
@@ -264,6 +323,18 @@ fn resolve_once(rollout: &Path, selector: &MessageSelector) -> std::io::Result<R
             }
             Ok(Resolution::Done(
                 resolve_in_turn(&items, &index.spans[turn - 1], selector).map(|m| (m, total)),
+            ))
+        }
+        MessageSelector::Mail { turn, n } => {
+            if *turn == 0 || *turn > total {
+                return Ok(Resolution::Done(None));
+            }
+            let items = read_turn(&mut reader, &index, *turn)?;
+            if is_stale(&items, &index.spans[turn - 1]) {
+                return Ok(Resolution::Stale);
+            }
+            Ok(Resolution::Done(
+                resolve_mail(&items, &index.spans[turn - 1], *n).map(|m| (m, total)),
             ))
         }
         MessageSelector::ItemId(id) => {
@@ -450,5 +521,63 @@ mod tests {
         assert_eq!(text_of(&path, "#2.2").as_deref(), Some("Other answer"));
         assert_eq!(turn_number_of(&path, "other-c").unwrap(), Some(3));
         assert_eq!(turn_number_of(&path, "turn-b").unwrap(), None);
+    }
+
+    fn mail_line(content: &str) -> String {
+        use codex_protocol::AgentPath;
+        use codex_protocol::protocol::InterAgentCommunication;
+        let line = codex_rollout::RolloutLine {
+            timestamp: "2026-01-01T00:00:00.000Z".into(),
+            ordinal: None,
+            item: RolloutItem::InterAgentCommunication(InterAgentCommunication::new(
+                AgentPath::try_from("/root/a").unwrap(),
+                AgentPath::try_from("/root/b").unwrap(),
+                Vec::new(),
+                content.into(),
+                false,
+            )),
+        };
+        format!("{}
+", serde_json::to_string(&line).unwrap())
+    }
+
+    #[test]
+    fn agent_messages_get_turn_wide_ids_and_can_be_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout-x.jsonl");
+        let body = [
+            started(1, "turn-a"),
+            user(2, "Hi"),
+            mail_line("ASK
+q: one
+conf: low"),
+            mail_line("ANSWER
+a: two
+conf: low"),
+            agent(3, "Hello"),
+            started(4, "turn-b"),
+            mail_line("RESULT
+status: done
+summary: three
+conf: high"),
+        ]
+        .concat();
+        std::fs::write(&path, body).unwrap();
+        let mail = mail_in_rollout(&path).unwrap();
+        let ids: Vec<&str> = mail.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["#1.@1", "#1.@2", "#2.@1"]);
+        assert_eq!(mail[0].author, "/root/a");
+        let (found, _) = resolve_in_rollout(&path, &parse_message_ref("#1.@2"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.role, MessageRole::Agent);
+        assert_eq!(found.text, "ANSWER
+a: two
+conf: low");
+        assert_eq!(found.from.as_deref(), Some("/root/a"));
+        assert_eq!(found.to.as_deref(), Some("/root/b"));
+        assert!(resolve_in_rollout(&path, &parse_message_ref("#1.@3")).unwrap().is_none());
+        // The ordinary numbering of the turn is unchanged by the mail.
+        assert_eq!(text_of(&path, "#1.2").as_deref(), Some("Hello"));
     }
 }
