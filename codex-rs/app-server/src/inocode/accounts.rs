@@ -565,13 +565,24 @@ async fn claude_login_start(
     method: Option<InocodeAccountLoginMethod>,
     expected: Option<String>,
 ) -> Result<InocodeAccountsLoginStartResponse, JSONRPCErrorError> {
-    let code_mode = match method.unwrap_or(InocodeAccountLoginMethod::Browser) {
+    let mut code_mode = match method.unwrap_or(InocodeAccountLoginMethod::Browser) {
         InocodeAccountLoginMethod::Browser => false,
         InocodeAccountLoginMethod::OauthCode => true,
         InocodeAccountLoginMethod::DeviceCode => {
             return Err(invalid_params("the claude provider has no device-code sign-in"));
         }
     };
+    // One sign-in at a time per provider: a new one cancels the one still waiting.
+    supersede_claude_logins(runtime);
+    // Bind before handing out the URL. If another process holds the port, fall back to the
+    // paste-the-code method (the response then says `codeEntry: true`).
+    let mut listener = None;
+    if !code_mode {
+        match claude_oauth::CallbackListener::bind().await {
+            Ok(bound) => listener = Some(bound),
+            Err(_) => code_mode = true,
+        }
+    }
     let pending = claude_oauth::begin(code_mode);
     let auth_url = pending.url.clone();
     if code_mode {
@@ -592,16 +603,16 @@ async fn claude_login_start(
             code_entry: true,
         });
     }
+    let Some(listener) = listener else {
+        return Err(internal_error("the sign-in listener is gone"));
+    };
     let cancel = Arc::new(AtomicBool::new(false));
     register(runtime, &login_id, PendingLogin::ClaudeListener(Arc::clone(&cancel)));
     let id = login_id.clone();
     tokio::spawn(async move {
-        let result = match claude_oauth::wait_for_callback(
-            pending.state.clone(),
-            LOGIN_TIMEOUT,
-            cancel,
-        )
-        .await
+        let result = match listener
+            .wait(pending.state.clone(), LOGIN_TIMEOUT, cancel)
+            .await
         {
             Ok(code) => claude_finish(&pending, &alias, &code, expected.as_deref()).await,
             Err(err) => Err(err.to_string()),
@@ -663,6 +674,29 @@ async fn login_complete(params: InocodeAccountsLoginCompleteParams) -> Result<()
     match failed {
         Some(message) => Err(invalid_request(message)),
         None => Ok(()),
+    }
+}
+
+/// Cancels every Claude sign-in that is still waiting (listener or pasted code).
+fn supersede_claude_logins(runtime: &Runtime) {
+    let mut logins = runtime
+        .logins
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let stale: Vec<String> = logins
+        .iter()
+        .filter(|(_, pending)| {
+            matches!(
+                pending,
+                PendingLogin::ClaudeListener(_) | PendingLogin::ClaudeCode { .. }
+            )
+        })
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in stale {
+        if let Some(PendingLogin::ClaudeListener(cancel)) = logins.remove(&id) {
+            cancel.store(true, Ordering::SeqCst);
+        }
     }
 }
 

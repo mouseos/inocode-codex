@@ -14,6 +14,7 @@ mod tests;
 
 pub use consts::CALLBACK_PORT;
 pub use consts::CODE_REDIRECT_URI;
+pub use flow::CallbackListener;
 pub use flow::Pending;
 pub use flow::Profile;
 pub use flow::fetch_profile;

@@ -282,67 +282,128 @@ pub async fn refresh_credentials(
     Ok(refreshed)
 }
 
-/// Waits for the browser to be redirected to `http://localhost:54545/callback` and returns the
-/// authorization code. `cancel` ends the wait early.
+/// The local listener a browser sign-in returns to (`http://localhost:54545/callback`).
+///
+/// Binding is separate from waiting so a caller learns about a busy port *before* it hands the
+/// user an authorization URL. Dropping the listener (completion, failure, cancel, timeout) closes
+/// the port.
+pub struct CallbackListener {
+    server: tiny_http::Server,
+}
+
+impl CallbackListener {
+    pub async fn bind() -> io::Result<Self> {
+        Self::bind_on(consts::CALLBACK_PORT).await
+    }
+
+    /// Binds `port` (0 = any free port). A port that a just-cancelled sign-in is still releasing
+    /// is retried for a moment; a port held by another process fails with `AddrInUse`.
+    pub async fn bind_on(port: u16) -> io::Result<Self> {
+        tokio::task::spawn_blocking(move || {
+            let deadline = Instant::now() + Duration::from_millis(1500);
+            loop {
+                match tiny_http::Server::http(("127.0.0.1", port)) {
+                    Ok(server) => return Ok(Self { server }),
+                    Err(err) => {
+                        let in_use = err
+                            .downcast_ref::<io::Error>()
+                            .is_some_and(|e| e.kind() == io::ErrorKind::AddrInUse);
+                        if in_use && Instant::now() < deadline {
+                            std::thread::sleep(Duration::from_millis(100));
+                            continue;
+                        }
+                        let kind = if in_use { io::ErrorKind::AddrInUse } else { io::ErrorKind::Other };
+                        return Err(io::Error::new(
+                            kind,
+                            format!("cannot listen on the callback port {port}: {err}"),
+                        ));
+                    }
+                }
+            }
+        })
+        .await
+        .map_err(io::Error::other)?
+    }
+
+    pub fn port(&self) -> Option<u16> {
+        self.server.server_addr().to_ip().map(|addr| addr.port())
+    }
+
+    /// Waits for the redirect and returns the authorization code. `cancel` ends the wait early.
+    ///
+    /// Requests that are not the callback, or that carry neither `code` nor `state` (a favicon, a
+    /// probe), get a 404 and are ignored; a callback with the wrong `state` gets a 400 and the
+    /// wait goes on.
+    pub async fn wait(
+        self,
+        state: String,
+        timeout: Duration,
+        cancel: Arc<AtomicBool>,
+    ) -> io::Result<String> {
+        tokio::task::spawn_blocking(move || {
+            let server = self.server;
+            let deadline = Instant::now() + timeout;
+            loop {
+                if cancel.load(Ordering::SeqCst) {
+                    return Err(io::Error::other("the sign-in was cancelled"));
+                }
+                if Instant::now() >= deadline {
+                    return Err(io::Error::other("the sign-in timed out"));
+                }
+                let Some(request) = server
+                    .recv_timeout(Duration::from_millis(250))
+                    .map_err(io::Error::other)?
+                else {
+                    continue;
+                };
+                let url = url::Url::parse(&format!("http://localhost{}", request.url())).ok();
+                let is_callback = url.as_ref().is_some_and(|u| u.path() == consts::CALLBACK_PATH);
+                let pair = |name: &str| {
+                    url.as_ref().and_then(|u| {
+                        u.query_pairs()
+                            .find(|(k, _)| k == name)
+                            .map(|(_, v)| v.into_owned())
+                    })
+                };
+                let page = |status: u16, body: &str| {
+                    let response = tiny_http::Response::from_string(body.to_string())
+                        .with_status_code(status)
+                        .with_header(
+                            tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..])
+                                .expect("a constant header parses"),
+                        );
+                    let _ = request.respond(response);
+                };
+                if !is_callback {
+                    page(404, "Not found");
+                    continue;
+                }
+                if let Some(error) = pair("error") {
+                    page(400, "Sign-in failed. You can close this tab.");
+                    return Err(io::Error::other(format!("the sign-in was refused: {error}")));
+                }
+                match (pair("code"), pair("state")) {
+                    (Some(code), Some(got)) if got == state => {
+                        page(200, "Signed in. You can close this tab and return to InoCode.");
+                        return Ok(code);
+                    }
+                    (None, None) => page(404, "Not found"),
+                    _ => page(400, "The sign-in state did not match. Start again."),
+                }
+            }
+        })
+        .await
+        .map_err(io::Error::other)?
+    }
+}
+
+/// Binds the callback port and waits for the redirect (for callers that do both at once).
 pub async fn wait_for_callback(
     state: String,
     timeout: Duration,
     cancel: Arc<AtomicBool>,
 ) -> io::Result<String> {
-    tokio::task::spawn_blocking(move || {
-        let server = tiny_http::Server::http(("127.0.0.1", consts::CALLBACK_PORT))
-            .map_err(|err| io::Error::other(format!("cannot listen on the callback port: {err}")))?;
-        let deadline = Instant::now() + timeout;
-        loop {
-            if cancel.load(Ordering::SeqCst) {
-                return Err(io::Error::other("the sign-in was cancelled"));
-            }
-            if Instant::now() >= deadline {
-                return Err(io::Error::other("the sign-in timed out"));
-            }
-            let Some(request) = server
-                .recv_timeout(Duration::from_millis(250))
-                .map_err(io::Error::other)?
-            else {
-                continue;
-            };
-            let url = url::Url::parse(&format!("http://localhost{}", request.url())).ok();
-            let is_callback = url.as_ref().is_some_and(|u| u.path() == consts::CALLBACK_PATH);
-            let pair = |name: &str| {
-                url.as_ref().and_then(|u| {
-                    u.query_pairs()
-                        .find(|(k, _)| k == name)
-                        .map(|(_, v)| v.into_owned())
-                })
-            };
-            let page = |status: u16, body: &str| {
-                let response = tiny_http::Response::from_string(body.to_string())
-                    .with_status_code(status)
-                    .with_header(
-                        tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..])
-                            .expect("a constant header parses"),
-                    );
-                let _ = request.respond(response);
-            };
-            if !is_callback {
-                page(404, "Not found");
-                continue;
-            }
-            if let Some(error) = pair("error") {
-                page(400, "Sign-in failed. You can close this tab.");
-                return Err(io::Error::other(format!("the sign-in was refused: {error}")));
-            }
-            match (pair("code"), pair("state")) {
-                (Some(code), Some(got)) if got == state => {
-                    page(200, "Signed in. You can close this tab and return to InoCode.");
-                    return Ok(code);
-                }
-                _ => page(400, "The sign-in state did not match. Start again."),
-            }
-        }
-    })
-    .await
-    .map_err(io::Error::other)?
+    CallbackListener::bind().await?.wait(state, timeout, cancel).await
 }
 
 #[cfg(test)]
@@ -409,5 +470,48 @@ mod tests {
         assert_eq!(profile.email.as_deref(), Some("me@example.test"));
         assert_eq!(profile.name.as_deref(), Some("Me"));
         assert_eq!(parse_profile(&json!({})), Profile::default());
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_sign_in_releases_the_port_and_a_new_one_can_take_it() {
+        let first = CallbackListener::bind_on(0).await.expect("first bind");
+        let port = first.port().expect("a port");
+        // While the first one holds the port, nobody else gets it.
+        assert_eq!(
+            CallbackListener::bind_on(port).await.err().map(|e| e.kind()),
+            Some(io::ErrorKind::AddrInUse)
+        );
+        // Cancelling ends the wait, and dropping the listener frees the port.
+        let cancel = Arc::new(AtomicBool::new(true));
+        let waited = first.wait("s1".to_string(), Duration::from_secs(5), cancel).await;
+        assert!(waited.is_err());
+        let second = CallbackListener::bind_on(port).await.expect("the port is free again");
+        assert_eq!(second.port(), Some(port));
+    }
+
+    #[tokio::test]
+    async fn probes_are_ignored_a_wrong_state_does_not_end_the_wait_and_the_right_one_wins() {
+        let listener = CallbackListener::bind_on(0).await.expect("bind");
+        let port = listener.port().expect("a port");
+        let cancel = Arc::new(AtomicBool::new(false));
+        let waiting = tokio::spawn(listener.wait("right".to_string(), Duration::from_secs(20), cancel));
+        let get = |path: String| async move {
+            tokio::task::spawn_blocking(move || {
+                use std::io::Read;
+                use std::io::Write;
+                let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+                write!(stream, "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").expect("write");
+                let mut text = String::new();
+                stream.read_to_string(&mut text).expect("read");
+                text.lines().next().unwrap_or_default().to_string()
+            })
+            .await
+            .expect("join")
+        };
+        assert!(get("/favicon.ico".to_string()).await.contains("404"));
+        assert!(get("/callback".to_string()).await.contains("404"));
+        assert!(get("/callback?code=x&state=other".to_string()).await.contains("400"));
+        assert!(get("/callback?code=CODE9&state=right".to_string()).await.contains("200"));
+        assert_eq!(waiting.await.expect("join").expect("code"), "CODE9");
     }
 }
