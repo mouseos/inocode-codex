@@ -11,6 +11,7 @@ use codex_goal_extension::GoalSetRequest;
 use codex_goal_extension::GoalTokenBudgetUpdate;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
+use codex_rollout::RolloutItem;
 use codex_rollout::RolloutRecorder;
 use codex_rollout::WriterLockCoordinator;
 
@@ -365,13 +366,33 @@ impl ThreadGoalRequestProcessor {
                 ) {
                     // Match resume's latest version metadata, including legacy TurnContext
                     // fallback, rather than trusting only the initial session header.
-                    let history = RolloutRecorder::get_rollout_history(&rollout_path)
+                    // Newest-first, streaming: the newest session header version for this thread,
+                    // else the newest turn context / compaction version (as the history does).
+                    let owner_id = thread_id;
+                    let (header_version, fallback_version) =
+                        RolloutRecorder::fold_rollout_items_rev(
+                            &rollout_path,
+                            (None, None),
+                            move |(header, fallback), item| {
+                                if let RolloutItem::SessionMeta(line) = item
+                                    && line.meta.id == owner_id
+                                    && let Some(version) = line.meta.multi_agent_version
+                                {
+                                    *header = Some(version);
+                                    return false;
+                                }
+                                if fallback.is_none() {
+                                    *fallback = codex_rollout::resume_multi_agent_version(item);
+                                }
+                                true
+                            },
+                        )
                         .await
                         .map_err(|err| {
                             internal_error(format!("failed to read thread ownership: {err}"))
                         })?;
                     if !can_accept_direct_input(
-                        history.get_multi_agent_version(),
+                        header_version.or(fallback_version),
                         &session_meta.meta.source,
                     ) {
                         return Err(invalid_request(

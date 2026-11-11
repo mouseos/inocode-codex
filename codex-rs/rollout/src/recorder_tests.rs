@@ -2048,3 +2048,87 @@ async fn resume_candidate_matches_cwd_reads_latest_turn_context() -> std::io::Re
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn fold_rollout_items_rev_matches_full_load_and_stops_early() -> std::io::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let rollout_path = home.path().join("rollout.jsonl");
+    let mut file = File::create(&rollout_path)?;
+    let thread_id = ThreadId::new();
+    let ts = "2025-01-03T12:00:00Z";
+    writeln!(
+        file,
+        "{}",
+        serde_json::json!({
+            "timestamp": ts,
+            "type": "session_meta",
+            "payload": {
+                "id": thread_id,
+                "timestamp": ts,
+                "cwd": ".",
+                "originator": "test_originator",
+                "cli_version": "test_version",
+                "source": "cli",
+                "model_provider": "test-provider",
+            },
+        })
+    )?;
+    for index in 0..20 {
+        writeln!(
+            file,
+            "{}",
+            serde_json::json!({
+                "timestamp": ts,
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": format!("m{index}")}],
+                },
+            })
+        )?;
+    }
+    drop(file);
+
+    let (full, _, _) = RolloutRecorder::load_rollout_items(&rollout_path).await?;
+    let texts = |items: &[RolloutItem]| -> Vec<String> {
+        items
+            .iter()
+            .filter_map(|item| match item {
+                RolloutItem::ResponseItem(ResponseItemEnvelope {
+                    item: ResponseItem::Message { content, .. },
+                    ..
+                }) => Some(format!("{content:?}")),
+                _ => None,
+            })
+            .collect()
+    };
+
+    // A full reverse fold sees every item, newest first.
+    let mut reversed = RolloutRecorder::fold_rollout_items_rev(
+        &rollout_path,
+        Vec::<RolloutItem>::new(),
+        |items, item| {
+            items.push(item.clone());
+            true
+        },
+    )
+    .await?;
+    reversed.reverse();
+    assert_eq!(reversed.len(), full.len());
+    assert_eq!(texts(&reversed), texts(&full));
+
+    // An early stop reads only the tail: three items, the newest first.
+    let tail = RolloutRecorder::fold_rollout_items_rev(
+        &rollout_path,
+        Vec::<RolloutItem>::new(),
+        |items, item| {
+            items.push(item.clone());
+            items.len() < 3
+        },
+    )
+    .await?;
+    assert_eq!(tail.len(), 3);
+    assert_eq!(texts(&tail)[0], texts(&full)[19]);
+    Ok(())
+}

@@ -467,29 +467,37 @@ async fn feedback_turn_metadata_from_rollout(
     rollout_path: &Path,
     turn_id: Option<&str>,
 ) -> Option<FeedbackTurnMetadata> {
-    let (items, _, _) = RolloutRecorder::load_rollout_items(rollout_path)
+    // The prompt comes from the session header and the model from the newest matching turn
+    // context, so neither needs the whole rollout in memory.
+    let prompt_hash = codex_rollout::read_session_meta_line(rollout_path)
         .await
-        .ok()?;
-    let prompt_hash = items.iter().find_map(|item| match item {
-        RolloutItem::SessionMeta(meta) => meta
-            .meta
-            .base_instructions
-            .as_ref()
-            .map(|prompt| normalized_prompt_hash(&prompt.text)),
-        _ => None,
-    });
-
-    items.into_iter().rev().find_map(|item| match item {
-        RolloutItem::TurnContext(context)
-            if turn_id.is_none() || context.turn_id.as_deref() == turn_id =>
-        {
-            Some(FeedbackTurnMetadata {
-                model: context.model,
-                effort: context.effort,
-                prompt_hash: prompt_hash.clone(),
-            })
-        }
-        _ => None,
+        .ok()
+        .and_then(|line| {
+            line.meta
+                .base_instructions
+                .as_ref()
+                .map(|prompt| normalized_prompt_hash(&prompt.text))
+        });
+    let turn_id = turn_id.map(str::to_string);
+    let found = RolloutRecorder::fold_rollout_items_rev(
+        rollout_path,
+        None::<(String, Option<ReasoningEffort>)>,
+        move |found, item| {
+            if let RolloutItem::TurnContext(context) = item
+                && (turn_id.is_none() || context.turn_id.as_deref() == turn_id.as_deref())
+            {
+                *found = Some((context.model.clone(), context.effort.clone()));
+                return false;
+            }
+            true
+        },
+    )
+    .await
+    .ok()?;
+    found.map(|(model, effort)| FeedbackTurnMetadata {
+        model,
+        effort,
+        prompt_hash,
     })
 }
 

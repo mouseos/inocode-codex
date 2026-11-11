@@ -1135,11 +1135,16 @@ impl RolloutRecorder {
             let mut thread_id: Option<ThreadId> = None;
             let mut parse_errors = 0usize;
             let mut saw_non_empty_line = false;
+            let budget = crate::load_budget::max_load_bytes();
+            let mut bytes_read = 0u64;
             for line in reader {
                 let line = line?;
                 if line.trim().is_empty() {
                     continue;
                 }
+                // Stop with a clear error before a huge rollout exhausts memory.
+                bytes_read = bytes_read.saturating_add(line.len() as u64);
+                crate::load_budget::check_budget(bytes_read, budget)?;
                 saw_non_empty_line = true;
                 let mut value: Value = match serde_json::from_str(&line) {
                     Ok(value) => value,
@@ -1192,6 +1197,38 @@ impl RolloutRecorder {
             Ok((items, thread_id, parse_errors))
         })
         .await
+    }
+
+    /// Folds over a rollout's items from the newest to the oldest without keeping them: each
+    /// line is decoded, handed to `step`, then dropped, so memory is bounded by the largest single
+    /// line rather than the file. `step` returns `false` to stop early. Lines that do not decode
+    /// are skipped (as `load_rollout_items` counts and skips them). Compressed rollouts work too.
+    pub async fn fold_rollout_items_rev<S, F>(
+        path: &Path,
+        init: S,
+        mut step: F,
+    ) -> std::io::Result<S>
+    where
+        S: Send + 'static,
+        F: FnMut(&mut S, &RolloutItem) -> bool + Send + 'static,
+    {
+        let path = path.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            let reader = crate::open_rollout_seekable_reader(&path, || false)?;
+            let mut scanner = crate::ReverseJsonlScanner::new(reader)?;
+            let mut state = init;
+            while let Some(outcome) = scanner.scan_next_rollout_line()? {
+                let crate::ScanOutcome::Parsed(line) = outcome else {
+                    continue;
+                };
+                if !step(&mut state, &line.item) {
+                    break;
+                }
+            }
+            Ok(state)
+        })
+        .await
+        .map_err(|err| IoError::other(format!("rollout reverse scan failed to join: {err}")))?
     }
 
     pub async fn get_rollout_history(path: &Path) -> std::io::Result<InitialHistory> {
@@ -2205,22 +2242,16 @@ async fn resume_candidate_matches_cwd(
         return true;
     }
 
-    if let Ok((items, _, _)) = RolloutRecorder::load_rollout_items(rollout_path).await
-        && let Some(latest_turn_context_cwd) = items.iter().rev().find_map(|item| match item {
-            RolloutItem::TurnContext(turn_context) => Some(&turn_context.cwd),
-            RolloutItem::DynamicToolsUpdated { .. }
-            | RolloutItem::SessionMeta(_)
-            | RolloutItem::ResponseItem(_)
-            | RolloutItem::InterAgentCommunication(_)
-            | RolloutItem::InterAgentCommunicationMetadata { .. }
-            | RolloutItem::Compacted(_)
-            | RolloutItem::WorldState(_)
-            | RolloutItem::RealtimeItem(_)
-            | RolloutItem::TokenUsageRecord(_)
-            | RolloutItem::RetainedContext(_)
-            | RolloutItem::SecurityRiskScore(_)
-            | RolloutItem::EventMsg(_) => None,
+    // Newest TurnContext only: a reverse scan stops there instead of loading the whole rollout.
+    if let Ok(Some(latest_turn_context_cwd)) =
+        RolloutRecorder::fold_rollout_items_rev(rollout_path, None::<PathBuf>, |found, item| {
+            if let RolloutItem::TurnContext(turn_context) = item {
+                *found = Some(turn_context.cwd.as_path().to_path_buf());
+                return false;
+            }
+            true
         })
+        .await
     {
         return cwd_matches(latest_turn_context_cwd.as_path(), cwd);
     }

@@ -28,6 +28,7 @@ pub struct ReverseJsonlScanner<R> {
     record_reversed: Vec<u8>,
     max_record_bytes: Option<usize>,
     discarding_oversized_record: bool,
+    start_end: u64,
 }
 
 impl<R> ReverseJsonlScanner<R>
@@ -59,7 +60,14 @@ where
             record_reversed: Vec::new(),
             max_record_bytes: None,
             discarding_oversized_record: false,
+            start_end: end_byte_offset,
         })
+    }
+
+    /// Bytes read so far from the logical end towards the start (record boundaries included).
+    pub fn bytes_scanned(&self) -> u64 {
+        self.start_end
+            .saturating_sub(self.next_chunk_end + self.chunk_position as u64)
     }
 
     /// Skips records larger than the configured limit without buffering or parsing them.

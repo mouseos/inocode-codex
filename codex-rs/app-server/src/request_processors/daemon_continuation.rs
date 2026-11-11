@@ -30,8 +30,22 @@ impl ThreadRequestProcessor {
         let Some(path) = thread.rollout_path() else {
             return;
         };
-        let history = match codex_rollout::RolloutRecorder::load_rollout_items(&path).await {
-            Ok((history, _, _)) => history,
+        // Only the last turn matters: scan from the end and keep the suffix from the newest
+        // `TurnStarted`, instead of loading the whole rollout.
+        let history = match codex_rollout::RolloutRecorder::fold_rollout_items_rev(
+            &path,
+            Vec::<RolloutItem>::new(),
+            |suffix_rev, item| {
+                suffix_rev.push(item.clone());
+                !matches!(item, RolloutItem::EventMsg(EventMsg::TurnStarted(_)))
+            },
+        )
+        .await
+        {
+            Ok(mut suffix_rev) => {
+                suffix_rev.reverse();
+                suffix_rev
+            }
             Err(err) => {
                 tracing::warn!(%thread_id, %err, "failed to read interrupted turn history");
                 return;

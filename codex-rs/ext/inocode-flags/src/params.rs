@@ -72,6 +72,12 @@ pub const PARAMS: &[ParamSpec] = &[
     int("compaction.reattach_tokens", 50_000),
     int("compaction.max_consecutive_failures", 3),
     int("compaction.preview_bytes", 2000),
+    // 0 = follow the history truncation budget; otherwise bytes above which a tool output is spilled out of the rollout.
+    int("rollout.large_output_bytes", 0),
+    // 0 = a quarter of physical memory (counted as 3x the bytes read) is the most one load may hold.
+    int("rollout.max_load_bytes", 0),
+    // Rollouts larger than this are resumed from a reverse scan of the newest context window, never read whole.
+    int("rollout.stream_threshold_bytes", 536_870_912),
     float("team.speedup_threshold", 1.3),
     float("team.split_overhead_secs", 60.0),
     float("team.integrate_overhead_secs", 60.0),

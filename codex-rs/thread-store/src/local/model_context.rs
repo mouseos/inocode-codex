@@ -188,6 +188,8 @@ fn scan_model_context_from_lineage_blocking(
     is_cancelled: impl Fn() -> bool,
 ) -> io::Result<Vec<RolloutItem>> {
     let mut scan = ModelContextScan::default();
+    let budget = codex_rollout::load_budget::max_load_bytes();
+    let mut scanned_before = 0u64;
     'segments: for segment in lineage.segments().iter().rev() {
         let file = lineage.reads.open(&segment.rollout_path, &is_cancelled)?;
         let mut scanner = match segment.end.map(|end| end.end_byte_offset) {
@@ -207,7 +209,14 @@ fn scan_model_context_from_lineage_blocking(
                 ModelContextScanProgress::Continue => {}
                 ModelContextScanProgress::Complete => break 'segments,
             }
+            // Still no complete compaction: the whole lineage would be needed, so stay inside
+            // the memory budget instead of exhausting RAM.
+            codex_rollout::load_budget::check_budget(
+                scanned_before.saturating_add(scanner.bytes_scanned()),
+                budget,
+            )?;
         }
+        scanned_before = scanned_before.saturating_add(scanner.bytes_scanned());
     }
 
     Ok(scan.finish())

@@ -348,11 +348,67 @@ async fn read_thread_from_rollout_path(
 pub(super) async fn load_history_items(
     path: &std::path::Path,
 ) -> ThreadStoreResult<Vec<codex_rollout::RolloutItem>> {
+    // InoCode: a very large rollout is never read whole. It is resumed from the newest context
+    // window (a reverse scan that stops at the newest complete compaction), and a load that
+    // would still need the whole file fails with a clear error instead of exhausting memory.
+    let too_big = std::fs::metadata(path)
+        .map(|meta| meta.len() > codex_rollout::load_budget::stream_threshold_bytes())
+        .unwrap_or(false);
+    if too_big {
+        return load_bounded_history_items(path).await;
+    }
     let (items, _, _) = RolloutRecorder::load_rollout_items(path)
         .await
         .map_err(|err| ThreadStoreError::Internal {
             message: format!("failed to load thread history {}: {err}", path.display()),
         })?;
+    Ok(items)
+}
+
+/// The newest context window of a rollout, in chronological order, with the session header first.
+async fn load_bounded_history_items(
+    path: &std::path::Path,
+) -> ThreadStoreResult<Vec<codex_rollout::RolloutItem>> {
+    let session_meta = read_session_meta_line(path)
+        .await
+        .map_err(|err| ThreadStoreError::Internal {
+            message: format!("failed to read session metadata {}: {err}", path.display()),
+        })?;
+    let scan_path = path.to_path_buf();
+    let scanned = tokio::task::spawn_blocking(move || -> std::io::Result<Vec<codex_rollout::RolloutItem>> {
+        let budget = codex_rollout::load_budget::max_load_bytes();
+        let reader = codex_rollout::open_rollout_seekable_reader(&scan_path, || false)?;
+        let mut scanner = codex_rollout::ReverseJsonlScanner::new(reader)?;
+        let mut scan = codex_rollout::ModelContextScan::default();
+        while let Some(outcome) = scanner.scan_next_rollout_line()? {
+            let codex_rollout::ScanOutcome::Parsed(line) = outcome else {
+                continue;
+            };
+            if matches!(&line.item, codex_rollout::RolloutItem::SessionMeta(_)) {
+                // Keep every header: the first one is the thread's own.
+                scan.push(line.item);
+                continue;
+            }
+            match scan.push(line.item) {
+                codex_rollout::ModelContextScanProgress::Continue => {}
+                codex_rollout::ModelContextScanProgress::Complete => break,
+            }
+            // No complete compaction yet: the whole file would be needed, so stay inside the budget.
+            codex_rollout::load_budget::check_budget(scanner.bytes_scanned(), budget)?;
+        }
+        Ok(scan.finish())
+    })
+    .await
+    .map_err(|err| ThreadStoreError::Internal {
+        message: format!("failed to join bounded history scan: {err}"),
+    })?
+    .map_err(|err| ThreadStoreError::Internal {
+        message: format!("failed to load thread history {}: {err}", path.display()),
+    })?;
+    let mut items = scanned;
+    if !matches!(items.first(), Some(codex_rollout::RolloutItem::SessionMeta(_))) {
+        items.insert(0, codex_rollout::RolloutItem::SessionMeta(Box::new(session_meta)));
+    }
     Ok(items)
 }
 

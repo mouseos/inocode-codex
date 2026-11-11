@@ -4232,6 +4232,7 @@ dependencies = [
 name = "codex-inocode-tool-output"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "codex-utils-string",
  "pretty_assertions",
  "serde",
@@ -5090,6 +5091,7 @@ dependencies = [
  "codex-file-search",
  "codex-git-utils",
  "codex-history",
+ "codex-inocode-flags",
  "codex-otel",
  "codex-protocol",
  "codex-state",
@@ -5105,6 +5107,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "sysinfo",
  "tempfile",
  "time",
  "tokio",
