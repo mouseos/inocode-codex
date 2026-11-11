@@ -39,6 +39,61 @@ pub(crate) fn record_tokens(thread_id: ThreadId, usage: Option<&TokenUsage>) {
     );
 }
 
+/// One statistics record per completed model request: token kinds, generation speed and the
+/// rate limits that came with the response.
+pub(crate) fn record_request(
+    thread_id: ThreadId,
+    model: &str,
+    provider: &str,
+    account: Option<String>,
+    usage: Option<&TokenUsage>,
+    generation: std::time::Duration,
+    rate_limits: Option<&codex_protocol::protocol::RateLimitSnapshot>,
+) {
+    if !metrics_enabled() {
+        return;
+    }
+    let Some(usage) = usage else { return };
+    let n = |v: i64| u64::try_from(v).unwrap_or(0);
+    let input = n(usage.input_tokens);
+    let cached = n(usage.cached_input_tokens).min(input);
+    let output = n(usage.output_tokens);
+    let gen_ms = u64::try_from(generation.as_millis()).ok();
+    let (mut five_hour, mut weekly) = (None, None);
+    if let Some(limits) = rate_limits {
+        for window in [limits.primary.as_ref(), limits.secondary.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            codex_inocode_stats::classify_window(
+                window.window_minutes,
+                codex_inocode_stats::LimitSample {
+                    used_percent: window.used_percent,
+                    resets_at: window.resets_at,
+                },
+                &mut five_hour,
+                &mut weekly,
+            );
+        }
+    }
+    codex_inocode_stats::record_global(&codex_inocode_stats::RequestRecord {
+        ts_ms: codex_inocode_stats::now_ms(),
+        source: "live".into(),
+        thread_id: thread_id.to_string(),
+        model: model.to_string(),
+        provider: provider.to_string(),
+        account,
+        uncached_input: input - cached,
+        cached_input: cached,
+        output,
+        reasoning: n(usage.reasoning_output_tokens),
+        gen_ms,
+        tok_per_s: codex_inocode_stats::RequestRecord::speed(output, gen_ms),
+        five_hour,
+        weekly,
+    });
+}
+
 pub(crate) fn record_wait_agent_call(thread_id: ThreadId) {
     record(thread_id, MetricEvent::WaitAgentCall);
 }

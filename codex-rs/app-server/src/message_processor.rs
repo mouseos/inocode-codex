@@ -1225,6 +1225,11 @@ impl MessageProcessor {
             | ClientRequest::InocodeTeamStatus { .. }
             | ClientRequest::InocodeMetricsSummary { .. }
             | ClientRequest::InocodeMetricsHistory { .. }
+            | ClientRequest::InocodeStatsSummary { .. }
+            | ClientRequest::InocodeStatsHourly { .. }
+            | ClientRequest::InocodeStatsDaily { .. }
+            | ClientRequest::InocodeStatsEstimate { .. }
+            | ClientRequest::InocodeStatsSeedFromCodexHistory { .. }
             | ClientRequest::InocodeMetricsMarkFalsePositive { .. }
             | ClientRequest::InocodeAdvisorEvents { .. }
             | ClientRequest::InocodeMessagesList { .. }
@@ -1254,6 +1259,9 @@ impl MessageProcessor {
             | ClientRequest::InocodeAccountsUse { .. }
             | ClientRequest::InocodeAccountsLoginStart { .. }
             | ClientRequest::InocodeAccountsLoginCancel { .. }
+            | ClientRequest::InocodeAccountsLoginComplete { .. }
+            | ClientRequest::InocodeAccountsReauth { .. }
+            | ClientRequest::InocodeProvidersList { .. }
             | ClientRequest::InocodeAccountsPolicyRead { .. }
             | ClientRequest::InocodeAccountsPolicyWrite { .. }
             | ClientRequest::InocodeFlagsWrite { .. }) => crate::inocode::handle(request).await,

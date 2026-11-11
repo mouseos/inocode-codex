@@ -72,6 +72,7 @@ pub(crate) fn without_notification_media(notification: ServerNotification) -> Se
         | ServerNotification::ThreadPredictionUpdated(_)
         | ServerNotification::InocodeTeamUpdated(_)
         | ServerNotification::InocodeAccountsUpdated(_)
+        | ServerNotification::InocodeStatsSeedProgress(_)
         | ServerNotification::InocodeAccountsSwitched(_)
         | ServerNotification::InocodeAccountsLoginCompleted(_)
         | ServerNotification::InocodeAdvisorEvent(_)

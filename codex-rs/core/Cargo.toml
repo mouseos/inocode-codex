@@ -85,6 +85,7 @@ codex-inocode-flags = { workspace = true }
 codex-inocode-knowledge = { workspace = true }
 codex-inocode-advisor = { workspace = true }
 codex-inocode-compaction = { workspace = true }
+codex-inocode-stats = { workspace = true }
 codex-inocode-metrics = { workspace = true }
 codex-inocode-protocol = { workspace = true }
 codex-inocode-team = { workspace = true }

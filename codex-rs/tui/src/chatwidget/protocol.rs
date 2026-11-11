@@ -404,6 +404,7 @@ impl ChatWidget {
             | ServerNotification::InocodeGuardFired(_)
             | ServerNotification::InocodeKnowledgeRecorded(_)
             | ServerNotification::InocodeAccountsUpdated(_)
+            | ServerNotification::InocodeStatsSeedProgress(_)
             | ServerNotification::InocodeAccountsSwitched(_)
             | ServerNotification::InocodeAccountsLoginCompleted(_)
             | ServerNotification::InocodeAdvisorEvent(_)

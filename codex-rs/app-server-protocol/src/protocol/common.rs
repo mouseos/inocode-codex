@@ -618,6 +618,36 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeMetricsMarkFalsePositiveResponse,
     },
+    #[experimental("inocode/stats/summary")]
+    InocodeStatsSummary => "inocode/stats/summary" {
+        params: v2::InocodeStatsSummaryParams,
+        serialization: None,
+        response: v2::InocodeStatsSummaryResponse,
+    },
+    #[experimental("inocode/stats/hourly")]
+    InocodeStatsHourly => "inocode/stats/hourly" {
+        params: v2::InocodeStatsHourlyParams,
+        serialization: None,
+        response: v2::InocodeStatsHourlyResponse,
+    },
+    #[experimental("inocode/stats/daily")]
+    InocodeStatsDaily => "inocode/stats/daily" {
+        params: v2::InocodeStatsDailyParams,
+        serialization: None,
+        response: v2::InocodeStatsDailyResponse,
+    },
+    #[experimental("inocode/stats/estimate")]
+    InocodeStatsEstimate => "inocode/stats/estimate" {
+        params: v2::InocodeStatsEstimateParams,
+        serialization: None,
+        response: v2::InocodeStatsEstimateResponse,
+    },
+    #[experimental("inocode/stats/seedFromCodexHistory")]
+    InocodeStatsSeedFromCodexHistory => "inocode/stats/seedFromCodexHistory" {
+        params: v2::InocodeStatsSeedFromCodexHistoryParams,
+        serialization: None,
+        response: v2::InocodeStatsSeedFromCodexHistoryResponse,
+    },
     #[experimental("inocode/advisor/events")]
     InocodeAdvisorEvents => "inocode/advisor/events" {
         params: v2::InocodeAdvisorEventsParams,
@@ -785,6 +815,24 @@ client_request_definitions! {
         params: v2::InocodeAccountsLoginStartParams,
         serialization: None,
         response: v2::InocodeAccountsLoginStartResponse,
+    },
+    #[experimental("inocode/accounts/reauth")]
+    InocodeAccountsReauth => "inocode/accounts/reauth" {
+        params: v2::InocodeAccountsReauthParams,
+        serialization: None,
+        response: v2::InocodeAccountsReauthResponse,
+    },
+    #[experimental("inocode/accounts/login/complete")]
+    InocodeAccountsLoginComplete => "inocode/accounts/login/complete" {
+        params: v2::InocodeAccountsLoginCompleteParams,
+        serialization: None,
+        response: v2::InocodeAccountsLoginCompleteResponse,
+    },
+    #[experimental("inocode/providers/list")]
+    InocodeProvidersList => "inocode/providers/list" {
+        params: v2::InocodeProvidersListParams,
+        serialization: None,
+        response: v2::InocodeProvidersListResponse,
     },
     #[experimental("inocode/accounts/login/cancel")]
     InocodeAccountsLoginCancel => "inocode/accounts/login/cancel" {
@@ -2339,6 +2387,8 @@ server_notification_definitions! {
     InocodeMessagesAppended => "inocode/messages/appended" (v2::InocodeMessagesAppendedNotification),
     #[experimental("inocode/compaction/event")]
     InocodeCompactionEvent => "inocode/compaction/event" (v2::InocodeCompactionEventNotification),
+    #[experimental("inocode/stats/seedProgress")]
+    InocodeStatsSeedProgress => "inocode/stats/seedProgress" (v2::InocodeStatsSeedProgressNotification),
     #[experimental("inocode/accounts/updated")]
     InocodeAccountsUpdated => "inocode/accounts/updated" (v2::InocodeAccountsUpdatedNotification),
     #[experimental("inocode/accounts/switched")]

@@ -2161,6 +2161,7 @@ dependencies = [
  "codex-client",
  "codex-http-client",
  "codex-protocol",
+ "codex-provider-adapters",
  "codex-utils-rustls-provider",
  "codex-websocket-client",
  "eventsource-stream",
@@ -2236,6 +2237,7 @@ dependencies = [
  "codex-inocode-knowledge",
  "codex-inocode-metrics",
  "codex-inocode-protocol",
+ "codex-inocode-stats",
  "codex-inocode-team",
  "codex-inocode-tool-output",
  "codex-login",
@@ -3163,6 +3165,7 @@ dependencies = [
  "codex-inocode-knowledge",
  "codex-inocode-metrics",
  "codex-inocode-protocol",
+ "codex-inocode-stats",
  "codex-inocode-team",
  "codex-inocode-tool-output",
  "codex-install-context",
@@ -4201,6 +4204,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-inocode-stats"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "codex-inocode-flags",
+ "dirs",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "walkdir",
+]
+
+[[package]]
 name = "codex-inocode-team"
 version = "0.0.0"
 dependencies = [
@@ -4923,6 +4940,17 @@ version = "0.0.0"
 dependencies = [
  "codex-protocol",
  "uuid",
+]
+
+[[package]]
+name = "codex-provider-adapters"
+version = "0.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "codex-protocol",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -81,6 +81,7 @@ members = [
     "ext/inocode-advisor",
     "ext/inocode-compaction",
     "ext/inocode-metrics",
+    "ext/inocode-stats",
     "ext/inocode-protocol",
     "ext/inocode-team",
     "ext/inocode-tool-output",
@@ -97,6 +98,7 @@ members = [
     "linux-sandbox",
     "lmstudio",
     "login",
+    "provider-adapters",
     "codex-mcp",
     "memories/read",
     "memories/write",
@@ -265,6 +267,7 @@ codex-inocode-knowledge = { path = "ext/inocode-knowledge" }
 codex-inocode-advisor = { path = "ext/inocode-advisor" }
 codex-inocode-compaction = { path = "ext/inocode-compaction" }
 codex-inocode-metrics = { path = "ext/inocode-metrics" }
+codex-inocode-stats = { path = "ext/inocode-stats" }
 codex-inocode-protocol = { path = "ext/inocode-protocol" }
 codex-inocode-team = { path = "ext/inocode-team" }
 codex-inocode-tool-output = { path = "ext/inocode-tool-output" }
@@ -283,6 +286,7 @@ codex-keyring-store = { path = "keyring-store" }
 codex-linux-sandbox = { path = "linux-sandbox" }
 codex-lmstudio = { path = "lmstudio" }
 codex-login = { path = "login" }
+codex-provider-adapters = { path = "provider-adapters" }
 codex-mermaid = { path = "mermaid" }
 codex-message-history = { path = "message-history" }
 codex-memories-extension = { path = "ext/memories" }

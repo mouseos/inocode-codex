@@ -241,6 +241,7 @@ pub(super) fn server_notification_thread_target(
         | ServerNotification::InocodeGuardFired(_)
         | ServerNotification::InocodeKnowledgeRecorded(_)
         | ServerNotification::InocodeAccountsUpdated(_)
+        | ServerNotification::InocodeStatsSeedProgress(_)
         | ServerNotification::InocodeAccountsSwitched(_)
         | ServerNotification::InocodeAccountsLoginCompleted(_) => None,
     };

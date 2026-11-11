@@ -1,0 +1,668 @@
+use crate::record::LimitSample;
+use crate::record::RequestRecord;
+use chrono::Datelike;
+use chrono::TimeZone;
+use chrono::Timelike;
+use serde::Deserialize;
+use serde::Serialize;
+use std::collections::BTreeMap;
+use std::collections::HashMap;
+
+/// Which records a view covers.
+#[derive(Debug, Clone, Default)]
+pub struct Query {
+    pub since_ms: u64,
+    pub model: Option<String>,
+    pub provider: Option<String>,
+}
+
+fn keep(r: &RequestRecord, q: &Query) -> bool {
+    r.ts_ms >= q.since_ms && q.provider.as_deref().is_none_or(|p| r.provider == p)
+}
+
+/// Quota percent per 1,000,000 tokens of each kind.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Weights {
+    pub uncached_input: f64,
+    pub cached_input: f64,
+    pub output: f64,
+}
+
+// ---------------------------------------------------------------------------------------------
+// Quota steps
+// ---------------------------------------------------------------------------------------------
+
+/// A rise of the used percent of one window, with the records that happened since the previous
+/// reading of the same window of the same account. Readings are coarse (whole percents), so
+/// consumption is only ever attributed over such steps.
+struct Step {
+    idxs: Vec<usize>,
+    delta: f64,
+}
+
+#[derive(Clone, Copy)]
+enum Window {
+    FiveHour,
+    Weekly,
+}
+
+fn sample_of(r: &RequestRecord, w: Window) -> Option<LimitSample> {
+    match w {
+        Window::FiveHour => r.five_hour,
+        Window::Weekly => r.weekly,
+    }
+}
+
+fn same_reset(a: Option<i64>, b: Option<i64>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => (a - b).abs() <= 120,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// `records` must be sorted by time.
+fn steps(records: &[RequestRecord], w: Window) -> Vec<Step> {
+    let mut series: BTreeMap<(&str, &str), Vec<usize>> = BTreeMap::new();
+    for (i, r) in records.iter().enumerate() {
+        series
+            .entry((r.provider.as_str(), r.account.as_deref().unwrap_or("")))
+            .or_default()
+            .push(i);
+    }
+    let mut out = Vec::new();
+    for idxs in series.into_values() {
+        let mut base: Option<LimitSample> = None;
+        let mut acc: Vec<usize> = Vec::new();
+        for i in idxs {
+            let Some(s) = sample_of(&records[i], w) else {
+                if base.is_some() {
+                    acc.push(i);
+                }
+                continue;
+            };
+            let Some(b) = base else {
+                base = Some(s);
+                acc.clear();
+                continue;
+            };
+            if !same_reset(b.resets_at, s.resets_at) || s.used_percent < b.used_percent - 1e-9 {
+                base = Some(s);
+                acc.clear();
+                continue;
+            }
+            acc.push(i);
+            if s.used_percent > b.used_percent + 1e-9 {
+                out.push(Step {
+                    idxs: std::mem::take(&mut acc),
+                    delta: s.used_percent - b.used_percent,
+                });
+                base = Some(s);
+            }
+        }
+    }
+    out
+}
+
+/// Per-record share of the consumption: each step is divided over its records by token count.
+fn attribute(records: &[RequestRecord], steps: &[Step]) -> Vec<f64> {
+    let mut share = vec![0.0; records.len()];
+    for step in steps {
+        let total: f64 = step
+            .idxs
+            .iter()
+            .map(|&i| records[i].total_tokens() as f64 + 1.0)
+            .sum();
+        for &i in &step.idxs {
+            share[i] += step.delta * (records[i].total_tokens() as f64 + 1.0) / total;
+        }
+    }
+    share
+}
+
+// ---------------------------------------------------------------------------------------------
+// Fit
+// ---------------------------------------------------------------------------------------------
+
+type Sample = ([f64; 3], f64);
+
+fn solve(a: &mut Vec<Vec<f64>>, b: &mut Vec<f64>) -> Option<Vec<f64>> {
+    let n = b.len();
+    for col in 0..n {
+        let pivot = (col..n).max_by(|&x, &y| a[x][col].abs().total_cmp(&a[y][col].abs()))?;
+        if a[pivot][col].abs() < 1e-18 {
+            return None;
+        }
+        a.swap(col, pivot);
+        b.swap(col, pivot);
+        for row in col + 1..n {
+            let f = a[row][col] / a[col][col];
+            for k in col..n {
+                a[row][k] -= f * a[col][k];
+            }
+            b[row] -= f * b[col];
+        }
+    }
+    let mut x = vec![0.0; n];
+    for row in (0..n).rev() {
+        let s: f64 = (row + 1..n).map(|k| a[row][k] * x[k]).sum();
+        x[row] = (b[row] - s) / a[row][row];
+    }
+    Some(x)
+}
+
+/// Non-negative least squares (no intercept) of `y ≈ w · x` over at most three variables.
+fn fit(samples: &[Sample]) -> [f64; 3] {
+    let mut active = [true; 3];
+    for k in 0..3 {
+        if samples.iter().all(|(x, _)| x[k] == 0.0) {
+            active[k] = false;
+        }
+    }
+    loop {
+        let ids: Vec<usize> = (0..3).filter(|&k| active[k]).collect();
+        if ids.is_empty() {
+            return [0.0; 3];
+        }
+        let mut a = vec![vec![0.0; ids.len()]; ids.len()];
+        let mut b = vec![0.0; ids.len()];
+        for (x, y) in samples {
+            for (r, &i) in ids.iter().enumerate() {
+                b[r] += x[i] * y;
+                for (c, &j) in ids.iter().enumerate() {
+                    a[r][c] += x[i] * x[j];
+                }
+            }
+        }
+        for (r, row) in a.iter_mut().enumerate() {
+            row[r] += 1e-12;
+        }
+        let Some(w) = solve(&mut a, &mut b) else {
+            return [0.0; 3];
+        };
+        if let Some((worst, _)) = w
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| **v < 0.0)
+            .min_by(|a, b| a.1.total_cmp(b.1))
+        {
+            active[ids[worst]] = false;
+            continue;
+        }
+        let mut out = [0.0; 3];
+        for (r, &i) in ids.iter().enumerate() {
+            out[i] = w[r];
+        }
+        return out;
+    }
+}
+
+/// Fit and blended rate for one model and window from the steps made only of its requests.
+struct WindowFit {
+    samples: usize,
+    weights: Option<Weights>,
+    per_million: Option<f64>,
+}
+
+fn window_fit(records: &[RequestRecord], steps: &[Step], model: &str, min: usize) -> WindowFit {
+    let mut samples: Vec<Sample> = Vec::new();
+    let (mut sum_delta, mut sum_tokens) = (0.0, 0.0);
+    for s in steps {
+        if !s.idxs.iter().all(|&i| records[i].model == model) {
+            continue;
+        }
+        let mut x = [0.0; 3];
+        for &i in &s.idxs {
+            x[0] += records[i].uncached_input as f64 / 1e6;
+            x[1] += records[i].cached_input as f64 / 1e6;
+            x[2] += records[i].output as f64 / 1e6;
+        }
+        sum_delta += s.delta;
+        sum_tokens += x[0] + x[1] + x[2];
+        samples.push((x, s.delta));
+    }
+    let n = samples.len();
+    if n < min {
+        return WindowFit {
+            samples: n,
+            weights: None,
+            per_million: None,
+        };
+    }
+    let w = fit(&samples);
+    let usable = w.iter().any(|v| *v > 0.0);
+    WindowFit {
+        samples: n,
+        weights: usable.then_some(Weights {
+            uncached_input: w[0],
+            cached_input: w[1],
+            output: w[2],
+        }),
+        per_million: (sum_tokens > 0.0).then(|| sum_delta / sum_tokens),
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Views
+// ---------------------------------------------------------------------------------------------
+
+/// One row of `inocode/stats/summary`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelStats {
+    pub model: String,
+    pub provider: String,
+    pub requests: u64,
+    pub uncached_input: u64,
+    pub cached_input: u64,
+    pub output: u64,
+    pub reasoning: u64,
+    /// Quota consumed in the 5-hour window (percent points).
+    pub five_hour_percent: f64,
+    /// Quota consumed in the weekly window (percent points).
+    pub weekly_percent: f64,
+    pub five_hour_weights: Option<Weights>,
+    pub weekly_weights: Option<Weights>,
+    /// Blended percent per 1,000,000 tokens.
+    pub five_hour_per_million: Option<f64>,
+    pub weekly_per_million: Option<f64>,
+    pub five_hour_samples: u64,
+    pub weekly_samples: u64,
+    /// Too few samples for a per-million figure in both windows.
+    pub insufficient: bool,
+    pub avg_tok_per_s: Option<f64>,
+    pub speed_samples: u64,
+}
+
+/// Output tokens divided by generation seconds, summed over the measured records.
+fn avg_speed<'a>(it: impl Iterator<Item = &'a RequestRecord>) -> (Option<f64>, u64) {
+    let (mut out, mut secs, mut n) = (0.0, 0.0, 0u64);
+    for r in it {
+        if let (Some(ms), Some(_)) = (r.gen_ms, r.tok_per_s) {
+            out += r.output as f64;
+            secs += ms as f64 / 1000.0;
+            n += 1;
+        }
+    }
+    ((secs > 0.0).then(|| out / secs), n)
+}
+
+pub fn summarize(all: &[RequestRecord], q: &Query, min_samples: usize) -> Vec<ModelStats> {
+    let records: Vec<RequestRecord> = all.iter().filter(|r| keep(r, q)).cloned().collect();
+    let five_steps = steps(&records, Window::FiveHour);
+    let week_steps = steps(&records, Window::Weekly);
+    let five_share = attribute(&records, &five_steps);
+    let week_share = attribute(&records, &week_steps);
+
+    let mut by_model: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, r) in records.iter().enumerate() {
+        if q.model.as_deref().is_none_or(|m| r.model == m) {
+            by_model.entry(&r.model).or_default().push(i);
+        }
+    }
+    let mut out = Vec::new();
+    for (model, idxs) in by_model {
+        let rows = || idxs.iter().map(|&i| &records[i]);
+        let five = window_fit(&records, &five_steps, model, min_samples);
+        let week = window_fit(&records, &week_steps, model, min_samples);
+        let (avg, speed_samples) = avg_speed(rows());
+        let mut providers: HashMap<&str, usize> = HashMap::new();
+        for r in rows() {
+            *providers.entry(&r.provider).or_default() += 1;
+        }
+        let provider = providers
+            .into_iter()
+            .max_by_key(|(_, n)| *n)
+            .map(|(p, _)| p.to_string())
+            .unwrap_or_default();
+        out.push(ModelStats {
+            model: model.to_string(),
+            provider,
+            requests: idxs.len() as u64,
+            uncached_input: rows().map(|r| r.uncached_input).sum(),
+            cached_input: rows().map(|r| r.cached_input).sum(),
+            output: rows().map(|r| r.output).sum(),
+            reasoning: rows().map(|r| r.reasoning).sum(),
+            five_hour_percent: idxs.iter().map(|&i| five_share[i]).sum(),
+            weekly_percent: idxs.iter().map(|&i| week_share[i]).sum(),
+            insufficient: five.per_million.is_none() && week.per_million.is_none(),
+            five_hour_weights: five.weights,
+            weekly_weights: week.weights,
+            five_hour_per_million: five.per_million,
+            weekly_per_million: week.per_million,
+            five_hour_samples: five.samples as u64,
+            weekly_samples: week.samples as u64,
+            avg_tok_per_s: avg,
+            speed_samples,
+        });
+    }
+    out
+}
+
+fn local(ts_ms: u64) -> Option<chrono::DateTime<chrono::Local>> {
+    chrono::Local
+        .timestamp_millis_opt(i64::try_from(ts_ms).ok()?)
+        .single()
+}
+
+/// Average speed of one local hour of the day (0–23) or weekday (0 = Monday).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HourlyRow {
+    pub bucket: u32,
+    pub requests: u64,
+    pub speed_samples: u64,
+    pub avg_tok_per_s: Option<f64>,
+}
+
+/// Speed rows of one model (and provider). Speeds of different models are never mixed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HourlySeries {
+    pub model: String,
+    pub provider: String,
+    /// 24 rows, hour 0-23 in local time.
+    pub hours: Vec<HourlyRow>,
+    /// 7 rows, Monday first.
+    pub weekdays: Vec<HourlyRow>,
+}
+
+fn speed_rows(groups: &[Vec<&RequestRecord>]) -> Vec<HourlyRow> {
+    groups
+        .iter()
+        .enumerate()
+        .map(|(bucket, g)| {
+            let (avg, n) = avg_speed(g.iter().copied());
+            HourlyRow {
+                bucket: bucket as u32,
+                requests: g.len() as u64,
+                speed_samples: n,
+                avg_tok_per_s: avg,
+            }
+        })
+        .collect()
+}
+
+/// One series per (model, provider), sorted by model.
+pub fn hourly(all: &[RequestRecord], q: &Query) -> Vec<HourlySeries> {
+    let mut by_model: BTreeMap<(&str, &str), Vec<&RequestRecord>> = BTreeMap::new();
+    for r in all
+        .iter()
+        .filter(|r| keep(r, q) && q.model.as_deref().is_none_or(|m| r.model == m))
+    {
+        by_model.entry((&r.model, &r.provider)).or_default().push(r);
+    }
+    by_model
+        .into_iter()
+        .map(|((model, provider), records)| {
+            let mut hours: Vec<Vec<&RequestRecord>> = vec![Vec::new(); 24];
+            let mut days: Vec<Vec<&RequestRecord>> = vec![Vec::new(); 7];
+            for r in records {
+                if let Some(t) = local(r.ts_ms) {
+                    hours[t.hour() as usize].push(r);
+                    days[t.weekday().num_days_from_monday() as usize].push(r);
+                }
+            }
+            HourlySeries {
+                model: model.to_string(),
+                provider: provider.to_string(),
+                hours: speed_rows(&hours),
+                weekdays: speed_rows(&days),
+            }
+        })
+        .collect()
+}
+
+/// One model's part of a day.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyModel {
+    pub model: String,
+    pub provider: String,
+    pub requests: u64,
+    pub tokens: u64,
+    pub five_hour_percent: f64,
+    pub weekly_percent: f64,
+    pub avg_tok_per_s: Option<f64>,
+}
+
+/// A day: totals of requests, tokens and quota, and the per-model parts (with their own speeds;
+/// no mixed speed).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyRow {
+    /// Local date, `YYYY-MM-DD`.
+    pub date: String,
+    pub requests: u64,
+    pub tokens: u64,
+    pub five_hour_percent: f64,
+    pub weekly_percent: f64,
+    pub models: Vec<DailyModel>,
+}
+
+pub fn daily(all: &[RequestRecord], q: &Query) -> Vec<DailyRow> {
+    let records: Vec<RequestRecord> = all.iter().filter(|r| keep(r, q)).cloned().collect();
+    let five_share = attribute(&records, &steps(&records, Window::FiveHour));
+    let week_share = attribute(&records, &steps(&records, Window::Weekly));
+    let mut by_day: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (i, r) in records.iter().enumerate() {
+        if q.model.as_deref().is_none_or(|m| r.model == m)
+            && let Some(t) = local(r.ts_ms)
+        {
+            by_day.entry(t.format("%Y-%m-%d").to_string()).or_default().push(i);
+        }
+    }
+    by_day
+        .into_iter()
+        .map(|(date, idxs)| {
+            let mut by_model: BTreeMap<(&str, &str), Vec<usize>> = BTreeMap::new();
+            for &i in &idxs {
+                by_model
+                    .entry((&records[i].model, &records[i].provider))
+                    .or_default()
+                    .push(i);
+            }
+            let models: Vec<DailyModel> = by_model
+                .into_iter()
+                .map(|((model, provider), ids)| DailyModel {
+                    model: model.to_string(),
+                    provider: provider.to_string(),
+                    requests: ids.len() as u64,
+                    tokens: ids.iter().map(|&i| records[i].total_tokens()).sum(),
+                    five_hour_percent: ids.iter().map(|&i| five_share[i]).sum(),
+                    weekly_percent: ids.iter().map(|&i| week_share[i]).sum(),
+                    avg_tok_per_s: avg_speed(ids.iter().map(|&i| &records[i])).0,
+                })
+                .collect();
+            DailyRow {
+                date,
+                requests: idxs.len() as u64,
+                tokens: idxs.iter().map(|&i| records[i].total_tokens()).sum(),
+                five_hour_percent: models.iter().map(|m| m.five_hour_percent).sum(),
+                weekly_percent: models.iter().map(|m| m.weekly_percent).sum(),
+                models,
+            }
+        })
+        .collect()
+}
+
+/// Prediction for a planned request, from the fitted rates of the recent records.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EstimateResult {
+    pub five_hour_percent: Option<f64>,
+    pub weekly_percent: Option<f64>,
+    pub seconds: Option<f64>,
+    /// No fitted rate for this model yet.
+    pub insufficient: bool,
+}
+
+pub fn estimate(
+    all: &[RequestRecord],
+    q: &Query,
+    model: &str,
+    uncached_input: u64,
+    cached_input: u64,
+    output: u64,
+    min_samples: usize,
+) -> EstimateResult {
+    let q = Query {
+        model: Some(model.to_string()),
+        ..q.clone()
+    };
+    let row = summarize(all, &q, min_samples).into_iter().next();
+    let cost = |w: Option<Weights>| {
+        w.map(|w| {
+            (uncached_input as f64 * w.uncached_input
+                + cached_input as f64 * w.cached_input
+                + output as f64 * w.output)
+                / 1e6
+        })
+    };
+    let five = row.as_ref().and_then(|r| cost(r.five_hour_weights));
+    let week = row.as_ref().and_then(|r| cost(r.weekly_weights));
+    let seconds = row
+        .as_ref()
+        .and_then(|r| r.avg_tok_per_s)
+        .filter(|v| *v > 0.0)
+        .map(|v| output as f64 / v);
+    EstimateResult {
+        insufficient: five.is_none() && week.is_none(),
+        five_hour_percent: five,
+        weekly_percent: week,
+        seconds,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rec(
+        ts_ms: u64,
+        model: &str,
+        uncached: u64,
+        cached: u64,
+        out: u64,
+        five: f64,
+        week: f64,
+    ) -> RequestRecord {
+        RequestRecord {
+            ts_ms,
+            source: "live".into(),
+            thread_id: "t".into(),
+            model: model.into(),
+            provider: "openai".into(),
+            account: Some("a".into()),
+            uncached_input: uncached,
+            cached_input: cached,
+            output: out,
+            reasoning: 0,
+            gen_ms: Some(10_000),
+            tok_per_s: RequestRecord::speed(out, Some(10_000)),
+            five_hour: Some(LimitSample {
+                used_percent: five,
+                resets_at: Some(1_000_000),
+            }),
+            weekly: Some(LimitSample {
+                used_percent: week,
+                resets_at: Some(9_000_000),
+            }),
+        }
+    }
+
+    /// Cost: 2 %/M uncached, 0.2 %/M cached, 10 %/M output. Readings every request, so steps
+    /// are single records.
+    fn history() -> Vec<RequestRecord> {
+        let mut out = Vec::new();
+        let mut five = 0.0;
+        for i in 0..20u64 {
+            let (u, c, o) = (100_000 + i * 10_000, 400_000 + (i % 3) * 100_000, 5_000 + (i % 4) * 3_000);
+            five += (u as f64 * 2.0 + c as f64 * 0.2 + o as f64 * 10.0) / 1e6;
+            out.push(rec(1_000 + i, "m", u, c, o, five, five / 4.0));
+        }
+        out
+    }
+
+    #[test]
+    fn fit_recovers_weights() {
+        let rows = summarize(&history(), &Query::default(), 5);
+        let m = &rows[0];
+        let w = m.five_hour_weights.expect("weights");
+        assert!((w.uncached_input - 2.0).abs() < 0.05, "{w:?}");
+        assert!((w.cached_input - 0.2).abs() < 0.05, "{w:?}");
+        assert!((w.output - 10.0).abs() < 0.2, "{w:?}");
+        assert!(!m.insufficient);
+        assert_eq!(m.requests, 20);
+        // 10 000 ms for output tokens: average is output / 10 s.
+        assert!(m.avg_tok_per_s.is_some());
+    }
+
+    #[test]
+    fn too_few_samples_is_insufficient() {
+        let rows = summarize(&history()[..3], &Query::default(), 8);
+        assert!(rows[0].insufficient);
+        assert!(rows[0].five_hour_weights.is_none());
+        let e = estimate(&history()[..3], &Query::default(), "m", 1, 1, 1, 8);
+        assert!(e.insufficient && e.five_hour_percent.is_none());
+    }
+
+    #[test]
+    fn estimate_uses_the_fitted_weights() {
+        let e = estimate(&history(), &Query::default(), "m", 1_000_000, 0, 100_000, 5);
+        let five = e.five_hour_percent.expect("five");
+        assert!((five - 3.0).abs() < 0.2, "{five}");
+        assert!(e.seconds.expect("seconds") > 0.0);
+        assert!(!e.insufficient);
+    }
+
+    #[test]
+    fn mixed_models_do_not_pollute_the_fit_but_share_the_consumption() {
+        let mut rows = history();
+        // An interleaved other-model request makes every step mixed for neither model's fit...
+        for (i, r) in rows.iter_mut().enumerate() {
+            if i % 2 == 1 {
+                r.model = "other".into();
+            }
+        }
+        // ...but a step is pure when only one model's records fall in it; here every second
+        // record's step also holds the previous record of the other model.
+        let out = summarize(&rows, &Query::default(), 1);
+        let total: f64 = out.iter().map(|m| m.five_hour_percent).sum();
+        let last = rows.last().unwrap().five_hour.unwrap().used_percent;
+        let first = rows[0].five_hour.unwrap().used_percent;
+        assert!((total - (last - first)).abs() < 1e-6, "{total}");
+    }
+
+    #[test]
+    fn a_window_reset_starts_a_new_baseline() {
+        let mut a = rec(1, "m", 1000, 0, 100, 10.0, 1.0);
+        let mut b = rec(2, "m", 1000, 0, 100, 12.0, 1.1);
+        let mut c = rec(3, "m", 1000, 0, 100, 1.0, 1.2); // dropped: window reset
+        c.five_hour = Some(LimitSample {
+            used_percent: 1.0,
+            resets_at: Some(2_000_000),
+        });
+        a.account = None;
+        b.account = None;
+        c.account = None;
+        let out = summarize(&[a, b, c], &Query::default(), 1);
+        assert!((out[0].five_hour_percent - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn hourly_and_daily_group_by_local_time() {
+        let mut rows = history();
+        rows[0].model = "slow".into();
+        let h = hourly(&rows, &Query::default());
+        assert_eq!(h.len(), 2, "one series per model");
+        assert_eq!(h[0].hours.len(), 24);
+        assert_eq!(h[0].weekdays.len(), 7);
+        assert_eq!(h.iter().map(|s| s.hours.iter().map(|r| r.requests).sum::<u64>()).sum::<u64>(), 20);
+        let d = daily(&rows, &Query::default());
+        assert!(!d.is_empty());
+        assert_eq!(d.iter().map(|r| r.requests).sum::<u64>(), 20);
+        assert_eq!(d.iter().map(|r| r.models.len()).max(), Some(2));
+    }
+}

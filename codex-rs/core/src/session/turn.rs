@@ -2042,7 +2042,9 @@ async fn run_sampling_request(
                     }
                     return Err(err);
                 }
-                CodexErrorDetails::QuotaExceeded | CodexErrorDetails::UsageNotIncluded
+                CodexErrorDetails::QuotaExceeded
+                | CodexErrorDetails::UsageNotIncluded
+                | CodexErrorDetails::RateLimitExceeded(_)
                     if crate::account_pool_hook::recover_from_limit(&sess, &turn_context, &err)
                         .await =>
                 {
@@ -3014,6 +3016,9 @@ async fn try_run_sampling_request(
         None
     };
     let mut resampling = crate::guardian::ResponseResampling::new(&sess);
+    let request_started = Instant::now();
+    let mut first_event_at: Option<Instant> = None;
+    let mut seen_rate_limits: Option<codex_protocol::protocol::RateLimitSnapshot> = None;
     let mut stream_request = async |prompt: &Prompt| {
         client_session
             .stream(
@@ -3163,7 +3168,10 @@ async fn try_run_sampling_request(
                 "stream closed before response.completed".into(),
             ))
         }) {
-            Ok(event) => event,
+            Ok(event) => {
+                first_event_at.get_or_insert_with(Instant::now);
+                event
+            }
             Err(err) => {
                 if let CodexErrorDetails::ResponseIncomplete(incomplete) = err.details() {
                     if let Some(usage) = &incomplete.token_usage {
@@ -3536,6 +3544,7 @@ async fn try_run_sampling_request(
             ResponseEvent::RateLimits(snapshot) => {
                 // Update internal state with latest rate limits, but defer sending until
                 // token usage is available to avoid duplicate TokenCount events.
+                seen_rate_limits = Some(snapshot.clone());
                 sess.record_rate_limits_info(snapshot).await;
                 should_emit_token_count = true;
             }
@@ -3590,6 +3599,15 @@ async fn try_run_sampling_request(
                     usage_metadata.as_ref(),
                 )
                 .await;
+                crate::inocode_loop::record_request(
+                    sess.thread_id,
+                    &step_context.settings.model_info.slug,
+                    &turn_context.config.model_provider_id,
+                    crate::account_pool_hook::current_alias(&turn_context),
+                    token_usage.as_ref(),
+                    first_event_at.unwrap_or(request_started).elapsed(),
+                    seen_rate_limits.as_ref(),
+                );
                 let budget_result = sess
                     .record_token_usage_info(
                         &turn_context,

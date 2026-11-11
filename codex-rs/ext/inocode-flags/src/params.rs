@@ -76,6 +76,7 @@ pub const PARAMS: &[ParamSpec] = &[
     float("team.split_overhead_secs", 60.0),
     float("team.integrate_overhead_secs", 60.0),
     float("team.task_secs", 600.0),
+    int("stats.min_samples", 8),
     ParamSpec {
         key: "team.fork_turns_default",
         kind: ParamKind::Enum,

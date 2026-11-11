@@ -1392,3 +1392,230 @@ pub struct InocodeEvidenceClaimEvidence {
     pub source_title: String,
     pub quote: String,
 }
+
+// -------------------------------------------------------------------- stats
+// Shape fixed by `ref/docs/24-stats-rpc.md`. "primary" is the 5-hour window, "secondary" the weekly one.
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsSummaryParams {
+    /// Last N days (0 = everything).
+    pub days: i64,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub model: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub provider: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsTokenTotals {
+    pub uncached_input: i64,
+    pub cached_input: i64,
+    pub output: i64,
+    pub reasoning: i64,
+}
+
+/// Quota use in the two windows, percent points. A window without a fit is null.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsQuota {
+    pub primary_percent: Option<f64>,
+    pub secondary_percent: Option<f64>,
+}
+
+/// Quota increase per 1,000,000 tokens of each kind (regression weights).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsQuotaPerMillion {
+    pub uncached_input: InocodeStatsQuota,
+    pub cached_input: InocodeStatsQuota,
+    pub output: InocodeStatsQuota,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsModel {
+    pub model: String,
+    pub provider: String,
+    pub requests: i64,
+    pub tokens: InocodeStatsTokenTotals,
+    /// Sum of the differences between neighbouring readings inside one reset window.
+    pub quota_used: InocodeStatsQuota,
+    /// Null while there are too few samples (then `insufficient` is true).
+    pub quota_per_million: Option<InocodeStatsQuotaPerMillion>,
+    pub avg_tokens_per_second: Option<f64>,
+    pub insufficient: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsSummaryResponse {
+    pub days: i64,
+    pub models: Vec<InocodeStatsModel>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsHourlyParams {
+    pub days: i64,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub model: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsHourRow {
+    /// Local hour of the day, 0–23.
+    pub hour: i64,
+    /// Null when `samples` is 0.
+    pub avg_tokens_per_second: Option<f64>,
+    pub samples: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsWeekdayRow {
+    /// 0 = Monday … 6 = Sunday (local time).
+    pub weekday: i64,
+    pub avg_tokens_per_second: Option<f64>,
+    pub samples: i64,
+}
+
+/// Speeds of one model; models are never mixed into one average.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsSpeedSeries {
+    pub model: String,
+    pub provider: String,
+    /// 24 rows.
+    pub hours: Vec<InocodeStatsHourRow>,
+    /// 7 rows, Monday first.
+    pub weekdays: Vec<InocodeStatsWeekdayRow>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsHourlyResponse {
+    /// One series per model (all models when the request names none).
+    pub series: Vec<InocodeStatsSpeedSeries>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsDailyParams {
+    pub days: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsDailyModel {
+    pub model: String,
+    pub provider: String,
+    pub requests: i64,
+    pub tokens: i64,
+    pub avg_tokens_per_second: Option<f64>,
+    pub quota_primary_percent: f64,
+    pub quota_secondary_percent: f64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsDailyRow {
+    /// Local date, `YYYY-MM-DD`.
+    pub date: String,
+    pub requests: i64,
+    /// All token kinds (uncached + cached input + output).
+    pub tokens: i64,
+    pub quota_primary_percent: f64,
+    pub quota_secondary_percent: f64,
+    /// Per model, each with its own speed. There is no mixed speed for the day.
+    pub models: Vec<InocodeStatsDailyModel>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsDailyResponse {
+    pub days: Vec<InocodeStatsDailyRow>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsTokens {
+    pub uncached_input: i64,
+    pub cached_input: i64,
+    pub output: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsEstimateParams {
+    pub model: String,
+    /// Statistics window in days; 3 when omitted (recent values are the most trusted).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub days: Option<i64>,
+    pub tokens: InocodeStatsTokens,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsEstimateResponse {
+    pub model: String,
+    pub days: i64,
+    /// All three are null when `insufficient`.
+    pub primary_percent: Option<f64>,
+    pub secondary_percent: Option<f64>,
+    pub seconds: Option<f64>,
+    pub insufficient: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsSeedFromCodexHistoryParams {
+    /// Codex sessions directory; `~/.codex/sessions` when null.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub path: Option<String>,
+}
+
+/// The import runs in the background; progress arrives as `inocode/stats/seedProgress`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsSeedFromCodexHistoryResponse {
+    pub job_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsSeedProgressNotification {
+    pub job_id: String,
+    pub files_done: i64,
+    pub files_total: i64,
+    pub samples_added: i64,
+    pub done: bool,
+}
