@@ -640,14 +640,17 @@ fn create_collab_input_items_schema() -> JsonSchema {
         ))
 }
 
+/// How to write the task of a new agent, for the `message` of every spawn tool. A suggestion only:
+/// nothing in it is required or checked.
+const SPAWN_AGENT_MESSAGE_GUIDANCE: &str = "Unless the parent's context is passed along, the agent cannot see this conversation: write the task so that it stands on its own and keeps the facts the agent needs. Useful to include: the goal, the scope and what not to touch, how to tell it is done, the output format wanted back, and what is already known (what was tried, file paths, error text).";
+
 fn spawn_agent_common_properties_v1(agent_type_description: &str) -> BTreeMap<String, JsonSchema> {
     BTreeMap::from([
         (
             "message".to_string(),
-            JsonSchema::string(Some(
-                "Initial plain-text task for the new agent. Use either message or items."
-                    .to_string(),
-            )),
+            JsonSchema::string(Some(format!(
+                "Initial plain-text task for the new agent. Use either message or items. {SPAWN_AGENT_MESSAGE_GUIDANCE}"
+            ))),
         ),
         ("items".to_string(), create_collab_input_items_schema()),
         (
@@ -683,9 +686,9 @@ fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<St
     BTreeMap::from([
         (
             "message".to_string(),
-            JsonSchema::string(Some(
-                "Initial plain-text task for the new agent.".to_string(),
-            ))
+            JsonSchema::string(Some(format!(
+                "Initial plain-text task for the new agent. {SPAWN_AGENT_MESSAGE_GUIDANCE}"
+            )))
             .with_encrypted(),
         ),
         (
