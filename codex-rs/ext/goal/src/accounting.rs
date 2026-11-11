@@ -36,6 +36,9 @@ struct GoalAccountingInner {
     execution_failure_goal_id: Option<String>,
     consecutive_execution_failure_turns: u8,
     automatic_goal_turn_id: Option<String>,
+    /// The latest goal-continuation turn. Unlike `automatic_goal_turn_id` it is never reset
+    /// mid-turn, so tool authority can tell an automatic turn from a human one.
+    continuation_turn_id: Option<String>,
     consecutive_empty_turns: u8,
     last_accounted_descendant_token_usage: i64,
 }
@@ -216,7 +219,14 @@ impl GoalAccountingState {
     }
 
     pub(crate) fn mark_goal_continuation(&self, turn_id: String) {
-        self.inner().automatic_goal_turn_id = Some(turn_id);
+        let mut inner = self.inner();
+        inner.continuation_turn_id = Some(turn_id.clone());
+        inner.automatic_goal_turn_id = Some(turn_id);
+    }
+
+    /// True when `turn_id` is an automatic goal-continuation turn (no human message in it).
+    pub(crate) fn is_continuation_turn(&self, turn_id: &str) -> bool {
+        self.inner().continuation_turn_id.as_deref() == Some(turn_id)
     }
 
     pub(crate) fn reset_empty_responses(&self) {
@@ -585,6 +595,7 @@ impl Default for GoalAccountingInner {
             execution_failure_goal_id: None,
             consecutive_execution_failure_turns: 0,
             automatic_goal_turn_id: None,
+            continuation_turn_id: None,
             consecutive_empty_turns: 0,
             last_accounted_descendant_token_usage: 0,
         }

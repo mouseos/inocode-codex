@@ -1229,6 +1229,8 @@ impl App {
                         | ServerNotification::ThreadPredictionUpdated(_)
                         | ServerNotification::InocodeTeamUpdated(_)
                         | ServerNotification::InocodeGuardFired(_)
+                        | ServerNotification::InocodeGoalEditRequested(_)
+                        | ServerNotification::InocodeGoalCompletionEvidenceNotice(_)
                         | ServerNotification::InocodeKnowledgeRecorded(_)
                         | ServerNotification::InocodeAccountsUpdated(_)
                         | ServerNotification::InocodeStatsSeedProgress(_)

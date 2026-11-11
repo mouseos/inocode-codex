@@ -13,6 +13,10 @@ use codex_protocol::protocol::ThreadGoalUpdatedEvent;
 use codex_protocol::protocol::validate_thread_goal_objective;
 use codex_rollout::RolloutItem;
 
+use crate::review::GoalCompletionEvidence;
+use crate::review::GoalEditRequest;
+use crate::review::GoalHostFact;
+use crate::review::GoalReviewHub;
 use crate::runtime::GoalRuntimeHandle;
 use crate::runtime::PreviousGoalSnapshot;
 use crate::tool::fill_empty_thread_preview_if_possible;
@@ -87,6 +91,7 @@ impl GoalSetOutcome {
 #[derive(Debug, Default)]
 pub struct GoalService {
     runtimes: Mutex<HashMap<String, Weak<GoalRuntimeHandle>>>,
+    review: GoalReviewHub,
 }
 
 impl GoalService {
@@ -342,6 +347,68 @@ impl GoalService {
         }
 
         Ok(cleared)
+    }
+
+    /// Stores an edit the model asked for and tells subscribers. Writes nothing to the goal.
+    pub(crate) fn request_goal_edit(&self, request: GoalEditRequest) {
+        self.review.request_edit(request);
+    }
+
+    /// The edit request waiting for the user on `thread_id`, if any.
+    pub fn pending_goal_edit(&self, thread_id: ThreadId) -> Option<GoalEditRequest> {
+        self.review.pending_edit(thread_id)
+    }
+
+    /// Removes the waiting request when `request_id` is the one that is waiting.
+    pub fn take_pending_goal_edit(
+        &self,
+        thread_id: ThreadId,
+        request_id: &str,
+    ) -> Option<GoalEditRequest> {
+        self.review.take_pending_edit(thread_id, request_id)
+    }
+
+    pub fn subscribe_goal_edit_requests(&self) -> tokio::sync::broadcast::Receiver<GoalEditRequest> {
+        self.review.subscribe_edits()
+    }
+
+    pub(crate) fn note_tool_start(
+        &self,
+        thread_id: ThreadId,
+        goal_id: &str,
+        call_id: &str,
+        fact: GoalHostFact,
+    ) {
+        self.review.note_tool_start(thread_id, goal_id, call_id, fact);
+    }
+
+    pub(crate) fn note_tool_finish(
+        &self,
+        thread_id: ThreadId,
+        call_id: &str,
+        outcome: &str,
+        success: Option<bool>,
+    ) {
+        self.review.note_tool_finish(thread_id, call_id, outcome, success);
+    }
+
+    pub(crate) fn host_facts(&self, thread_id: ThreadId, goal_id: &str) -> Vec<GoalHostFact> {
+        self.review.host_facts(thread_id, goal_id)
+    }
+
+    pub(crate) fn record_completion_evidence(&self, evidence: GoalCompletionEvidence) {
+        self.review.record_evidence(evidence);
+    }
+
+    /// What the model reported for the last completion on `thread_id`.
+    pub fn completion_evidence(&self, thread_id: ThreadId) -> Option<GoalCompletionEvidence> {
+        self.review.evidence(thread_id)
+    }
+
+    pub fn subscribe_completion_evidence(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<GoalCompletionEvidence> {
+        self.review.subscribe_evidence()
     }
 
     pub(crate) fn register_runtime(&self, runtime: &Arc<GoalRuntimeHandle>) {

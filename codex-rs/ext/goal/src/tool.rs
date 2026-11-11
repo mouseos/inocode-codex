@@ -22,9 +22,15 @@ use crate::analytics::GoalAnalytics;
 use crate::analytics::GoalEventAttribution;
 use crate::events::GoalEventEmitter;
 use crate::metrics::GoalMetrics;
+use crate::api::GoalService;
+use crate::review::GoalCompletionEvidence;
+use crate::review::GoalEditRequest;
+use crate::review::GoalRequirementReport;
 use crate::runtime::GoalRuntimeHandle;
 use crate::spec::CREATE_GOAL_TOOL_NAME;
 use crate::spec::GET_GOAL_TOOL_NAME;
+use crate::spec::REQUEST_GOAL_EDIT_TOOL_NAME;
+use crate::spec::create_request_goal_edit_tool;
 use crate::spec::UPDATE_GOAL_TOOL_NAME;
 use crate::spec::create_create_goal_tool;
 use crate::spec::create_get_goal_tool;
@@ -42,6 +48,7 @@ pub(crate) struct GoalToolExecutor {
     event_emitter: GoalEventEmitter,
     metrics: GoalMetrics,
     max_goal_token_budget: Option<i64>,
+    goal_service: Option<Arc<GoalService>>,
 }
 
 #[derive(Clone)]
@@ -49,6 +56,7 @@ enum GoalToolKind {
     Get,
     Create(Weak<ThreadManager>),
     Update,
+    RequestEdit,
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,6 +70,16 @@ pub struct CreateGoalRequest {
 #[serde(rename_all = "snake_case")]
 struct UpdateGoalArgs {
     status: ThreadGoalStatus,
+    /// The model's per-requirement claims and evidence, recorded when the goal is completed.
+    #[serde(default)]
+    requirements: Vec<GoalRequirementReport>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct RequestGoalEditArgs {
+    objective: String,
+    reason: String,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -97,6 +115,7 @@ impl GoalToolExecutor {
             event_emitter,
             metrics,
             max_goal_token_budget: None,
+            goal_service: None,
         }
     }
 
@@ -108,6 +127,7 @@ impl GoalToolExecutor {
         event_emitter: GoalEventEmitter,
         metrics: GoalMetrics,
         max_goal_token_budget: Option<i64>,
+        goal_service: Arc<GoalService>,
     ) -> Self {
         Self {
             kind: GoalToolKind::Create(thread_manager),
@@ -119,6 +139,7 @@ impl GoalToolExecutor {
             event_emitter,
             metrics,
             max_goal_token_budget,
+            goal_service: Some(goal_service),
         }
     }
 
@@ -129,6 +150,7 @@ impl GoalToolExecutor {
         analytics: GoalAnalytics,
         event_emitter: GoalEventEmitter,
         metrics: GoalMetrics,
+        goal_service: Arc<GoalService>,
     ) -> Self {
         Self {
             kind: GoalToolKind::Update,
@@ -140,6 +162,30 @@ impl GoalToolExecutor {
             event_emitter,
             metrics,
             max_goal_token_budget: None,
+            goal_service: Some(goal_service),
+        }
+    }
+
+    pub(crate) fn request_edit(
+        thread_id: ThreadId,
+        state_db: Arc<codex_state::StateRuntime>,
+        accounting_state: Arc<GoalAccountingState>,
+        analytics: GoalAnalytics,
+        event_emitter: GoalEventEmitter,
+        metrics: GoalMetrics,
+        goal_service: Arc<GoalService>,
+    ) -> Self {
+        Self {
+            kind: GoalToolKind::RequestEdit,
+            execution_allowed: true,
+            thread_id,
+            state_db,
+            accounting_state,
+            analytics,
+            event_emitter,
+            metrics,
+            max_goal_token_budget: None,
+            goal_service: Some(goal_service),
         }
     }
 }
@@ -150,6 +196,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for GoalToolExecutor {
             GoalToolKind::Get => GET_GOAL_TOOL_NAME,
             GoalToolKind::Create(_) => CREATE_GOAL_TOOL_NAME,
             GoalToolKind::Update => UPDATE_GOAL_TOOL_NAME,
+            GoalToolKind::RequestEdit => REQUEST_GOAL_EDIT_TOOL_NAME,
         })
     }
 
@@ -162,6 +209,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for GoalToolExecutor {
             GoalToolKind::Get => create_get_goal_tool(),
             GoalToolKind::Create(_) => create_create_goal_tool(),
             GoalToolKind::Update => create_update_goal_tool(),
+            GoalToolKind::RequestEdit => create_request_goal_edit_tool(),
         }
     }
 
@@ -184,6 +232,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for GoalToolExecutor {
                     self.handle_create(invocation, thread_manager).await
                 }
                 GoalToolKind::Update => self.handle_update(invocation).await,
+                GoalToolKind::RequestEdit => self.handle_request_edit(invocation).await,
             }
         })
     }
@@ -219,6 +268,23 @@ impl GoalToolExecutor {
         request.token_budget = request.token_budget.or(self.max_goal_token_budget);
         validate_goal_budget(request.token_budget, self.max_goal_token_budget)
             .map_err(FunctionCallError::RespondToModel)?;
+        // The model creates a goal only when none exists. A finished goal is not replaced here
+        // (the objective and the budget are the user's): only the user's own set, or the user's
+        // approval of `request_goal_edit`, replaces it.
+        if let Some(existing) = self
+            .state_db
+            .thread_goals()
+            .get_thread_goal(self.thread_id)
+            .await
+            .map_err(|err| {
+                FunctionCallError::RespondToModel(format!("failed to read goal: {err}"))
+            })?
+        {
+            return Err(FunctionCallError::RespondToModel(format!(
+                "cannot create a goal because this thread already has one (status {:?}). Only the user can replace it; use {REQUEST_GOAL_EDIT_TOOL_NAME} to ask for a new objective.",
+                protocol_status_from_state(existing.status)
+            )));
+        }
 
         let goal = self
             .state_db
@@ -277,6 +343,7 @@ impl GoalToolExecutor {
             ));
         }
 
+        self.check_update_authority(&invocation, args.status).await?;
         self.account_active_goal_progress(
             match args.status {
                 ThreadGoalStatus::Complete => codex_state::GoalAccountingMode::ActiveOrComplete,
@@ -322,7 +389,21 @@ impl GoalToolExecutor {
             previous_status,
             GoalEventAttribution::Turn(invocation.turn_id.as_str()),
         );
+        let goal_id = goal.goal_id.clone();
         let goal = protocol_goal_from_state(goal);
+        if args.status == ThreadGoalStatus::Complete
+            && let Some(goal_service) = &self.goal_service
+        {
+            // Recorded and shown; it never stops the completion.
+            goal_service.record_completion_evidence(GoalCompletionEvidence {
+                thread_id: self.thread_id.to_string(),
+                host_facts: goal_service.host_facts(self.thread_id, goal_id.as_str()),
+                goal_id,
+                objective: goal.objective.clone(),
+                recorded_at: now_secs(),
+                requirements: args.requirements,
+            });
+        }
         let turn_id = self.accounting_state.clear_current_turn_goal();
         self.emit_goal_updated_from_tool_call(&invocation, turn_id, goal.clone());
         goal_response(
@@ -333,6 +414,103 @@ impl GoalToolExecutor {
                 CompletionBudgetReport::Omit
             },
         )
+    }
+
+    /// Who may change the goal's status, checked in code (not only in the tool description).
+    /// - `paused` is the user's: refused in an automatic continuation turn.
+    /// - `complete` / `blocked`: allowed in a turn the user started, and in the continuation turn
+    ///   of the current goal. A continuation turn that belongs to another goal is refused.
+    async fn check_update_authority(
+        &self,
+        invocation: &ToolCall<'_>,
+        status: ThreadGoalStatus,
+    ) -> Result<(), FunctionCallError> {
+        if !self
+            .accounting_state
+            .is_continuation_turn(invocation.turn_id.as_str())
+        {
+            return Ok(());
+        }
+        if status == ThreadGoalStatus::Paused {
+            return Err(FunctionCallError::RespondToModel(
+                "pausing the goal is the user's decision; it is refused during an automatic continuation turn"
+                    .to_string(),
+            ));
+        }
+        let current = self
+            .state_db
+            .thread_goals()
+            .get_thread_goal(self.thread_id)
+            .await
+            .map_err(|err| {
+                FunctionCallError::RespondToModel(format!("failed to read goal: {err}"))
+            })?;
+        let turn_goal = self
+            .accounting_state
+            .current_active_goal_id_for_turn(invocation.turn_id.as_str());
+        match (current, turn_goal) {
+            (Some(goal), Some(turn_goal)) if goal.goal_id == turn_goal => Ok(()),
+            _ => Err(FunctionCallError::RespondToModel(
+                "this continuation turn does not belong to the current goal; the goal's status can be changed only in the goal's own turn or in a turn the user started"
+                    .to_string(),
+            )),
+        }
+    }
+
+    /// `request_goal_edit`: stores the proposed objective and tells the client. Changes nothing.
+    async fn handle_request_edit(
+        &self,
+        invocation: ToolCall<'_>,
+    ) -> Result<Box<dyn ToolOutput>, FunctionCallError> {
+        let mut args: RequestGoalEditArgs = parse_arguments(invocation.function_arguments()?)?;
+        args.objective = args.objective.trim().to_string();
+        validate_thread_goal_objective(&args.objective)
+            .map_err(FunctionCallError::RespondToModel)?;
+        let Some(goal_service) = &self.goal_service else {
+            return Err(FunctionCallError::RespondToModel(
+                "goal edit requests are unavailable".to_string(),
+            ));
+        };
+        if self
+            .accounting_state
+            .is_continuation_turn(invocation.turn_id.as_str())
+        {
+            return Err(FunctionCallError::RespondToModel(
+                "an objective change cannot be requested during an automatic continuation turn; finish the current objective or report that you are blocked"
+                    .to_string(),
+            ));
+        }
+        let goal = self
+            .state_db
+            .thread_goals()
+            .get_thread_goal(self.thread_id)
+            .await
+            .map_err(|err| {
+                FunctionCallError::RespondToModel(format!("failed to read goal: {err}"))
+            })?
+            .ok_or_else(|| {
+                FunctionCallError::RespondToModel(
+                    "this thread has no goal; use create_goal only when the user asked for one"
+                        .to_string(),
+                )
+            })?;
+        goal_service.request_goal_edit(GoalEditRequest {
+            thread_id: self.thread_id,
+            request_id: invocation.call_id.clone(),
+            current_objective: goal.objective.clone(),
+            new_objective: args.objective,
+            reason: args.reason,
+            status: protocol_status_from_state(goal.status),
+            token_budget: goal.token_budget,
+            tokens_used: goal.tokens_used,
+            time_used_seconds: goal.time_used_seconds,
+            requested_at: now_secs(),
+        });
+        let value = serde_json::json!({
+            "status": "pending_user_approval",
+            "message": "The user has been asked to approve the new objective. The goal is unchanged until they approve; keep working on the current objective."
+        });
+        Ok(Box::new(JsonToolOutput::new(value)))
     }
 
     fn emit_goal_updated_from_tool_call(
@@ -432,6 +610,13 @@ impl GoalToolExecutor {
                 .then_some(goal.status)
         }))
     }
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_secs()).unwrap_or(0))
+        .unwrap_or(0)
 }
 
 fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>

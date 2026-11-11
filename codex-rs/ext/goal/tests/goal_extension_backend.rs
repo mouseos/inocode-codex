@@ -227,12 +227,9 @@ async fn installed_goal_tools_only_replace_complete_goal() -> anyhow::Result<()>
         Err(err) => err,
     };
 
-    assert_eq!(
-        err,
-        FunctionCallError::RespondToModel(
-            "cannot create a new goal because this thread has an unfinished goal; complete the existing goal first"
-                .to_string()
-        )
+    assert!(
+        matches!(&err, FunctionCallError::RespondToModel(m) if m.contains("already has one")),
+        "unexpected error: {err:?}"
     );
 
     let update_tool = tool_by_name(&tools, "update_goal");
@@ -244,17 +241,121 @@ async fn installed_goal_tools_only_replace_complete_goal() -> anyhow::Result<()>
         ))
         .await?;
 
-    let invocation = tool_call(
-        "create_goal",
-        "call-create-goal-3",
-        json!({ "objective": "replacement goal" }),
+    // A finished goal is no longer replaced by the model: the objective and the budget are the
+    // user's. Only the user's own set (or the user's approval of request_goal_edit) replaces it.
+    let err = match create_tool
+        .handle(tool_call(
+            "create_goal",
+            "call-create-goal-3",
+            json!({ "objective": "replacement goal" }),
+        ))
+        .await
+    {
+        Ok(_) => panic!("the model must not replace a completed goal"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(&err, FunctionCallError::RespondToModel(m) if m.contains("already has one")),
+        "unexpected error: {err:?}"
     );
-    let output = create_tool.handle(invocation.clone()).await?;
-    let result = output.code_mode_result(&invocation.payload);
+    Ok(())
+}
 
-    assert_eq!(json!("replacement goal"), result["goal"]["objective"]);
-    assert_eq!(json!("active"), result["goal"]["status"]);
-    assert_eq!(json!(0), result["goal"]["tokensUsed"]);
+#[tokio::test]
+async fn request_goal_edit_stores_the_request_and_changes_nothing() -> anyhow::Result<()> {
+    let runtime = test_runtime().await?;
+    let thread_id = test_thread_id()?;
+    seed_thread_metadata(runtime.as_ref(), thread_id).await?;
+    let harness = GoalExtensionHarness::new(runtime.clone(), thread_id).await?;
+    let tools = harness.tools();
+    tool_by_name(&tools, "create_goal")
+        .handle(tool_call(
+            "create_goal",
+            "call-create",
+            json!({ "objective": "original objective" }),
+        ))
+        .await?;
+
+    let mut rx = harness.goal_service.subscribe_goal_edit_requests();
+    let call = tool_call(
+        "request_goal_edit",
+        "call-edit-1",
+        json!({ "objective": "reworded objective", "reason": "the scope changed" }),
+    );
+    let output = tool_by_name(&tools, "request_goal_edit")
+        .handle(call.clone())
+        .await?;
+    assert_eq!(
+        json!("pending_user_approval"),
+        output.code_mode_result(&call.payload)["status"]
+    );
+    let request = rx.try_recv()?;
+    assert_eq!(("call-edit-1", "original objective", "reworded objective"), (
+        request.request_id.as_str(),
+        request.current_objective.as_str(),
+        request.new_objective.as_str()
+    ));
+    // The goal itself is untouched.
+    let goal = runtime
+        .thread_goals()
+        .get_thread_goal(thread_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("goal should exist"))?;
+    assert_eq!("original objective", goal.objective);
+    // Only the waiting request id can be taken (what the approval resolves).
+    assert!(
+        harness
+            .goal_service
+            .take_pending_goal_edit(thread_id, "other")
+            .is_none()
+    );
+    assert!(
+        harness
+            .goal_service
+            .take_pending_goal_edit(thread_id, "call-edit-1")
+            .is_some()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn completion_evidence_is_recorded_without_blocking_completion() -> anyhow::Result<()> {
+    let runtime = test_runtime().await?;
+    let thread_id = test_thread_id()?;
+    seed_thread_metadata(runtime.as_ref(), thread_id).await?;
+    let harness = GoalExtensionHarness::new(runtime.clone(), thread_id).await?;
+    let tools = harness.tools();
+    tool_by_name(&tools, "create_goal")
+        .handle(tool_call("create_goal", "call-create", json!({ "objective": "ship it" })))
+        .await?;
+    // Completing with no evidence still completes.
+    tool_by_name(&tools, "update_goal")
+        .handle(tool_call(
+            "update_goal",
+            "call-complete",
+            json!({
+                "status": "complete",
+                "requirements": [{
+                    "requirement": "tests pass",
+                    "claim": "met",
+                    "evidence": [{ "kind": "command", "detail": "cargo test", "exit_code": 0 }]
+                }]
+            }),
+        ))
+        .await?;
+    let evidence = harness
+        .goal_service
+        .completion_evidence(thread_id)
+        .ok_or_else(|| anyhow::anyhow!("evidence should be recorded"))?;
+    assert_eq!("ship it", evidence.objective);
+    assert_eq!("tests pass", evidence.requirements[0].requirement);
+    assert_eq!(Some(0), evidence.requirements[0].evidence[0].exit_code);
+    let goal = runtime
+        .thread_goals()
+        .get_thread_goal(thread_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("goal should exist"))?;
+    assert_eq!(codex_state::ThreadGoalStatus::Complete, goal.status);
     Ok(())
 }
 
@@ -598,13 +699,26 @@ async fn subagent_usage_resets_when_root_goal_is_replaced() -> anyhow::Result<()
             &input_token_usage(/*input_tokens*/ 20),
         )
         .await;
-    create_tool
-        .handle(tool_call(
-            "create_goal",
-            "call-create-second-goal",
-            json!({ "objective": "replacement goal" }),
-        ))
+    // The model no longer replaces a goal; the user does (clear, then set).
+    harness
+        .goal_service
+        .clear_thread_goal(runtime.as_ref(), thread_id, async { Ok(()) })
         .await?;
+    let replaced = harness
+        .goal_service
+        .set_thread_goal(
+            runtime.as_ref(),
+            GoalSetRequest {
+                thread_id,
+                objective: GoalObjectiveUpdate::Set("replacement goal"),
+                status: Some(ThreadGoalStatus::Active),
+                token_budget: GoalTokenBudgetUpdate::Keep,
+                max_goal_token_budget: None,
+            },
+            async { Ok(()) },
+        )
+        .await?;
+    replaced.apply_runtime_effects(&harness.goal_service).await;
     child
         .record_token_usage_with_last(
             "child-turn",

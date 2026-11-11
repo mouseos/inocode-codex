@@ -9,12 +9,13 @@ mod advisor;
 mod compaction;
 mod evidence;
 mod flags;
+pub(crate) mod goal_review;
 mod guard;
 mod knowledge;
 mod messages;
 mod metrics;
-mod params;
 mod models;
+mod params;
 mod stats;
 mod team;
 mod tooloutput;
@@ -56,8 +57,8 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
         Some("messages") => messages::handle(request).await,
         Some("compaction") => compaction::handle(request).await,
         Some("toolOutput" | "sessions") => tooloutput::handle(request).await,
-        Some("metrics") => metrics::handle(request).await,
         Some("models") => models::handle(request).await,
+        Some("metrics") => metrics::handle(request).await,
         Some("flags") => flags::handle(request).await,
         Some("guard") => guard::handle(request).await,
         Some("params") => params::handle(request).await,

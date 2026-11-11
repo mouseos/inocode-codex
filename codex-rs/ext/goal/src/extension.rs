@@ -20,6 +20,7 @@ use codex_extension_api::ToolCallOutcome;
 use codex_extension_api::ToolContributor;
 use codex_extension_api::ToolExecutor;
 use codex_extension_api::ToolFinishInput;
+use codex_extension_api::ToolStartInput;
 use codex_extension_api::ToolLifecycleContributor;
 use codex_extension_api::ToolLifecycleFuture;
 use codex_extension_api::TurnAbortInput;
@@ -480,6 +481,30 @@ impl<C> ToolLifecycleContributor for GoalExtension<C>
 where
     C: Send + Sync + 'static,
 {
+    /// Records what the host sees of each tool call made while a goal is active (the call as the
+    /// model issued it). The finish callback adds how it ended. Facts only: nothing is blocked.
+    fn on_tool_start<'a>(&'a self, input: ToolStartInput<'a>) -> ToolLifecycleFuture<'a> {
+        Box::pin(async move {
+            let Some(runtime) = goal_runtime_handle(input.thread_store) else {
+                return;
+            };
+            if !runtime.is_enabled() {
+                return;
+            }
+            let Some(goal_id) = runtime
+                .accounting_state()
+                .current_active_goal_id_for_turn(input.turn_id)
+            else {
+                return;
+            };
+            let Some(fact) = host_fact_for_call(input.tool_name, input.payload) else {
+                return;
+            };
+            self.goal_service
+                .note_tool_start(runtime.thread_id(), goal_id.as_str(), input.call_id, fact);
+        })
+    }
+
     fn on_tool_finish<'a>(&'a self, input: ToolFinishInput<'a>) -> ToolLifecycleFuture<'a> {
         Box::pin(async move {
             let Some(runtime) = goal_runtime_handle(input.thread_store) else {
@@ -488,6 +513,14 @@ where
             if !runtime.is_enabled() {
                 return;
             }
+            let (outcome, success) = match input.outcome {
+                ToolCallOutcome::Completed { success } => ("completed", Some(success)),
+                ToolCallOutcome::Blocked => ("blocked", None),
+                ToolCallOutcome::Failed { .. } => ("failed", None),
+                ToolCallOutcome::Aborted => ("aborted", None),
+            };
+            self.goal_service
+                .note_tool_finish(runtime.thread_id(), input.call_id, outcome, success);
             runtime.accounting_state().record_tool_outcome(
                 input.turn_id,
                 input.tool_name,
@@ -590,6 +623,7 @@ where
                 self.event_emitter.clone(),
                 self.metrics.clone(),
                 max_goal_token_budget,
+                Arc::clone(&self.goal_service),
             ),
             GoalToolExecutor::update(
                 runtime.thread_id(),
@@ -598,6 +632,16 @@ where
                 self.analytics.clone(),
                 self.event_emitter.clone(),
                 self.metrics.clone(),
+                Arc::clone(&self.goal_service),
+            ),
+            GoalToolExecutor::request_edit(
+                runtime.thread_id(),
+                Arc::clone(&self.state_dbs),
+                runtime.accounting_state(),
+                self.analytics.clone(),
+                self.event_emitter.clone(),
+                self.metrics.clone(),
+                Arc::clone(&self.goal_service),
             ),
         ];
         tools
@@ -640,6 +684,61 @@ pub fn install_with_backend<C>(
 
 fn goal_runtime_handle(thread_store: &ExtensionData) -> Option<Arc<GoalRuntimeHandle>> {
     thread_store.get::<GoalRuntimeHandle>()
+}
+
+/// The call as the host saw it, for the completion record. Goal tools themselves are not facts.
+fn host_fact_for_call(
+    tool_name: &codex_extension_api::ToolName,
+    payload: &codex_extension_api::ToolPayload,
+) -> Option<crate::review::GoalHostFact> {
+    let name = tool_name.name.as_str();
+    if tool_name.is_default_namespace()
+        && matches!(
+            name,
+            "get_goal" | "create_goal" | "update_goal" | "request_goal_edit"
+        )
+    {
+        return None;
+    }
+    let text = match payload {
+        codex_extension_api::ToolPayload::Function { arguments } => arguments.clone(),
+        codex_extension_api::ToolPayload::Custom { input } => input.clone(),
+        codex_extension_api::ToolPayload::ToolSearch { .. } => return None,
+    };
+    let value = serde_json::from_str::<serde_json::Value>(&text).ok();
+    let command = value.as_ref().and_then(|v| {
+        ["cmd", "command"]
+            .iter()
+            .find_map(|key| v.get(*key))
+            .and_then(|c| match c {
+                serde_json::Value::String(s) => Some(s.clone()),
+                serde_json::Value::Array(a) => Some(
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                ),
+                _ => None,
+            })
+    });
+    let (kind, detail) = if name == "apply_patch" || text.contains("*** Begin Patch") {
+        // The same path extraction the child-agent facts use (ext/inocode-team/src/facts.rs).
+        ("file_change", codex_inocode_team::edited_paths(&text).join(", "))
+    } else if let Some(command) = command {
+        ("command", command)
+    } else if tool_name.namespace.is_some() {
+        ("mcp", text)
+    } else {
+        ("other", text)
+    };
+    Some(crate::review::GoalHostFact {
+        tool: name.to_string(),
+        kind: kind.to_string(),
+        detail,
+        outcome: "unknown".to_string(),
+        success: None,
+        exit_code: None,
+    })
 }
 
 fn tool_attempt_counts_for_goal_progress(outcome: ToolCallOutcome) -> bool {

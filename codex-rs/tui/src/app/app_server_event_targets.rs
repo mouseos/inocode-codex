@@ -239,6 +239,8 @@ pub(super) fn server_notification_thread_target(
         | ServerNotification::WindowsSandboxSetupCompleted(_)
         | ServerNotification::AccountLoginCompleted(_)
         | ServerNotification::InocodeGuardFired(_)
+        | ServerNotification::InocodeGoalEditRequested(_)
+        | ServerNotification::InocodeGoalCompletionEvidenceNotice(_)
         | ServerNotification::InocodeKnowledgeRecorded(_)
         | ServerNotification::InocodeAccountsUpdated(_)
         | ServerNotification::InocodeStatsSeedProgress(_)

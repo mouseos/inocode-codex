@@ -696,6 +696,24 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeSessionsSlimResponse,
     },
+    #[experimental("inocode/goal/pendingEdit")]
+    InocodeGoalPendingEdit => "inocode/goal/pendingEdit" {
+        params: v2::InocodeGoalPendingEditParams,
+        serialization: None,
+        response: v2::InocodeGoalPendingEditResponse,
+    },
+    #[experimental("inocode/goal/resolveEdit")]
+    InocodeGoalResolveEdit => "inocode/goal/resolveEdit" {
+        params: v2::InocodeGoalResolveEditParams,
+        serialization: None,
+        response: v2::InocodeGoalResolveEditResponse,
+    },
+    #[experimental("inocode/goal/completionEvidence")]
+    InocodeGoalCompletionEvidence => "inocode/goal/completionEvidence" {
+        params: v2::InocodeGoalCompletionEvidenceParams,
+        serialization: None,
+        response: v2::InocodeGoalCompletionEvidenceResponse,
+    },
     #[experimental("inocode/guard/list")]
     InocodeGuardList => "inocode/guard/list" {
         params: v2::InocodeGuardListParams,
@@ -852,6 +870,18 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeAccountsResetCreditHistoryResponse,
     },
+    #[experimental("inocode/models/enrich")]
+    InocodeModelsEnrich => "inocode/models/enrich" {
+        params: v2::InocodeModelsEnrichParams,
+        serialization: None,
+        response: v2::InocodeModelsEnrichResponse,
+    },
+    #[experimental("inocode/models/priceOverride")]
+    InocodeModelsPriceOverride => "inocode/models/priceOverride" {
+        params: v2::InocodeModelsPriceOverrideParams,
+        serialization: None,
+        response: v2::InocodeModelsPriceOverrideResponse,
+    },
     #[experimental("inocode/accounts/login/complete")]
     InocodeAccountsLoginComplete => "inocode/accounts/login/complete" {
         params: v2::InocodeAccountsLoginCompleteParams,
@@ -869,18 +899,6 @@ client_request_definitions! {
         params: v2::InocodeAccountsLoginCancelParams,
         serialization: None,
         response: v2::InocodeAccountsLoginCancelResponse,
-    },
-    #[experimental("inocode/models/enrich")]
-    InocodeModelsEnrich => "inocode/models/enrich" {
-        params: v2::InocodeModelsEnrichParams,
-        serialization: None,
-        response: v2::InocodeModelsEnrichResponse,
-    },
-    #[experimental("inocode/models/priceOverride")]
-    InocodeModelsPriceOverride => "inocode/models/priceOverride" {
-        params: v2::InocodeModelsPriceOverrideParams,
-        serialization: None,
-        response: v2::InocodeModelsPriceOverrideResponse,
     },
     #[experimental("inocode/accounts/policy/read")]
     InocodeAccountsPolicyRead => "inocode/accounts/policy/read" {
@@ -2421,6 +2439,10 @@ server_notification_definitions! {
     InocodeTeamUpdated => "inocode/team/updated" (v2::InocodeTeamUpdatedNotification),
     #[experimental("inocode/guard/fired")]
     InocodeGuardFired => "inocode/guard/fired" (v2::InocodeGuardFiredNotification),
+    #[experimental("inocode/goal/editRequested")]
+    InocodeGoalEditRequested => "inocode/goal/editRequested" (v2::InocodeGoalEditRequestedNotification),
+    #[experimental("inocode/goal/completionEvidence")]
+    InocodeGoalCompletionEvidenceNotice => "inocode/goal/completionEvidence" (v2::InocodeGoalCompletionEvidenceNotification),
     #[experimental("inocode/knowledge/recorded")]
     InocodeKnowledgeRecorded => "inocode/knowledge/recorded" (v2::InocodeKnowledgeRecordedNotification),
     #[experimental("inocode/advisor/event")]

@@ -137,7 +137,7 @@ impl CoreToolRuntime for ExtensionToolAdapter {
         if tool_name.is_default_namespace() {
             return matches!(
                 tool_name.name.as_str(),
-                "get_goal" | "create_goal" | "update_goal"
+                "get_goal" | "create_goal" | "update_goal" | "request_goal_edit"
             );
         }
         matches!(

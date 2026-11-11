@@ -63,9 +63,9 @@ impl ThreadGoalRequestProcessor {
         request_id: ConnectionRequestId,
         params: ThreadGoalSetParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.thread_goal_set_inner(request_id, params)
+        self.thread_goal_set_inner(Some(request_id), params)
             .await
-            .map(|()| None)
+            .map(|_| None)
     }
 
     pub(crate) async fn thread_goal_get(
@@ -133,9 +133,9 @@ impl ThreadGoalRequestProcessor {
 
     async fn thread_goal_set_inner(
         &self,
-        request_id: ConnectionRequestId,
+        request_id: Option<ConnectionRequestId>,
         params: ThreadGoalSetParams,
-    ) -> Result<(), JSONRPCErrorError> {
+    ) -> Result<ThreadGoal, JSONRPCErrorError> {
         if !self.config.features.enabled(Feature::Goals) {
             return Err(invalid_request("goals feature is disabled"));
         }
@@ -240,16 +240,89 @@ impl ThreadGoalRequestProcessor {
             warn!("failed to persist goal update for live thread {thread_id}: {err}");
         }
 
-        self.outgoing
-            .send_response(
-                request_id.clone(),
-                ThreadGoalSetResponse { goal: goal.clone() },
-            )
-            .await;
-        self.emit_thread_goal_updated_ordered(thread_id, goal, listener_command_tx)
+        if let Some(request_id) = request_id {
+            self.outgoing
+                .send_response(
+                    request_id,
+                    ThreadGoalSetResponse { goal: goal.clone() },
+                )
+                .await;
+        }
+        self.emit_thread_goal_updated_ordered(thread_id, goal.clone(), listener_command_tx)
             .await;
         outcome.apply_runtime_effects(&self.goal_service).await;
-        Ok(())
+        Ok(goal)
+    }
+
+    /// `inocode/goal/pendingEdit`: the objective change waiting for the user, if any.
+    pub(crate) async fn inocode_goal_pending_edit(
+        &self,
+        params: codex_app_server_protocol::InocodeGoalPendingEditParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let thread_id = parse_thread_id_for_request(params.thread_id.as_str())?;
+        let request = self
+            .goal_service
+            .pending_goal_edit(thread_id)
+            .map(crate::inocode::goal_review::edit_request_to_protocol);
+        Ok(Some(
+            codex_app_server_protocol::InocodeGoalPendingEditResponse { request }.into(),
+        ))
+    }
+
+    /// `inocode/goal/completionEvidence`: what the model reported at the last completion.
+    pub(crate) async fn inocode_goal_completion_evidence(
+        &self,
+        params: codex_app_server_protocol::InocodeGoalCompletionEvidenceParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let thread_id = parse_thread_id_for_request(params.thread_id.as_str())?;
+        let evidence = self
+            .goal_service
+            .completion_evidence(thread_id)
+            .map(crate::inocode::goal_review::evidence_to_protocol);
+        Ok(Some(
+            codex_app_server_protocol::InocodeGoalCompletionEvidenceResponse { evidence }.into(),
+        ))
+    }
+
+    /// `inocode/goal/resolveEdit`: the user's answer to an edit request. Approving applies the
+    /// proposed objective through the same path as the user's own `thread/goal/set`
+    /// (origin `user`, recorded in the history). Rejecting just drops the request.
+    pub(crate) async fn inocode_goal_resolve_edit(
+        &self,
+        params: codex_app_server_protocol::InocodeGoalResolveEditParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let thread_id = parse_thread_id_for_request(params.thread_id.as_str())?;
+        let Some(request) = self
+            .goal_service
+            .take_pending_goal_edit(thread_id, params.request_id.as_str())
+        else {
+            return Err(invalid_request(
+                "no such edit request is waiting (it was answered or replaced)",
+            ));
+        };
+        if !params.approve {
+            return Ok(Some(
+                codex_app_server_protocol::InocodeGoalResolveEditResponse { applied: false }
+                    .into(),
+            ));
+        }
+        // A finished goal that gets a new objective starts again; otherwise the status stays.
+        let status = (request.status == codex_protocol::protocol::ThreadGoalStatus::Complete)
+            .then_some(ThreadGoalStatus::Active);
+        self.thread_goal_set_inner(
+            None,
+            ThreadGoalSetParams {
+                thread_id: params.thread_id,
+                origin: Some(ThreadGoalMutationOrigin::User),
+                objective: Some(request.new_objective),
+                status,
+                token_budget: None,
+            },
+        )
+        .await?;
+        Ok(Some(
+            codex_app_server_protocol::InocodeGoalResolveEditResponse { applied: true }.into(),
+        ))
     }
 
     async fn thread_goal_get_inner(

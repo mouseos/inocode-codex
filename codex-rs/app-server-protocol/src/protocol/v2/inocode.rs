@@ -585,6 +585,40 @@ pub struct InocodeTeamAgent {
     pub state: InocodeTeamAgentState,
     pub tokens: i64,
     pub started_at: String,
+    /// The agent's nickname (same as `Thread.agentNickname`).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub nickname: Option<String>,
+    /// Model the agent runs on (same as `Thread.model`).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub model: Option<String>,
+    /// Reasoning effort of the agent (same as `Thread.reasoningEffort`).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub reasoning_effort: Option<String>,
+    /// Thread id of the agent that spawned this one.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub parent_id: Option<String>,
+}
+
+/// Messages from one thread to another, counted. `fromId` / `toId` are thread ids; absent when
+/// the host did not know them.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeTeamMessageEdge {
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub from_id: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub to_id: Option<String>,
+    pub count: i64,
+    pub last_ts_ms: i64,
+    /// `send_message` or `followup_task`.
+    pub last_delivery: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -623,6 +657,8 @@ pub struct InocodeTeamStatusParams {
 pub struct InocodeTeamStatusResponse {
     pub agents: Vec<InocodeTeamAgent>,
     pub estimate: InocodeTeamEstimate,
+    #[serde(default)]
+    pub messages: Vec<InocodeTeamMessageEdge>,
 }
 
 /// Notification: the team of `thread_id` changed. Carries only the agents that changed.
@@ -633,6 +669,8 @@ pub struct InocodeTeamUpdatedNotification {
     pub thread_id: String,
     pub agents: Vec<InocodeTeamAgent>,
     pub estimate: InocodeTeamEstimate,
+    #[serde(default)]
+    pub messages: Vec<InocodeTeamMessageEdge>,
 }
 
 // ------------------------------------------------------------------ metrics
@@ -1530,6 +1568,12 @@ pub struct InocodeStatsModel {
 pub struct InocodeStatsSummaryResponse {
     pub days: i64,
     pub models: Vec<InocodeStatsModel>,
+    /// Always true: the account's usage readings include what other devices used, so every
+    /// quota figure here is an upper estimate for this machine.
+    pub quota_is_upper_bound: bool,
+    /// Quota that rose while this machine sent (almost) nothing: used elsewhere. Not attributed
+    /// to any model.
+    pub used_elsewhere: InocodeStatsQuota,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -1568,12 +1612,6 @@ pub struct InocodeStatsWeekdayRow {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct InocodeStatsSpeedSeries {
-    /// Always true: the account's usage readings include what other devices used, so every
-    /// quota figure here is an upper estimate for this machine.
-    pub quota_is_upper_bound: bool,
-    /// Quota that rose while this machine sent (almost) nothing: used elsewhere. Not attributed
-    /// to any model.
-    pub used_elsewhere: InocodeStatsQuota,
     pub model: String,
     pub provider: String,
     /// 24 rows.
@@ -1664,6 +1702,8 @@ pub struct InocodeStatsEstimateResponse {
     pub secondary_percent: Option<f64>,
     pub seconds: Option<f64>,
     pub insufficient: bool,
+    /// Always true: the rates include what other devices used on the same account.
+    pub upper_bound: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -1702,8 +1742,6 @@ pub struct InocodeStatsSeedProgressNotification {
 #[ts(rename_all = "camelCase", export_to = "v2/")]
 pub enum InocodeMessageRole {
     User,
-    /// Always true: the rates include what other devices used on the same account.
-    pub upper_bound: bool,
     Assistant,
     Tool,
     /// A message from another agent (`#<turn>.@<n>`).
@@ -1791,4 +1829,168 @@ pub struct InocodeSessionsSlimResponse {
     pub moved_images: i64,
     pub bytes_before: i64,
     pub bytes_after: i64,
+}
+
+// ---------------------------------------------------------------- goal (fixed objective)
+
+/// An objective change the model asked for. Nothing changes until the user approves it
+/// (`inocode/goal/resolveEdit`). Sent as `inocode/goal/editRequested` and returned by
+/// `inocode/goal/pendingEdit`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeGoalEditRequest {
+    pub thread_id: String,
+    pub request_id: String,
+    pub current_objective: String,
+    pub new_objective: String,
+    /// The model's own reason (its claim, not a fact).
+    pub reason: String,
+    pub status: super::ThreadGoalStatus,
+    #[ts(optional = nullable)]
+    pub token_budget: Option<i64>,
+    pub tokens_used: i64,
+    pub time_used_seconds: i64,
+    pub requested_at: i64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeGoalEditRequestedNotification {
+    pub thread_id: String,
+    pub request_id: String,
+    pub current_objective: String,
+    pub new_objective: String,
+    /// The model's own reason (its claim, not a fact).
+    pub reason: String,
+    pub status: super::ThreadGoalStatus,
+    #[ts(optional = nullable)]
+    pub token_budget: Option<i64>,
+    pub tokens_used: i64,
+    pub time_used_seconds: i64,
+    pub requested_at: i64,
+}
+
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeGoalPendingEditParams {
+    pub thread_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeGoalPendingEditResponse {
+    #[ts(optional = nullable)]
+    pub request: Option<InocodeGoalEditRequest>,
+}
+
+/// The user's answer to an edit request. Approving sets the objective with origin `user`
+/// (the usual `thread/goal/set` path, recorded in the history as the user's instruction).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeGoalResolveEditParams {
+    pub thread_id: String,
+    pub request_id: String,
+    pub approve: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeGoalResolveEditResponse {
+    /// True when the objective was changed (approved and applied).
+    pub applied: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeGoalEvidenceItem {
+    /// `file`, `command`, `output` or `other`.
+    pub kind: String,
+    /// The path, the command line, or the observed text.
+    pub detail: String,
+    #[ts(optional = nullable)]
+    pub exit_code: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeGoalRequirementReport {
+    pub requirement: String,
+    /// The model's own claim about it.
+    pub claim: String,
+    pub evidence: Vec<InocodeGoalEvidenceItem>,
+}
+
+/// A fact the host observed during the goal (not the model's words).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeGoalHostFact {
+    pub tool: String,
+    /// `command`, `file_change`, `mcp` or `other`.
+    pub kind: String,
+    /// The command line, or the paths a patch touched, verbatim from the call's arguments.
+    pub detail: String,
+    /// `completed`, `failed`, `blocked`, `aborted` or `unknown`.
+    pub outcome: String,
+    /// The tool output's own success marker; null when unknown.
+    #[ts(optional = nullable)]
+    pub success: Option<bool>,
+    /// Null means unknown: the host's outcome carries no exit code today.
+    #[ts(optional = nullable)]
+    pub exit_code: Option<i64>,
+}
+
+/// What the model reported when it declared the goal complete. These are the model's claims;
+/// the host did not check them. Sent as `inocode/goal/completionEvidence`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeGoalCompletionEvidence {
+    pub thread_id: String,
+    pub goal_id: String,
+    pub objective: String,
+    pub recorded_at: i64,
+    /// The model's per-requirement claims, as it gave them.
+    pub requirements: Vec<InocodeGoalRequirementReport>,
+    /// What the host observed while the goal was active, apart from the model's claims.
+    pub host_facts: Vec<InocodeGoalHostFact>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeGoalCompletionEvidenceNotification {
+    pub thread_id: String,
+    pub goal_id: String,
+    pub objective: String,
+    pub recorded_at: i64,
+    /// The model's per-requirement claims, as it gave them.
+    pub requirements: Vec<InocodeGoalRequirementReport>,
+    /// What the host observed while the goal was active, apart from the model's claims.
+    pub host_facts: Vec<InocodeGoalHostFact>,
+}
+
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeGoalCompletionEvidenceParams {
+    pub thread_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeGoalCompletionEvidenceResponse {
+    #[ts(optional = nullable)]
+    pub evidence: Option<InocodeGoalCompletionEvidence>,
 }

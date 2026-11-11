@@ -79,6 +79,8 @@ pub(crate) fn without_notification_media(notification: ServerNotification) -> Se
         | ServerNotification::InocodeMessagesAppended(_)
         | ServerNotification::InocodeCompactionEvent(_)
         | ServerNotification::InocodeGuardFired(_)
+        | ServerNotification::InocodeGoalEditRequested(_)
+        | ServerNotification::InocodeGoalCompletionEvidenceNotice(_)
         | ServerNotification::InocodeKnowledgeRecorded(_)
         | ServerNotification::ThreadGoalCleared(_)
         | ServerNotification::ThreadQueueChanged(_)

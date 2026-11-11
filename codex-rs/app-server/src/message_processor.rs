@@ -365,6 +365,7 @@ impl MessageProcessor {
             ),
         );
         let goal_service = Arc::new(GoalService::new());
+        crate::inocode::goal_review::spawn_notifier(Arc::clone(&outgoing), Arc::clone(&goal_service));
         let turn_admission = TurnAdmission::default();
         let turn_start_admission: Arc<dyn TurnStartAdmission> = Arc::new(turn_admission.clone());
         let extension_event_sink =
@@ -1266,9 +1267,9 @@ impl MessageProcessor {
             | ClientRequest::InocodeAccountsReauth { .. }
             | ClientRequest::InocodeAccountsResetCreditConsume { .. }
             | ClientRequest::InocodeAccountsResetCreditHistory { .. }
-            | ClientRequest::InocodeProvidersList { .. }
             | ClientRequest::InocodeModelsEnrich { .. }
             | ClientRequest::InocodeModelsPriceOverride { .. }
+            | ClientRequest::InocodeProvidersList { .. }
             | ClientRequest::InocodeAccountsPolicyRead { .. }
             | ClientRequest::InocodeAccountsPolicyWrite { .. }
             | ClientRequest::InocodeFlagsWrite { .. }) => crate::inocode::handle(request).await,
@@ -1514,6 +1515,21 @@ impl MessageProcessor {
             ClientRequest::ThreadGoalSet { params, .. } => {
                 self.thread_goal_processor
                     .thread_goal_set(request_id.clone(), params)
+                    .await
+            }
+            ClientRequest::InocodeGoalPendingEdit { params, .. } => {
+                self.thread_goal_processor
+                    .inocode_goal_pending_edit(params)
+                    .await
+            }
+            ClientRequest::InocodeGoalResolveEdit { params, .. } => {
+                self.thread_goal_processor
+                    .inocode_goal_resolve_edit(params)
+                    .await
+            }
+            ClientRequest::InocodeGoalCompletionEvidence { params, .. } => {
+                self.thread_goal_processor
+                    .inocode_goal_completion_evidence(params)
                     .await
             }
             ClientRequest::ThreadGoalGet { params, .. } => {
