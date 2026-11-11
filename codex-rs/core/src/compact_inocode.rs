@@ -340,7 +340,15 @@ pub(crate) async fn turn_extras(
             items.push(user_text_item(rec));
         }
     }
-    if let Some(previous) = sess.previous_turn_settings().await
+    let previous = sess.previous_turn_settings().await;
+    // The very first turn of a thread has no previous settings: give the model the pinned
+    // prohibition list right away, not only after a compaction or a model switch.
+    if previous.is_none() {
+        if let Some(item) = pinned_rules_item(&local_cwd(turn)) {
+            items.push(item);
+        }
+    }
+    if let Some(previous) = previous
         && previous.model != turn.model_info().slug
     {
         let cwd = local_cwd(turn);
