@@ -244,7 +244,7 @@ fn truncate(text: &str, max: usize) -> String {
 /// Exit code reported in a tool output, if any (`Exit code: N` or `"exit_code": N`).
 pub(crate) fn exit_code_in_output(output: &str) -> Option<i32> {
     let lower = output.to_ascii_lowercase();
-    for marker in ["exit code:", "\"exit_code\":", "exit_code:"] {
+    for marker in ["exit code:", "\"exit_code\":", "exit_code:", "exited with code"] {
         if let Some(pos) = lower.find(marker) {
             let rest = lower[pos + marker.len()..].trim_start();
             let digits: String = rest
@@ -321,12 +321,15 @@ pub(crate) fn record_facts(
     }
     let name = tool.to_ascii_lowercase();
     if name.contains("exec") || name.contains("shell") || name.contains("bash") || name.contains("terminal") {
-        codex_inocode_team::record_command(
-            &thread,
-            &codex_inocode_advisor::shell_command_of(args),
-            exit_code_in_output(output),
-            secs,
-        );
+        let command = codex_inocode_advisor::shell_command_of(args);
+        // A code-mode script is not a command: the tool calls it makes are recorded when they
+        // finish, each with its own command and exit code.
+        let command = if codex_inocode_advisor::is_code_mode_script(&command) {
+            codex_inocode_team::CODE_MODE_EXEC.to_string()
+        } else {
+            command
+        };
+        codex_inocode_team::record_command(&thread, &command, exit_code_in_output(output), secs);
     }
 }
 
@@ -591,6 +594,21 @@ mod tests {
             Some(101)
         );
         assert_eq!(exit_code_in_output("{\"exit_code\": 2}"), Some(2));
+        assert_eq!(
+            exit_code_in_output("Chunk ID: a
+Wall time: 1.0 seconds
+Process exited with code 3
+Output:
+x"),
+            Some(3)
+        );
+        assert_eq!(
+            exit_code_in_output("Wall time: 1.0 seconds
+Process running with session ID 7
+Output:
+"),
+            None
+        );
         assert_eq!(exit_code_in_output("hello"), None);
     }
 

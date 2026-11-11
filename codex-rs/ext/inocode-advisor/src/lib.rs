@@ -20,6 +20,7 @@ pub use events::read_events;
 pub use events::record_global;
 pub use events::subscribe;
 pub use readonly::command_is_read_only;
+pub use readonly::is_code_mode_script;
 pub use readonly::is_read_only_call;
 pub use readonly::shell_command_of;
 

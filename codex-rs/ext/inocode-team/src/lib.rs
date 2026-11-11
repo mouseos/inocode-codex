@@ -15,6 +15,7 @@ pub use contract::contract_instruction;
 pub use contract::read_contracts;
 pub use owned_paths::owned_paths_from_instruction;
 pub use estimate::Decision;
+pub use facts::CODE_MODE_EXEC;
 pub use facts::edited_paths;
 pub use facts::note_spawned;
 pub use facts::record_command;

@@ -9,6 +9,10 @@ use std::sync::OnceLock;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+/// The command text recorded for a code-mode `exec` script: the tool calls the script makes are
+/// recorded on their own, so its source is not repeated.
+pub const CODE_MODE_EXEC: &str = "code mode exec";
+
 /// One command the child ran.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CommandFact {
@@ -146,6 +150,14 @@ pub fn render(f: &Facts, elapsed_secs: Option<f64>) -> String {
         out.push_str(&format!("commands run ({}):\n", after.len()));
     }
     for c in after {
+        if c.command == CODE_MODE_EXEC {
+            out.push_str(&format!(
+                "- {CODE_MODE_EXEC} (the tool calls it made are listed on their own), {:.1} s
+",
+                c.secs
+            ));
+            continue;
+        }
         let exit = c
             .exit_code
             .map_or_else(|| "exit unknown".to_string(), |code| format!("exit {code}"));
@@ -156,6 +168,15 @@ pub fn render(f: &Facts, elapsed_secs: Option<f64>) -> String {
             "commands run before the last change: {}\n",
             f.commands_at_last_change
         ));
+    }
+    if after
+        .iter()
+        .any(|c| c.command != CODE_MODE_EXEC && c.exit_code.is_none())
+    {
+        out.push_str(
+            "exit unknown: the command had not finished, or its output carried no exit code.
+",
+        );
     }
     out.push_str("changes made through shell commands are not tracked.");
     out
@@ -263,6 +284,24 @@ mod tests {
         assert!(text.contains("files changed through edit tools: none"));
         assert!(text.contains("commands run (1):"));
         assert!(text.contains("- `python a.py --flag` -> exit unknown, 1.0 s"));
+    }
+
+    #[test]
+    fn a_code_mode_script_is_named_briefly_and_its_calls_are_listed_on_their_own() {
+        let id = "facts-child-code-mode";
+        note_spawned(id);
+        record_command(id, "Get-Content a.txt", Some(0), 1.0);
+        record_command(id, CODE_MODE_EXEC, None, 1.2);
+        let report = take_report(id).expect("report");
+        assert!(report.contains("`Get-Content a.txt` -> exit 0"));
+        assert!(report.contains("- code mode exec (the tool calls it made are listed on their own), 1.2 s"));
+        // The script itself is not "exit unknown": no reason line is needed for it.
+        assert!(!report.contains("exit unknown"));
+        let unknown = "facts-child-unknown";
+        note_spawned(unknown);
+        record_command(unknown, "sleep 99", None, 1.0);
+        let report = take_report(unknown).expect("report");
+        assert!(report.contains("exit unknown: the command had not finished"));
     }
 
     #[test]

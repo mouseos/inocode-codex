@@ -150,6 +150,12 @@ fn tool_name_is_read_only(name: &str) -> bool {
         && !name.contains("write")
 }
 
+/// True when the text is a code-mode `exec` script (JavaScript calling `tools.<name>(...)`)
+/// rather than a shell command line.
+pub fn is_code_mode_script(text: &str) -> bool {
+    text.contains("tools.") || text.contains("ALL_TOOLS")
+}
+
 /// A code-mode `exec` script (JavaScript calling `tools.<name>(...)`): read-only when every tool
 /// it calls is. `None` when the text does not look like such a script.
 fn code_mode_is_read_only(source: &str) -> Option<bool> {
