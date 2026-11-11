@@ -76,6 +76,30 @@ impl ApplyPatchHandler {
     }
 }
 
+/// Calls whose patch changes were streamed from the argument deltas. The tool event emitter
+/// sends the whole change once at the start of a call that was not streamed (a nested
+/// code-mode call, or a backend with no input deltas), so a client always gets an update.
+static STREAMED_PATCH_CALLS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn note_streamed_patch_call(call_id: &str) {
+    let mut calls = STREAMED_PATCH_CALLS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if calls.len() > 1024 {
+        calls.clear();
+    }
+    calls.insert(call_id.to_string());
+}
+
+/// True (and forgets the call) when the call's changes were already streamed.
+pub(crate) fn take_streamed_patch_call(call_id: &str) -> bool {
+    STREAMED_PATCH_CALLS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(call_id)
+}
+
 #[derive(Default)]
 struct ApplyPatchArgumentDiffConsumer {
     parser: StreamingPatchParser,
@@ -98,8 +122,10 @@ impl ToolArgumentDiffConsumer for ApplyPatchArgumentDiffConsumer {
             return None;
         }
 
-        self.push_delta(call_id, diff)
-            .map(EventMsg::PatchApplyUpdated)
+        let event = self.push_delta(call_id.clone(), diff);
+        // The call streamed (even if this delta was throttled): no whole-change fallback needed.
+        note_streamed_patch_call(&call_id);
+        event.map(EventMsg::PatchApplyUpdated)
     }
 
     fn finish(&mut self) -> Result<Option<EventMsg>, FunctionCallError> {

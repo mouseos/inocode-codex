@@ -26,6 +26,7 @@ use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::ExecCommandStatus;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::PatchApplyStatus;
+use codex_protocol::protocol::PatchApplyUpdatedEvent;
 use codex_protocol::protocol::TurnDiffEvent;
 use codex_shell_command::parse_command::parse_command;
 use codex_utils_path_uri::PathUri;
@@ -261,6 +262,27 @@ impl ToolEmitter {
                         }),
                     )
                     .await;
+                // InoCode: the argument stream (the source of the usual patch updates) is missing
+                // when the call comes from a nested code-mode `exec` or a backend that sends no
+                // input deltas. Send the whole change once now, before anything is written, so a
+                // client's "writing" view is never empty.
+                if ctx
+                    .turn
+                    .config
+                    .features
+                    .enabled(codex_features::Feature::ApplyPatchStreamingEvents)
+                    && !crate::tools::handlers::apply_patch::take_streamed_patch_call(ctx.call_id)
+                {
+                    ctx.session
+                        .send_event(
+                            ctx.turn,
+                            EventMsg::PatchApplyUpdated(PatchApplyUpdatedEvent {
+                                call_id: ctx.call_id.to_string(),
+                                changes: changes.clone(),
+                            }),
+                        )
+                        .await;
+                }
             }
             (
                 Self::ApplyPatch {

@@ -135,7 +135,10 @@ impl WindowsSandboxLevelExt for WindowsSandboxLevel {
         if features.enabled(Feature::WindowsSandboxElevated) {
             return WindowsSandboxLevel::Elevated;
         }
-        if features.enabled(Feature::WindowsSandbox) {
+        // InoCode: on Windows the restricted-token sandbox is the default when nothing selects a
+        // level. With the level disabled, workspace-write is downgraded to read-only (see
+        // `effective_sandbox_mode`), so no project folder could be written without setup.
+        if features.enabled(Feature::WindowsSandbox) || cfg!(windows) {
             WindowsSandboxLevel::RestrictedToken
         } else {
             WindowsSandboxLevel::Disabled

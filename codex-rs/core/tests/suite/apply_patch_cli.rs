@@ -1773,6 +1773,74 @@ async fn apply_patch_custom_tool_streaming_emits_updated_changes() -> Result<()>
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_patch_without_input_deltas_still_sends_the_whole_change_once() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    // InoCode: a call with no argument stream (a nested code-mode call, or a backend that sends
+    // no input deltas) must still give the client one patch update before anything is written.
+    let harness = apply_patch_harness_with(|builder| {
+        builder.with_config(|config| {
+            config
+                .features
+                .enable(Feature::ApplyPatchStreamingEvents)
+                .expect("enable apply_patch streaming events");
+        })
+    })
+    .await?;
+    let test = harness.test();
+    let codex = test.codex.clone();
+    let call_id = "apply-patch-no-deltas";
+    let patch = "*** Begin Patch
+*** Add File: whole.txt
++hello
++world
+*** End Patch";
+    mount_sse_sequence(
+        harness.server(),
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_apply_patch_custom_tool_call(call_id, patch),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_assistant_message("msg-1", "done"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    submit_without_wait(&harness, "create a file").await?;
+
+    let mut updates = Vec::new();
+    wait_for_event(&codex, |event| match event {
+        EventMsg::PatchApplyUpdated(update) => {
+            updates.push(update.clone());
+            false
+        }
+        EventMsg::TurnComplete(_) => true,
+        _ => false,
+    })
+    .await;
+
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].call_id, call_id);
+    assert_eq!(
+        updates[0].changes.get(&std::path::PathBuf::from("whole.txt")),
+        Some(&codex_protocol::protocol::FileChange::Add {
+            content: "hello
+world
+".to_string(),
+        })
+    );
+    assert_eq!(harness.read_file_text("whole.txt").await?, "hello
+world
+");
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_patch_exec_command_heredoc_with_cd_emits_turn_diff() -> Result<()> {
     // TODO(anp): Remove after apply_patch shell fixtures use target-native commands.
     skip_if_wine_exec!(Ok(()), "uses a POSIX shell heredoc and cd command");

@@ -29,12 +29,18 @@ fn restricted_token_flag_works_by_itself() {
 }
 
 #[test]
-fn no_flags_means_no_sandbox() {
+fn no_flags_means_the_platform_default_sandbox() {
     let features = Features::with_defaults();
 
+    // InoCode: Windows defaults to the restricted-token sandbox so workspace-write is not
+    // downgraded to read-only; other platforms have no Windows sandbox.
     assert_eq!(
         WindowsSandboxLevel::from_features(&features),
-        WindowsSandboxLevel::Disabled
+        if cfg!(windows) {
+            WindowsSandboxLevel::RestrictedToken
+        } else {
+            WindowsSandboxLevel::Disabled
+        }
     );
 }
 
