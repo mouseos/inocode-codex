@@ -3162,6 +3162,7 @@ dependencies = [
  "codex-image-generation-extension",
  "codex-inocode-advisor",
  "codex-inocode-compaction",
+ "codex-inocode-evidence",
  "codex-inocode-flags",
  "codex-inocode-knowledge",
  "codex-inocode-ledger",
