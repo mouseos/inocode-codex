@@ -42,6 +42,10 @@ jobs:
         working-directory: codex-rs
         run: rustup show
 
+      - name: Long paths (Windows git checkouts of vendored dependencies)
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
@@ -55,6 +59,30 @@ jobs:
           -p codex-shell-command
           -p codex-zero-search-extension
           -p codex-utils-pty
+
+      - name: Provider adapters (chat/completions, Claude Messages) and the wire client
+        if: ${{ !cancelled() }}
+        working-directory: codex-rs
+        run: >
+          cargo test --no-fail-fast
+          -p codex-provider-adapters
+          -p codex-api --test chat_wire_end_to_end
+
+      - name: Account pool, Claude sign-in and failover
+        if: ${{ !cancelled() }}
+        working-directory: codex-rs
+        run: >
+          cargo test --no-fail-fast
+          -p codex-login --lib -- account_pool claude_oauth
+
+      - name: Account pool in the app-server, model provider and CLI
+        if: ${{ !cancelled() }}
+        working-directory: codex-rs
+        run: |
+          cargo test --no-fail-fast -p codex-app-server --lib -- inocode::accounts
+          cargo test --no-fail-fast -p codex-model-provider --test account_pool
+          cargo test --no-fail-fast -p codex-cli --lib -- accounts_cmd
+          cargo test --no-fail-fast -p codex-core --test all -- account_pool_failover
 
       - name: Core unit tests for terminal monitor, tool list and exec policy
         working-directory: codex-rs
