@@ -85,6 +85,27 @@ fn configure_insta_workspace_root_for_snapshot_tests() {
     }
 }
 
+/// InoCode: keep the tests off the user's real `~/.inocode`, and keep large tool output inline
+/// (the upstream tests assert the truncated text, not InoCode's `tool-results` spill file).
+#[ctor]
+fn isolate_inocode_home_for_tests() {
+    if std::env::var_os("INOCODE_HOME").is_some_and(|value| !value.is_empty()) {
+        return;
+    }
+    let home = std::env::temp_dir().join(format!("inocode-core-tests-{}", std::process::id()));
+    if std::fs::create_dir_all(&home).is_err() {
+        return;
+    }
+    let _ = std::fs::write(
+        home.join("config.toml"),
+        "[inocode.compaction]\npersist_large_output = false\n",
+    );
+    // Safety: this ctor runs at process startup before test threads begin.
+    unsafe {
+        std::env::set_var("INOCODE_HOME", home);
+    }
+}
+
 #[track_caller]
 pub fn assert_regex_match<'s>(pattern: &str, actual: &'s str) -> regex_lite::Captures<'s> {
     let regex = Regex::new(pattern).expect("failed to compile regex");

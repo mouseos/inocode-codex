@@ -16,11 +16,17 @@ Settings:
   text: {"verbosity":"low"}
   tool_choice: "auto"
 -- request 1 (turn) --
-00:additional_tools/developer (2; hash=ba36cb129fbde5df):
-        - namespace/functions; hash=106dd1b983efd2f7
+00:additional_tools/developer (2; hash=6aa82d0fd61b2e2e):
+        - namespace/functions; hash=b1cefd3045c2347a
           - function/exec_command
           - function/write_stdin
+          - function/terminal_status
           - function/request_user_input
+          - function/request_permissions
+          - function/read_message
+          - function/record_evidence
+          - function/search_evidence
+          - function/verify_evidence_document
           - custom/apply_patch
           - function/view_image
         - tool_search: # Tool discovery  Searches over deferred tool metadata with BM25 and exposes matching tools for t...; args=[limit, query]; hash=b573ed69c0b0e6c7
@@ -45,6 +51,7 @@ Settings:
 07:message/developer:
     The following tools are no longer available. Do not call them:
     - functions.exec_command
+    - functions.terminal_status
     - functions.write_stdin
 08:message/user:
     <ENVIRONMENT_CONTEXT>
@@ -56,10 +63,15 @@ Settings:
 ## Window 2 (after request 3: input diverged at item 00)
 Settings: same as window 1
 -- request 4 (turn) --
-00:additional_tools/developer (2; hash=4f95a0a93c66dfca):
-        - namespace/functions; hash=e61b39bab731172a
+00:additional_tools/developer (2; hash=5610e33d2adfe6fd):
+        - namespace/functions; hash=ab8226c14f205d93
           - function/update_plan
           - function/request_user_input
+          - function/request_permissions
+          - function/read_message
+          - function/record_evidence
+          - function/search_evidence
+          - function/verify_evidence_document
           - custom/apply_patch
           - function/view_image
         - tool_search: # Tool discovery  Searches over deferred tool metadata with BM25 and exposes matching tools for t...; args=[limit, query]; hash=b573ed69c0b0e6c7

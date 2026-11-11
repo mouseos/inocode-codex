@@ -16,15 +16,21 @@ Settings:
   text: {"verbosity":"low"}
   tool_choice: "auto"
 -- request 1 (turn) --
-00:additional_tools/developer (2; hash=64bcbde2bd6a71cd):
-        - namespace/functions; hash=bf2bbed4b1e4d23d
+00:additional_tools/developer (2; hash=3e1a1c9585f41440):
+        - namespace/functions; hash=d1fc05dd31d1a9ca
           - custom/exec
           - function/wait
           - function/exec_command
           - function/write_stdin
+          - function/terminal_status
           - function/request_user_input
+          - function/request_permissions
           - function/new_context
           - function/get_context_remaining
+          - function/read_message
+          - function/record_evidence
+          - function/search_evidence
+          - function/verify_evidence_document
           - custom/apply_patch
           - function/view_image
         - tool_search: # Tool discovery  Searches over deferred tool metadata with BM25 and exposes matching tools for t...; args=[limit, query]; hash=b573ed69c0b0e6c7
@@ -57,15 +63,21 @@ Settings:
 ## Window 2 (after request 2: input diverged at item 03)
 Settings: same as window 1
 -- request 3 (turn) --
-00:additional_tools/developer (2; hash=64bcbde2bd6a71cd):
-        - namespace/functions; hash=bf2bbed4b1e4d23d
+00:additional_tools/developer (2; hash=3e1a1c9585f41440):
+        - namespace/functions; hash=d1fc05dd31d1a9ca
           - custom/exec
           - function/wait
           - function/exec_command
           - function/write_stdin
+          - function/terminal_status
           - function/request_user_input
+          - function/request_permissions
           - function/new_context
           - function/get_context_remaining
+          - function/read_message
+          - function/record_evidence
+          - function/search_evidence
+          - function/verify_evidence_document
           - custom/apply_patch
           - function/view_image
         - tool_search: # Tool discovery  Searches over deferred tool metadata with BM25 and exposes matching tools for t...; args=[limit, query]; hash=b573ed69c0b0e6c7
@@ -106,6 +118,7 @@ Settings: same as window 1
 11:message/developer:
     The following tools are no longer available. Do not call them:
     - functions.exec_command
+    - functions.terminal_status
     - functions.write_stdin
 12:message/user:
     <ENVIRONMENT_CONTEXT>
