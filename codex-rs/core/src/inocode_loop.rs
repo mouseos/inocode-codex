@@ -598,13 +598,16 @@ mod tests {
     fn repeated_failures_in_tool_output_fire_the_detector() {
         let mut detector = StallDetector::new(StallConfig::default());
         let mut fired = None;
-        for _ in 0..3 {
-            fired = detector.observe(build_observation(
+        for attempt in 0..3_u64 {
+            let mut obs = build_observation(
                 "shell",
                 "{\"command\":\"cargo test\"}",
                 true,
                 "Exit code: 101\nerror: could not compile",
-            ));
+            );
+            // Separate attempts, not one parallel batch.
+            obs.at_ms = Some(10_000 + attempt * 5_000);
+            fired = detector.observe(obs);
         }
         assert_eq!(
             fired.map(|s| s.trigger),
