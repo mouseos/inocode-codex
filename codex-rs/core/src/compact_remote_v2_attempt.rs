@@ -141,6 +141,7 @@ pub(super) async fn run_remote_compact_v2_attempt(
                 .into_iter()
                 .map(|envelope| (envelope.item, envelope.metadata))
                 .unzip();
+            crate::compact_inocode::offload_old_observations(&sess.thread_id.to_string(), &mut input);
             sess.services
                 .executed_tool_calls
                 .attach_to_compaction_prompt(&mut input);

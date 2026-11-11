@@ -76,13 +76,14 @@ members = [
     "ext/history-notes",
     "ext/image-generation",
     "ext/inocode-flags",
+    "ext/inocode-ledger",
     "ext/inocode-evidence",
     "ext/inocode-knowledge",
     "ext/inocode-advisor",
     "ext/inocode-compaction",
     "ext/inocode-metrics",
-    "ext/inocode-stats",
     "ext/inocode-model-catalog",
+    "ext/inocode-stats",
     "ext/inocode-protocol",
     "ext/inocode-team",
     "ext/inocode-tool-output",
@@ -263,14 +264,15 @@ codex-guardian-v3 = { path = "ext/guardian-v3" }
 codex-history-notes-extension = { path = "ext/history-notes" }
 codex-image-generation-extension = { path = "ext/image-generation" }
 codex-inocode-flags = { path = "ext/inocode-flags" }
+codex-inocode-ledger = { path = "ext/inocode-ledger" }
 codex-inocode-evidence = { path = "ext/inocode-evidence" }
 codex-inocode-knowledge = { path = "ext/inocode-knowledge" }
 codex-inocode-advisor = { path = "ext/inocode-advisor" }
 codex-inocode-compaction = { path = "ext/inocode-compaction" }
 codex-inocode-metrics = { path = "ext/inocode-metrics" }
+codex-inocode-model-catalog = { path = "ext/inocode-model-catalog" }
 codex-inocode-stats = { path = "ext/inocode-stats" }
 codex-inocode-protocol = { path = "ext/inocode-protocol" }
-codex-inocode-model-catalog = { path = "ext/inocode-model-catalog" }
 codex-inocode-team = { path = "ext/inocode-team" }
 codex-inocode-tool-output = { path = "ext/inocode-tool-output" }
 codex-external-agent-migration = { path = "external-agent-migration" }

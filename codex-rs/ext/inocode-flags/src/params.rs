@@ -72,6 +72,12 @@ pub const PARAMS: &[ParamSpec] = &[
     int("compaction.reattach_tokens", 50_000),
     int("compaction.max_consecutive_failures", 3),
     int("compaction.preview_bytes", 2000),
+    // Provisional default, no evidence behind the value: a user message longer than this many chars
+    // is presented again after a compaction as its beginning plus the path of the whole text.
+    int("compaction.ledger_preview_chars", 2000),
+    // Provisional default (10), no evidence behind the value: tool outputs older than this many
+    // calls are offloaded to files before a compaction.
+    int("compaction.keep_recent_observations", 10),
     // 0 = follow the history truncation budget; otherwise bytes above which a tool output is spilled out of the rollout.
     int("rollout.large_output_bytes", 0),
     // 0 = a quarter of physical memory (counted as 3x the bytes read) is the most one load may hold.
@@ -83,17 +89,17 @@ pub const PARAMS: &[ParamSpec] = &[
     float("team.integrate_overhead_secs", 60.0),
     float("team.task_secs", 600.0),
     int("stats.min_samples", 8),
+    // Usage readings cover the whole account, other devices included. Fraction of the steps with the
+    // lowest quota per token that the fit uses (the direction is known, the value is not).
+    float("stats.lower_quantile", 0.5),
+    // A step where this machine sent fewer tokens than this, yet usage rose, is counted as used elsewhere.
+    int("stats.elsewhere_min_tokens", 1000),
     ParamSpec {
         key: "team.fork_turns_default",
         kind: ParamKind::Enum,
         default_number: 0.0,
         default_text: "none",
         options: &["none", "all"],
-    // Usage readings cover the whole account, other devices included. Fraction of the steps with the
-    // lowest quota per token that the fit uses (the direction is known, the value is not).
-    float("stats.lower_quantile", 0.5),
-    // A step where this machine sent fewer tokens than this, yet usage rose, is counted as used elsewhere.
-    int("stats.elsewhere_min_tokens", 1000),
     },
 ];
 

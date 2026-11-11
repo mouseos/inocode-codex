@@ -30,6 +30,13 @@ pub enum MetricEvent {
     FalsePositive { source: String },
     /// A stall trigger fired (advisor). `trigger` names which one.
     StallDetected { trigger: String },
+    /// A user message was stored in the instruction ledger.
+    LedgerRecorded,
+    /// After a compaction the ledger was presented again: `full` messages whole, `marked` as a
+    /// beginning plus a pointer to the whole text.
+    LedgerRepresented { full: u64, marked: u64 },
+    /// Old tool outputs were offloaded to files before a compaction.
+    ObservationsOffloaded { count: u64, bytes: u64 },
 }
 
 /// A stored line: event plus thread and timestamp.
@@ -52,6 +59,16 @@ pub struct MetricCounters {
     pub clarifications: u64,
     pub false_positives: u64,
     pub stalls_detected: u64,
+    #[serde(default)]
+    pub ledger_recorded: u64,
+    #[serde(default)]
+    pub ledger_represented_full: u64,
+    #[serde(default)]
+    pub ledger_represented_marked: u64,
+    #[serde(default)]
+    pub observations_offloaded: u64,
+    #[serde(default)]
+    pub observation_bytes_offloaded: u64,
 }
 
 impl MetricCounters {
@@ -66,6 +83,15 @@ impl MetricCounters {
             MetricEvent::Clarification => self.clarifications += 1,
             MetricEvent::FalsePositive { .. } => self.false_positives += 1,
             MetricEvent::StallDetected { .. } => self.stalls_detected += 1,
+            MetricEvent::LedgerRecorded => self.ledger_recorded += 1,
+            MetricEvent::LedgerRepresented { full, marked } => {
+                self.ledger_represented_full += full;
+                self.ledger_represented_marked += marked;
+            }
+            MetricEvent::ObservationsOffloaded { count, bytes } => {
+                self.observations_offloaded += count;
+                self.observation_bytes_offloaded += bytes;
+            }
         }
     }
 }

@@ -3164,6 +3164,7 @@ dependencies = [
  "codex-inocode-compaction",
  "codex-inocode-flags",
  "codex-inocode-knowledge",
+ "codex-inocode-ledger",
  "codex-inocode-metrics",
  "codex-inocode-protocol",
  "codex-inocode-stats",
@@ -3826,6 +3827,7 @@ dependencies = [
  "codex-analytics",
  "codex-core",
  "codex-extension-api",
+ "codex-inocode-team",
  "codex-otel",
  "codex-prompts",
  "codex-protocol",
@@ -4182,6 +4184,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-inocode-ledger"
+version = "0.0.0"
+dependencies = [
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "codex-inocode-metrics"
 version = "0.0.0"
 dependencies = [
@@ -4192,17 +4204,6 @@ dependencies = [
  "tempfile",
 ]
 
-[[package]]
-name = "codex-inocode-protocol"
-version = "0.0.0"
-dependencies = [
- "codex-inocode-metrics",
- "pretty_assertions",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
-]
 [[package]]
 name = "codex-inocode-model-catalog"
 version = "0.0.0"
@@ -4217,6 +4218,17 @@ dependencies = [
  "wiremock",
 ]
 
+[[package]]
+name = "codex-inocode-protocol"
+version = "0.0.0"
+dependencies = [
+ "codex-inocode-metrics",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+]
 
 [[package]]
 name = "codex-inocode-stats"

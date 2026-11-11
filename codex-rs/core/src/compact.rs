@@ -102,6 +102,12 @@ pub(crate) async fn build_compaction_replacement_history(
         );
         context.push(item);
     }
+    // The user's own messages again, beside the pinned rules (remote path).
+    if let Some(item) =
+        crate::compact_inocode::ledger_item(&sess.thread_id.to_string(), &compacted_history)
+    {
+        context.push(item);
+    }
     (
         assemble_compaction_history(compacted_history, prefix, context),
         snapshot,
@@ -352,6 +358,7 @@ async fn run_compact_task_inner_impl(
         sess.services
             .executed_tool_calls
             .attach_to_compaction_prompt(&mut turn_input);
+        crate::compact_inocode::offload_old_observations(&sess.thread_id.to_string(), &mut turn_input);
         let turn_input_len = turn_input.len();
         let base_instructions = if turn_input
             .iter()
@@ -507,6 +514,12 @@ async fn run_compact_task_inner_impl(
                 crate::compact_inocode::pinned_rule_ids(cwd),
             );
         }
+        context.push(item);
+    }
+    // The user's own messages again, beside the pinned rules.
+    if let Some(item) =
+        crate::compact_inocode::ledger_item(&sess.thread_id.to_string(), &new_history)
+    {
         context.push(item);
     }
     let new_history = assemble_compaction_history(new_history, prefix, context);

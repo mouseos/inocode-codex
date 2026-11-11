@@ -312,6 +312,156 @@ pub(crate) fn pinned_rules_item(cwd: &Path) -> Option<ResponseItem> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// Instruction ledger (the user's own messages, verbatim)
+// ---------------------------------------------------------------------------
+
+fn metric(thread_id: &str, event: codex_inocode_metrics::MetricEvent) {
+    if codex_inocode_flags::InocodeFlags::load().metrics_enabled {
+        codex_inocode_metrics::record_global(thread_id, event);
+    }
+}
+
+/// Stores the user's message in the ledger, verbatim. Sub-agents are not users: their input
+/// comes from the parent agent, so it is not recorded.
+pub(crate) fn ledger_record(
+    thread_id: &str,
+    session_source: &codex_protocol::protocol::SessionSource,
+    user_input: &[codex_protocol::user_input::UserInput],
+) {
+    if matches!(session_source, codex_protocol::protocol::SessionSource::SubAgent(_)) {
+        return;
+    }
+    let text: String = user_input
+        .iter()
+        .filter_map(|u| match u {
+            codex_protocol::user_input::UserInput::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if codex_inocode_ledger::record(thread_id, &text).is_some() {
+        metric(thread_id, codex_inocode_metrics::MetricEvent::LedgerRecorded);
+    }
+}
+
+/// Plain text of the user messages a compacted history still holds.
+pub(crate) fn retained_user_texts(items: &[codex_history::ResponseItemEnvelope]) -> Vec<String> {
+    items
+        .iter()
+        .filter_map(|envelope| match &envelope.item {
+            ResponseItem::Message { role, content, .. } if role == "user" => {
+                crate::compact::content_items_to_text(content)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The ledger, presented again after a compaction at the same fixed place as the pinned rules.
+/// Messages the compacted history still holds are not repeated; a long message is presented as its
+/// beginning plus the path of the whole text (`compaction.ledger_preview_chars`).
+pub(crate) fn ledger_item(
+    thread_id: &str,
+    retained: &[codex_history::ResponseItemEnvelope],
+) -> Option<ResponseItem> {
+    let preview = usize::try_from(codex_inocode_flags::int_param("compaction.ledger_preview_chars"))
+        .unwrap_or(usize::MAX);
+    let rendered = codex_inocode_ledger::render(thread_id, &retained_user_texts(retained), preview)?;
+    metric(
+        thread_id,
+        codex_inocode_metrics::MetricEvent::LedgerRepresented {
+            full: rendered.full as u64,
+            marked: rendered.marked as u64,
+        },
+    );
+    Some(user_text_item(rendered.text))
+}
+
+// ---------------------------------------------------------------------------
+// Old observations -> files, before a compaction
+// ---------------------------------------------------------------------------
+
+/// Offloads the text of tool outputs older than the newest `compaction.keep_recent_observations`
+/// to `tool-results/` files (lossless: the whole output stays in the file), leaving the same
+/// preview-and-path stub the large-output persistence uses. Returns (outputs, bytes) offloaded.
+pub(crate) fn offload_old_observations(thread_id: &str, items: &mut [ResponseItem]) -> (u64, u64) {
+    if !codex_inocode_flags::InocodeFlags::load().compaction_persist_large_output {
+        return (0, 0);
+    }
+    let keep = usize::try_from(codex_inocode_flags::int_param("compaction.keep_recent_observations"))
+        .unwrap_or(usize::MAX);
+    let preview = usize::try_from(codex_inocode_flags::int_param("compaction.preview_bytes"))
+        .unwrap_or(usize::MAX);
+    let mut config = codex_inocode_tool_output::PersistConfig::new(
+        true,
+        /*threshold_tokens*/ 0,
+        &codex_inocode_flags::inocode_home(),
+    );
+    config.preview_bytes = preview;
+    let (count, bytes) = offload_old_observations_with(thread_id, items, keep, &config);
+    if count > 0 {
+        metric(
+            thread_id,
+            codex_inocode_metrics::MetricEvent::ObservationsOffloaded { count, bytes },
+        );
+    }
+    (count, bytes)
+}
+
+fn offload_old_observations_with(
+    thread_id: &str,
+    items: &mut [ResponseItem],
+    keep: usize,
+    config: &codex_inocode_tool_output::PersistConfig,
+) -> (u64, u64) {
+    let outputs: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| {
+            matches!(
+                item,
+                ResponseItem::FunctionCallOutput { .. } | ResponseItem::CustomToolCallOutput { .. }
+            )
+        })
+        .map(|(i, _)| i)
+        .collect();
+    if outputs.len() <= keep {
+        return (0, 0);
+    }
+    let (mut count, mut bytes) = (0u64, 0u64);
+    for &i in &outputs[..outputs.len() - keep] {
+        let (call_id, output) = match &mut items[i] {
+            ResponseItem::FunctionCallOutput {
+                call_id, output, ..
+            } => (call_id.clone().unwrap_or_default(), output),
+            ResponseItem::CustomToolCallOutput {
+                call_id, output, ..
+            } => (call_id.clone(), output),
+            _ => continue,
+        };
+        let codex_protocol::models::FunctionCallOutputBody::Text(text) = &mut output.body else {
+            continue;
+        };
+        // A stub bigger than the output saves nothing.
+        if text.len() <= config.preview_bytes.saturating_mul(2) {
+            continue;
+        }
+        let meta = codex_inocode_tool_output::PersistMeta {
+            tool: None,
+            thread_id: Some(thread_id.to_string()),
+            call_id: (!call_id.is_empty()).then_some(call_id),
+        };
+        let original = text.len() as u64;
+        if let Some(stub) = codex_inocode_tool_output::persist_if_large_with(text, config, &meta) {
+            *text = stub;
+            count += 1;
+            bytes += original;
+        }
+    }
+    (count, bytes)
+}
+
 /// Items to record at the start of a turn: the `team.auto_select` recommendation for a request
 /// that holds several independent tasks, and the pinned rules again after a model switch.
 /// Must run before `previous_turn_settings` is overwritten for this turn.
@@ -321,6 +471,7 @@ pub(crate) async fn turn_extras(
     user_input: &[codex_protocol::user_input::UserInput],
 ) -> Vec<ResponseItem> {
     let mut items = Vec::new();
+    ledger_record(&sess.thread_id.to_string(), &turn.session_source, user_input);
     let flags = codex_inocode_flags::InocodeFlags::load();
     if flags.team_auto_select {
         let text: String = user_input
@@ -448,5 +599,41 @@ mod tests {
         std::fs::write(&big, "word ".repeat(400_000)).unwrap();
         let text = render_reattached_files(&[big]);
         assert!(approx_token_count(&text) <= max_reattached_tokens() + 200);
+    }
+
+    #[test]
+    fn old_observations_are_offloaded_and_recent_ones_kept() {
+        use codex_protocol::models::FunctionCallOutputBody;
+        use codex_protocol::models::FunctionCallOutputPayload;
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = codex_inocode_tool_output::PersistConfig::new(true, 0, dir.path());
+        config.preview_bytes = 100;
+        let big = "x".repeat(1000);
+        let out = |i: usize, text: &str| ResponseItem::FunctionCallOutput {
+            id: None,
+            call_id: Some(format!("c{i}")),
+            name: None,
+            namespace: None,
+            output: FunctionCallOutputPayload {
+                body: FunctionCallOutputBody::Text(text.to_string()),
+                success: None,
+            },
+            internal_chat_message_metadata_passthrough: None,
+        };
+        let mut items = vec![out(0, &big), out(1, "small"), out(2, &big), out(3, &big)];
+        let (n, bytes) = offload_old_observations_with("t", &mut items, 2, &config);
+        assert_eq!((n, bytes), (1, 1000)); // only #0: #1 is small, #2/#3 are recent
+        let text = |i: usize| match &items[i] {
+            ResponseItem::FunctionCallOutput { output, .. } => match &output.body {
+                FunctionCallOutputBody::Text(t) => t.clone(),
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        };
+        assert!(text(0).starts_with("<persisted-output>"));
+        assert_eq!(text(1), "small");
+        assert_eq!(text(2), big);
+        // Already offloaded outputs are not processed again.
+        assert_eq!(offload_old_observations_with("t", &mut items, 2, &config), (0, 0));
     }
 }
