@@ -103,6 +103,14 @@ impl AccountStore {
         self.root.join(id)
     }
 
+    /// The append-only reset history of one account, next to its metadata.
+    pub fn reset_history_path(&self, id: &str) -> PathBuf {
+        if id == DEFAULT_ID {
+            return self.root.join("_default.reset-history.jsonl");
+        }
+        self.account_dir(id).join("reset-history.jsonl")
+    }
+
     pub fn pending_dir(&self, login_id: &str) -> PathBuf {
         self.root.join(format!("{PENDING_PREFIX}{login_id}"))
     }

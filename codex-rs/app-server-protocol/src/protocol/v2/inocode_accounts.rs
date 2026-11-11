@@ -125,9 +125,9 @@ pub struct InocodeAccountResetCredit {
     #[ts(optional = nullable)]
     pub reason: Option<String>,
     /// The fields below are the last good value, kept because the latest read failed.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    #[ts(optional)]
-    pub stale: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub stale: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional = nullable)]
     pub eligible: Option<bool>,
@@ -176,6 +176,74 @@ pub struct InocodeAccountResetGrant {
     pub usable_now: bool,
     /// The windows the grant clears: `five_hour`, `seven_day`, `seven_day_overage_included`.
     pub clears: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeAccountsResetCreditHistoryParams {
+    pub id: String,
+    /// At most this many entries, newest first. Omitted: all.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub limit: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum InocodeResetCreditHistoryKind {
+    /// A grant was seen for the first time (`ts` is when it was noticed, not when it was given).
+    Granted,
+    /// A spend made from this app: it worked, was refused, or its outcome is not known.
+    Used,
+    /// A grant went down or away and this app's records do not account for it.
+    UsedElsewhere,
+    Expired,
+    /// A usage window fell by a lot: the limit was reset.
+    QuotaReset,
+    /// The credit could not be read.
+    Error,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum InocodeResetCreditHistorySource {
+    /// Seen by comparing two reads of the usage.
+    Observed,
+    /// This app's own spend records.
+    Journal,
+    /// The server's own listing said so.
+    Endpoint,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeResetCreditHistoryEntry {
+    /// Unix seconds: when it happened if known (an expiry is dated by its deadline), otherwise
+    /// when it was noticed.
+    #[ts(type = "number")]
+    pub ts: i64,
+    pub kind: InocodeResetCreditHistoryKind,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub grant_id: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub label: Option<String>,
+    /// Display text (Japanese).
+    pub detail: String,
+    pub source: InocodeResetCreditHistorySource,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeAccountsResetCreditHistoryResponse {
+    /// Newest first.
+    pub entries: Vec<InocodeResetCreditHistoryEntry>,
 }
 
 /// One pool entry. There is deliberately no e-mail address: identify by `alias` and `plan`.

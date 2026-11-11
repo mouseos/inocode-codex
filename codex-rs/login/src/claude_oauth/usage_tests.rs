@@ -12,6 +12,7 @@ use wiremock::Mock;
 use wiremock::MockServer;
 use wiremock::ResponseTemplate;
 use wiremock::matchers::header;
+use wiremock::matchers::header_regex;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
 use wiremock::matchers::query_param;
@@ -187,7 +188,8 @@ async fn fetching_sends_the_bearer_the_beta_header_and_the_grant_query() {
         .and(query_param("skip_spend", "1"))
         .and(header("authorization", "Bearer access-1"))
         .and(header("anthropic-beta", consts::OAUTH_BETA))
-        .and(header("user-agent", consts::ACCOUNT_USER_AGENT))
+        // The header value holds a comma, which the plain `header` matcher would split on.
+        .and(header_regex("user-agent", r"^claude-cli/2\.1\.280 "))
         .respond_with(ResponseTemplate::new(200).set_body_json(full_body()))
         .expect(1)
         .mount(&server)

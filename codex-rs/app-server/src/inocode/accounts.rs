@@ -25,6 +25,11 @@ use codex_app_server_protocol::InocodeAccountResetCredit;
 use codex_app_server_protocol::InocodeAccountResetGrant;
 use codex_app_server_protocol::InocodeResetCreditStatus;
 use codex_app_server_protocol::InocodeAccountsResetCreditConsumeParams;
+use codex_app_server_protocol::InocodeAccountsResetCreditHistoryParams;
+use codex_app_server_protocol::InocodeAccountsResetCreditHistoryResponse;
+use codex_app_server_protocol::InocodeResetCreditHistoryEntry;
+use codex_app_server_protocol::InocodeResetCreditHistoryKind;
+use codex_app_server_protocol::InocodeResetCreditHistorySource;
 use codex_app_server_protocol::InocodeAccountsResetCreditConsumeResponse;
 use codex_app_server_protocol::InocodeResetCreditFailure;
 use codex_app_server_protocol::InocodeResetCreditFailureReason;
@@ -476,6 +481,99 @@ fn from_code(code: &str, replayed: bool, operation_id: &str, grant_id: Option<St
     }
 }
 
+/// The history line for a spend this app made. A replay, an API key and a spend that another
+/// request already holds are not new events.
+fn spend_history_entry(
+    outcome: &SpendOutcome,
+    asked_grant: Option<&str>,
+) -> Option<account_pool::reset_history::HistoryEntry> {
+    use account_pool::reset_history::HistoryEntry;
+    use account_pool::reset_history::HistoryKind;
+    use account_pool::reset_history::HistorySource;
+    use InocodeResetCreditFailureReason as Reason;
+    if outcome.replayed {
+        return None;
+    }
+    let detail = match (&outcome.failure, &outcome.code) {
+        (None, _) => "このアプリから使いました: リセットされました".to_string(),
+        (Some(failure), _) if matches!(failure.reason, Reason::Unsupported | Reason::InProgress) => {
+            return None;
+        }
+        (Some(failure), _) if failure.retryable => {
+            "このアプリから使いましたが、結果を確認できていません(同じ操作 ID で再試行できます)"
+                .to_string()
+        }
+        (Some(failure), _) => {
+            let why = match failure.reason {
+                Reason::AlreadyUsed => "すでに使われていました",
+                Reason::Cooldown => "冷却中で使えませんでした",
+                Reason::RateLimited => "混み合っていて受け付けられませんでした(消費なし)",
+                Reason::AuthFailed => "認証に失敗しました(消費なし)",
+                Reason::Expired => "期限が切れていました",
+                Reason::NotUsable => "いまは使えない状態でした",
+                Reason::NetworkError => "通信できませんでした",
+                Reason::JournalError => "記録を作れなかったため送りませんでした",
+                Reason::Unsupported | Reason::InProgress => "使えませんでした",
+            };
+            format!("このアプリから使おうとしました: {why}")
+        }
+    };
+    let settled = outcome.failure.as_ref().is_none_or(|failure| !failure.retryable);
+    Some(HistoryEntry {
+        ts: chrono::Utc::now().timestamp(),
+        kind: HistoryKind::Used,
+        grant_id: outcome
+            .grant_id
+            .clone()
+            .or_else(|| asked_grant.map(str::to_string)),
+        label: None,
+        detail,
+        source: HistorySource::Journal,
+        key: format!(
+            "op:{}:{}",
+            outcome.operation_id,
+            if settled { "settled" } else { "unknown" }
+        ),
+    })
+}
+
+fn reset_credit_history(
+    params: InocodeAccountsResetCreditHistoryParams,
+) -> Result<InocodeAccountsResetCreditHistoryResponse, JSONRPCErrorError> {
+    use account_pool::reset_history::HistoryKind;
+    use account_pool::reset_history::HistorySource;
+    let pool = all_pools()
+        .into_iter()
+        .find(|pool| pool.list().iter().any(|view| view.id == params.id))
+        .ok_or_else(|| invalid_params(format!("unknown account `{}`", params.id)))?;
+    let limit = params.limit.map_or(usize::MAX, |limit| limit as usize);
+    let entries = pool
+        .reset_history(&params.id)
+        .into_iter()
+        .take(limit)
+        .map(|entry| InocodeResetCreditHistoryEntry {
+            ts: entry.ts,
+            kind: match entry.kind {
+                HistoryKind::Granted => InocodeResetCreditHistoryKind::Granted,
+                HistoryKind::Used => InocodeResetCreditHistoryKind::Used,
+                HistoryKind::UsedElsewhere => InocodeResetCreditHistoryKind::UsedElsewhere,
+                HistoryKind::Expired => InocodeResetCreditHistoryKind::Expired,
+                HistoryKind::QuotaReset => InocodeResetCreditHistoryKind::QuotaReset,
+                HistoryKind::Error => InocodeResetCreditHistoryKind::Error,
+            },
+            grant_id: entry.grant_id,
+            label: entry.label,
+            detail: entry.detail,
+            source: match entry.source {
+                HistorySource::Observed => InocodeResetCreditHistorySource::Observed,
+                HistorySource::Journal => InocodeResetCreditHistorySource::Journal,
+                HistorySource::Endpoint => InocodeResetCreditHistorySource::Endpoint,
+            },
+        })
+        .collect();
+    Ok(InocodeAccountsResetCreditHistoryResponse { entries })
+}
+
 async fn reset_credit_consume(
     params: InocodeAccountsResetCreditConsumeParams,
 ) -> Result<InocodeAccountsResetCreditConsumeResponse, JSONRPCErrorError> {
@@ -510,6 +608,9 @@ async fn reset_credit_consume(
         }
     };
 
+    if let Some(entry) = spend_history_entry(&outcome, params.grant_id.as_deref()) {
+        pool.record_reset_spend(&params.id, entry);
+    }
     // A spend changes the windows: read them again so the answer and `accounts/updated` agree.
     if outcome.ok {
         pool.refresh_usage_of(&params.id).await;
@@ -731,6 +832,9 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
             Ok(Some(
                 InocodeAccountsReauthResponse::from(reauth(params).await?).into(),
             ))
+        }
+        ClientRequest::InocodeAccountsResetCreditHistory { params, .. } => {
+            Ok(Some(reset_credit_history(params)?.into()))
         }
         ClientRequest::InocodeAccountsResetCreditConsume { params, .. } => {
             Ok(Some(reset_credit_consume(params).await?.into()))
@@ -1237,7 +1341,7 @@ fn to_reset_credit(
     let mut out = InocodeAccountResetCredit {
         status,
         reason,
-        stale: stale && credit.is_some(),
+        stale: (stale && credit.is_some()).then_some(true),
         eligible: None,
         at_limit: None,
         resets_left: None,

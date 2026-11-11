@@ -5,18 +5,23 @@ use codex_app_server_protocol::ReasoningEffortOption;
 use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::openai_models::ReasoningEffortPreset;
 
-pub fn supported_models(models: Vec<ModelPreset>, include_hidden: bool) -> Vec<Model> {
+pub fn supported_models(
+    models: Vec<ModelPreset>,
+    include_hidden: bool,
+    model_provider: &str,
+) -> Vec<Model> {
     models
         .into_iter()
         .filter(|preset| include_hidden || preset.show_in_picker)
-        .map(model_from_preset)
+        .map(|preset| model_from_preset(preset, model_provider))
         .collect()
 }
 
-fn model_from_preset(preset: ModelPreset) -> Model {
+fn model_from_preset(preset: ModelPreset, model_provider: &str) -> Model {
     Model {
         id: preset.id.to_string(),
         model: preset.model.to_string(),
+        model_provider: model_provider.to_string(),
         upgrade: preset.upgrade.as_ref().map(|upgrade| upgrade.id.clone()),
         upgrade_info: preset.upgrade.as_ref().map(|upgrade| ModelUpgradeInfo {
             model: upgrade.id.clone(),

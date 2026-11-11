@@ -121,6 +121,10 @@ impl From<ModelAccessPrograms> for CoreModelAccessPrograms {
 pub struct Model {
     pub id: String,
     pub model: String,
+    /// The provider this model belongs to (`openai`, `claude`, ...): the id to send as
+    /// `modelProvider` with this `model` in `thread/start` and `turn/start`.
+    #[serde(default)]
+    pub model_provider: String,
     pub upgrade: Option<String>,
     pub upgrade_info: Option<ModelUpgradeInfo>,
     pub availability_nux: Option<ModelAvailabilityNux>,

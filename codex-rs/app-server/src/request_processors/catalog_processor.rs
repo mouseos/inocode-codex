@@ -313,6 +313,7 @@ impl CatalogRequestProcessor {
             include_hidden,
             model_provider: _,
         } = params;
+        let provider_id = config.model_provider_id.clone();
         let presets = self
             .model_catalog
             .list_models_from_snapshot(
@@ -322,7 +323,7 @@ impl CatalogRequestProcessor {
             )
             .await
             .map_err(|err| config_load_error(&err))?;
-        let models = supported_models(presets, include_hidden.unwrap_or(false));
+        let models = supported_models(presets, include_hidden.unwrap_or(false), &provider_id);
         let total = models.len();
 
         if total == 0 {

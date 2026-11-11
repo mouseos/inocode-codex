@@ -3,6 +3,7 @@ mod auth;
 mod bearer_auth_provider;
 mod capabilities;
 mod catalog_factory;
+mod claude_models;
 mod chatgpt_base_url;
 mod client_auth;
 mod combined_auth;

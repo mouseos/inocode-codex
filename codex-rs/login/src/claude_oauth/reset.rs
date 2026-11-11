@@ -279,6 +279,33 @@ fn known_grant(path: &Path, operation_id: &str) -> Result<Option<String>, Consum
     })
 }
 
+/// An operation that has no answer yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OpenOperation {
+    pub operation_id: String,
+    pub grant_id: String,
+    pub updated_at_ms: i64,
+}
+
+/// Every operation of this account that has no answer (for the history view).
+pub fn open_operations(path: &Path, account_id: &str) -> Vec<OpenOperation> {
+    with_lock(|| {
+        let Ok(journal) = read_journal(path) else {
+            return Vec::new();
+        };
+        journal
+            .operations
+            .iter()
+            .filter(|(_, record)| !record.settled && record.account_id == account_id)
+            .map(|(operation_id, record)| OpenOperation {
+                operation_id: operation_id.clone(),
+                grant_id: record.grant_id.clone(),
+                updated_at_ms: record.updated_at,
+            })
+            .collect()
+    })
+}
+
 /// The open operation for this account that can still be retried, if any.
 pub fn pending_operation(path: &Path, account_id: &str, now: i64) -> Option<PendingOperation> {
     with_lock(|| {

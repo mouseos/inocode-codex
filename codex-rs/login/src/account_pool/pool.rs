@@ -613,6 +613,13 @@ impl AccountPool {
                     status.reason.as_deref().unwrap_or("-")
                 );
             }
+            // What changed since the last read goes into the account's append-only history.
+            super::reset_history::observe(
+                &self.store.reset_history_path(id),
+                entry.meta.usage.as_ref(),
+                &usage,
+                now,
+            );
             entry.meta.usage = Some(usage);
             let meta = entry.meta.clone();
             let _ = self.store.save_meta(&meta);
@@ -759,10 +766,17 @@ impl AccountPool {
                 return;
             };
             let meta = &mut inner.entries[index].meta;
+            let previous = meta.usage.clone();
             let usage = meta.usage.get_or_insert_with(AccountUsage::default);
             let mut status = ResetStatus::error(reason);
             status.stale = usage.reset_credit.is_some();
             usage.reset_status = Some(status);
+            super::reset_history::observe(
+                &self.store.reset_history_path(id),
+                previous.as_ref(),
+                usage,
+                self.now(),
+            );
             let meta = meta.clone();
             let _ = self.store.save_meta(&meta);
         }
@@ -1167,6 +1181,43 @@ impl AccountPool {
     }
 
     /// Where this group's reset-spend journal lives.
+    /// The account's reset history, newest first: what its usage reads showed, plus this app's
+    /// spends that have no answer yet (from the journal), which are not in the file until they
+    /// settle.
+    pub fn reset_history(&self, id: &str) -> Vec<super::reset_history::HistoryEntry> {
+        use super::reset_history::HistoryEntry;
+        use super::reset_history::HistoryKind;
+        use super::reset_history::HistorySource;
+        let mut entries = super::reset_history::read(&self.store.reset_history_path(id));
+        let settled: std::collections::HashSet<String> = entries
+            .iter()
+            .filter_map(|entry| entry.key.strip_prefix("op:"))
+            .filter_map(|rest| rest.rsplit_once(':').map(|(operation, _)| operation.to_string()))
+            .collect();
+        for open in crate::claude_oauth::open_reset_operations(&self.reset_journal_path(), id) {
+            if settled.contains(&open.operation_id) {
+                continue;
+            }
+            entries.push(HistoryEntry {
+                ts: open.updated_at_ms / 1000,
+                kind: HistoryKind::Used,
+                grant_id: Some(open.grant_id),
+                label: None,
+                detail: "このアプリから使いましたが、結果を確認できていません(同じ操作 ID で再試行できます)"
+                    .to_string(),
+                source: HistorySource::Journal,
+                key: String::new(),
+            });
+        }
+        entries.sort_by_key(|entry| std::cmp::Reverse(entry.ts));
+        entries
+    }
+
+    /// Records one of this app's own spends (any answer) in the account's history.
+    pub fn record_reset_spend(&self, id: &str, entry: super::reset_history::HistoryEntry) {
+        super::reset_history::append(&self.store.reset_history_path(id), &[entry]);
+    }
+
     pub fn reset_journal_path(&self) -> PathBuf {
         self.store.root().join("reset-journal.json")
     }
@@ -1177,6 +1228,31 @@ impl AccountPool {
             ClaudeCredential::Oauth(manager) => Some(manager),
             ClaudeCredential::ApiKey(_) => None,
         }
+    }
+
+    /// The models the Claude entry in use can use, read from `GET /v1/models` (a read only; no
+    /// prompt is sent). `Err` when no Claude credential is in use or the read fails.
+    pub async fn fetch_claude_models(
+        &self,
+        base_url: &str,
+    ) -> Result<Vec<crate::claude_oauth::RemoteModel>, String> {
+        let (token, oauth) = match self.active_claude_credential() {
+            Some(ClaudeCredential::Oauth(manager)) => (
+                manager.access_token().await.map_err(|error| error.to_string())?,
+                true,
+            ),
+            Some(ClaudeCredential::ApiKey(manager)) => (
+                manager
+                    .auth()
+                    .await
+                    .and_then(|auth| auth.api_key().map(str::to_string))
+                    .ok_or_else(|| "the pooled API key is gone".to_string())?,
+                false,
+            ),
+            None => return Err("no Claude sign-in".to_string()),
+        };
+        crate::claude_oauth::fetch_models(&self.env.auth_route_config, base_url, &token, oauth)
+            .await
     }
 
     /// The credential of the Claude entry in use: an OAuth sign-in or an API key.

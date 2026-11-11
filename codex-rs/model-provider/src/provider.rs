@@ -515,6 +515,24 @@ impl ConfiguredModelProvider {
         }
     }
 
+    /// The Claude catalog (live `/v1/models`, a cache, a bundled snapshot) for a provider on the
+    /// Messages wire without a catalog of its own.
+    fn claude_models_manager(&self, codex_home: Option<PathBuf>) -> Option<SharedModelsManager> {
+        if self.info.wire_api != codex_model_provider_info::WireApi::AnthropicMessages
+            || self.info.model_catalog_url.is_some()
+        {
+            return None;
+        }
+        let base_url = self
+            .info
+            .base_url
+            .clone()
+            .unwrap_or_else(|| "https://api.anthropic.com".to_string());
+        Some(Arc::new(crate::claude_models::ClaudeModelsManager::new(
+            base_url, codex_home,
+        )))
+    }
+
     /// The account pool (when installed) picks which account's manager serves this request.
     /// Only the first-party sign-in path is pooled; providers with their own credentials
     /// (API key env var, command auth, cloud auth) keep theirs.
@@ -713,6 +731,11 @@ impl ModelProvider for ConfiguredModelProvider {
         codex_home: PathBuf,
         config_model_catalog: Option<ModelsResponse>,
     ) -> SharedModelsManager {
+        if config_model_catalog.is_none()
+            && let Some(manager) = self.claude_models_manager(Some(codex_home.clone()))
+        {
+            return manager;
+        }
         self.models_manager_with_settings(
             config_model_catalog,
             ModelCatalogSettings::disk(codex_home),
@@ -730,6 +753,9 @@ impl ModelProvider for ConfiguredModelProvider {
                 model_catalog,
                 codex_models_manager::ModelOrigin::ExplicitConfig,
             ));
+        }
+        if let Some(manager) = self.claude_models_manager(/*codex_home*/ None) {
+            return manager;
         }
         let endpoint = Arc::new(
             OpenAiModelsEndpoint::new(

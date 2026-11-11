@@ -5,6 +5,7 @@
 
 mod pool;
 mod provider;
+pub mod reset_history;
 mod select;
 mod store;
 mod types;

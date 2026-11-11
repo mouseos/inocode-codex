@@ -84,6 +84,8 @@ const MAX_REQUEST_MAX_RETRIES: u64 = 100;
 pub const OPENAI_PROVIDER_NAME: &str = "OpenAI";
 const OPENAI_ACTOR_AUTHORIZATION_HEADER: &str = "x-openai-actor-authorization";
 pub const OPENAI_PROVIDER_ID: &str = "openai";
+/// The built-in Claude provider (Messages wire, signed in through the account pool's `claude` group).
+pub const CLAUDE_PROVIDER_ID: &str = "claude";
 pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 pub const AMAZON_BEDROCK_PROVIDER_NAME: &str = "Amazon Bedrock";
 pub const AMAZON_BEDROCK_PROVIDER_ID: &str = "amazon-bedrock";
@@ -782,6 +784,7 @@ pub fn built_in_model_providers(
     // Other compatible providers can be added through `model_providers` in config.toml.
     [
         (OPENAI_PROVIDER_ID, openai_provider),
+        (CLAUDE_PROVIDER_ID, create_claude_provider()),
         (AMAZON_BEDROCK_PROVIDER_ID, amazon_bedrock_provider),
         (GCP_PROVIDER_ID, gcp_provider),
         (
@@ -857,6 +860,10 @@ pub fn merge_configured_model_providers(
                         .extend(http_headers_override);
                 }
             }
+        } else if key == CLAUDE_PROVIDER_ID {
+            // The built-in Claude provider works without any configuration; an entry in
+            // config.toml replaces it (another base URL, a key of its own).
+            model_providers.insert(key, provider);
         } else if key == GCP_PROVIDER_ID {
             merge_gcp_provider_overrides(model_providers.get_mut(&key), provider)?;
         } else {
@@ -926,6 +933,21 @@ pub fn create_oss_provider(default_provider_port: u16, wire_api: WireApi) -> Mod
         .filter(|v| !v.trim().is_empty())
         .unwrap_or(default_codex_oss_base_url);
     create_oss_provider_with_base_url(&codex_oss_base_url, wire_api)
+}
+
+/// The built-in Claude provider: the Messages API at api.anthropic.com. It carries no key of its
+/// own, so it signs in through the account pool's `claude` group (OAuth or API key).
+pub fn create_claude_provider() -> ModelProviderInfo {
+    ModelProviderInfo {
+        name: "Claude".into(),
+        base_url: Some("https://api.anthropic.com".into()),
+        wire_api: WireApi::AnthropicMessages,
+        requires_openai_auth: false,
+        supports_websockets: false,
+        supports_standalone_web_search: false,
+        include_internal_metadata: false,
+        ..create_oss_provider_with_base_url("https://api.anthropic.com", WireApi::AnthropicMessages)
+    }
 }
 
 pub fn create_oss_provider_with_base_url(base_url: &str, wire_api: WireApi) -> ModelProviderInfo {

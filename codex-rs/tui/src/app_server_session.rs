@@ -3392,6 +3392,7 @@ mod tests {
         ApiModel {
             id: "model-id".to_string(),
             model: "current-model".to_string(),
+            model_provider: "openai".to_string(),
             upgrade: Some("replacement-model".to_string()),
             upgrade_info: Some(codex_app_server_protocol::ModelUpgradeInfo {
                 model: "replacement-model".to_string(),

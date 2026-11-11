@@ -846,6 +846,12 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeAccountsResetCreditConsumeResponse,
     },
+    #[experimental("inocode/accounts/resetCredit/history")]
+    InocodeAccountsResetCreditHistory => "inocode/accounts/resetCredit/history" {
+        params: v2::InocodeAccountsResetCreditHistoryParams,
+        serialization: None,
+        response: v2::InocodeAccountsResetCreditHistoryResponse,
+    },
     #[experimental("inocode/accounts/login/complete")]
     InocodeAccountsLoginComplete => "inocode/accounts/login/complete" {
         params: v2::InocodeAccountsLoginCompleteParams,
