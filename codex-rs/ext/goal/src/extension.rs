@@ -308,6 +308,11 @@ where
                 runtime
                     .accounting_state()
                     .record_item(turn_store.level_id(), item);
+                if matches!(item, TurnItem::UserMessage(_)) {
+                    runtime
+                        .accounting_state()
+                        .note_user_message(turn_store.level_id());
+                }
             }
         })
     }

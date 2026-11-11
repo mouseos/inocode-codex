@@ -224,6 +224,15 @@ impl GoalAccountingState {
         inner.automatic_goal_turn_id = Some(turn_id);
     }
 
+    /// A person typed into this turn (their message was steered into a running continuation
+    /// turn): from then on it is a turn the user took part in, not an automatic one.
+    pub(crate) fn note_user_message(&self, turn_id: &str) {
+        let mut inner = self.inner();
+        if inner.continuation_turn_id.as_deref() == Some(turn_id) {
+            inner.continuation_turn_id = None;
+        }
+    }
+
     /// True when `turn_id` is an automatic goal-continuation turn (no human message in it).
     pub(crate) fn is_continuation_turn(&self, turn_id: &str) -> bool {
         self.inner().continuation_turn_id.as_deref() == Some(turn_id)
