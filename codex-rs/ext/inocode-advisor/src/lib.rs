@@ -240,7 +240,7 @@ impl StallDetector {
     fn check_repeat(&self) -> Option<Stall> {
         let tail = self.tail(self.config.repeat_n)?;
         // Waiting again on a running code-mode cell is waiting, not repeating a failed attempt.
-        if tail[0].tool == "wait" {
+        if tail[0].tool == "wait" || tail[0].tool.ends_with("wait_agent") {
             return None;
         }
         let key = tail[0].action_key();
@@ -555,6 +555,21 @@ mod tests {
                 tool: "wait".into(),
                 args: "{\"cell_id\":\"3\"}".into(),
                 observation: "script running".into(),
+                read_only: true,
+                ..Default::default()
+            };
+            assert_eq!(d.observe(obs), None);
+        }
+    }
+
+    #[test]
+    fn an_orchestrator_waiting_for_its_agents_is_not_stalled() {
+        let mut d = StallDetector::new(StallConfig::default());
+        for _ in 0..12 {
+            let obs = Observation {
+                tool: "multi_agent_v1wait_agent".into(),
+                args: "{\"targets\":[\"a\"]}".into(),
+                observation: "timed out".into(),
                 read_only: true,
                 ..Default::default()
             };

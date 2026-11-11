@@ -141,7 +141,7 @@ pub fn is_read_only_call(tool: &str, args: &str) -> bool {
 /// Tools named for looking, plus the ones that hand work to other agents: starting or briefing
 /// an agent is the work of an orchestrator, not a stall.
 fn tool_name_is_read_only(name: &str) -> bool {
-    if ["spawn_agent", "send_input"].iter().any(|w| name.contains(w)) {
+    if ["spawn_agent", "send_input", "wait_agent"].iter().any(|w| name.contains(w)) {
         return true;
     }
     ["read", "view", "list", "grep", "glob", "search", "fetch", "get_goal", "find"]
@@ -235,7 +235,7 @@ mod tests {
     fn handing_work_to_an_agent_is_not_counted_as_standing_still() {
         assert!(is_read_only_call("multi_agent_v1spawn_agent", "{}"));
         assert!(is_read_only_call("multi_agent_v1send_input", "{}"));
-        assert!(!is_read_only_call("multi_agent_v1wait_agent", "{}"));
+        assert!(is_read_only_call("multi_agent_v1wait_agent", "{}"));
         assert!(is_read_only_call("wait", "{\"cell_id\":\"3\"}"));
     }
 
@@ -247,6 +247,6 @@ mod tests {
         assert!(!is_read_only_call("exec_command", "{\"cmd\":\"cargo check\"}"));
         assert!(!is_read_only_call("apply_patch", "*** Begin Patch"));
         assert!(!is_read_only_call("write_file", "{}"));
-        assert!(!is_read_only_call("wait_agent", "{}"));
+        assert!(is_read_only_call("wait_agent", "{}"));
     }
 }
