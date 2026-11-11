@@ -20,6 +20,8 @@ use super::types::AccountPolicy;
 use super::types::AccountState;
 use super::types::AccountUsage;
 use super::types::AccountView;
+use super::types::ResetStatus;
+use super::types::ResetStatusKind;
 use super::types::SelectionStrategy;
 use super::types::PoolEvent;
 use super::types::SwitchEvent;
@@ -586,13 +588,30 @@ impl AccountPool {
                 }
             }
             let mut usage = usage;
-            if usage.reset_credit.is_none() {
-                // Rate-limit headers carry no reset credit; keep the last one read from the endpoint.
-                usage.reset_credit = entry
-                    .meta
-                    .usage
-                    .as_ref()
-                    .and_then(|previous| previous.reset_credit.clone());
+            let previous = entry.meta.usage.as_ref();
+            match usage.reset_status.as_ref().map(|status| status.kind) {
+                // Rate-limit headers carry no reset credit; keep what the endpoint last said.
+                None => {
+                    usage.reset_credit = previous.and_then(|p| p.reset_credit.clone());
+                    usage.reset_status = previous.and_then(|p| p.reset_status.clone());
+                }
+                // A failed read keeps the last good value, marked stale.
+                Some(ResetStatusKind::Error) => {
+                    usage.reset_credit = previous.and_then(|p| p.reset_credit.clone());
+                    if let Some(status) = usage.reset_status.as_mut() {
+                        status.stale = usage.reset_credit.is_some();
+                    }
+                }
+                Some(_) => {}
+            }
+            if let Some(status) = &usage.reset_status
+                && status.kind != ResetStatusKind::Ok
+            {
+                tracing::info!(
+                    "reset credit of {id}: {:?} ({})",
+                    status.kind,
+                    status.reason.as_deref().unwrap_or("-")
+                );
             }
             entry.meta.usage = Some(usage);
             let meta = entry.meta.clone();
@@ -711,13 +730,43 @@ impl AccountPool {
             Ok(access) => access,
             Err(error) => {
                 tracing::debug!("claude usage refresh skipped for {id}: {error}");
+                self.note_reset_failure(id, "token_unavailable");
                 return;
             }
         };
         match crate::claude_oauth::fetch_usage(&self.env.auth_route_config, &access, now).await {
             Ok(usage) => self.record_usage(id, usage, /*observed_while_in_use*/ false),
-            Err(error) => tracing::debug!("claude usage refresh failed for {id}: {error}"),
+            Err(error) => {
+                tracing::debug!("claude usage refresh failed for {id}: {error}");
+                let reason = if error.contains("refused") {
+                    "auth_refused"
+                } else if error.contains("rate limited") {
+                    "rate_limited"
+                } else {
+                    "request_failed"
+                };
+                self.note_reset_failure(id, reason);
+            }
         }
+    }
+
+    /// A usage read that failed leaves the windows as they were; the reset credit says so, and
+    /// keeps its last good value marked stale.
+    fn note_reset_failure(&self, id: &str, reason: &str) {
+        {
+            let mut inner = lock(&self.inner);
+            let Some(index) = inner.position(id) else {
+                return;
+            };
+            let meta = &mut inner.entries[index].meta;
+            let usage = meta.usage.get_or_insert_with(AccountUsage::default);
+            let mut status = ResetStatus::error(reason);
+            status.stale = usage.reset_credit.is_some();
+            usage.reset_status = Some(status);
+            let meta = meta.clone();
+            let _ = self.store.save_meta(&meta);
+        }
+        self.emit(PoolEvent::Updated);
     }
 
     /// Refreshes usage now and then, for as long as the pool is alive.

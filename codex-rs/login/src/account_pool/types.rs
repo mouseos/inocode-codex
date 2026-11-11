@@ -84,6 +84,51 @@ pub struct AccountUsage {
     /// has not been read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset_credit: Option<ResetCredit>,
+    /// How the last read of the reset credit went. `None` only when no read has reported yet
+    /// (for example usage that came from rate-limit headers alone).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_status: Option<ResetStatus>,
+}
+
+/// Whether the reset credit could be read, and why not when it could not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ResetStatusKind {
+    /// Read; `reset_credit` holds it (zero resets is still `Ok`).
+    Ok,
+    /// The account is outside the reset-credit scheme (API keys).
+    None,
+    /// The endpoint does not offer it for this account or plan.
+    Unavailable,
+    /// The read failed (network, refusal, unreadable answer). `reset_credit` may hold the last
+    /// good value, then `stale` is set.
+    Error,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetStatus {
+    pub kind: ResetStatusKind,
+    /// A short machine word saying why (never a response body or a token).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// `reset_credit` is the last good value, kept because the latest read failed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
+}
+
+impl ResetStatus {
+    pub fn ok() -> Self {
+        Self { kind: ResetStatusKind::Ok, reason: None, stale: false }
+    }
+
+    pub fn unavailable(reason: &str) -> Self {
+        Self { kind: ResetStatusKind::Unavailable, reason: Some(reason.to_string()), stale: false }
+    }
+
+    pub fn error(reason: &str) -> Self {
+        Self { kind: ResetStatusKind::Error, reason: Some(reason.to_string()), stale: false }
+    }
 }
 
 /// One banked usage-limit reset grant.

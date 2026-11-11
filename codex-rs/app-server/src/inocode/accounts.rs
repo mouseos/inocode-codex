@@ -22,11 +22,12 @@ use codex_app_server_protocol::InocodeAccountSelection;
 use codex_app_server_protocol::InocodeAccountState;
 use codex_app_server_protocol::InocodeAccountSwitchReason;
 use codex_app_server_protocol::InocodeAccountResetCredit;
+use codex_app_server_protocol::InocodeAccountResetGrant;
+use codex_app_server_protocol::InocodeResetCreditStatus;
 use codex_app_server_protocol::InocodeAccountsResetCreditConsumeParams;
 use codex_app_server_protocol::InocodeAccountsResetCreditConsumeResponse;
 use codex_app_server_protocol::InocodeResetCreditFailure;
 use codex_app_server_protocol::InocodeResetCreditFailureReason;
-use codex_app_server_protocol::InocodeAccountResetGrant;
 use codex_app_server_protocol::InocodeAccountUsage;
 use codex_app_server_protocol::InocodeAccountUsageWindow;
 use codex_app_server_protocol::InocodeAccountWindowKind;
@@ -280,28 +281,88 @@ fn usage_fetcher(
         let factory = http_client_factory.clone();
         Box::pin(async move {
             let client = codex_backend_client::Client::from_auth(base_url, &auth, factory);
-            let snapshot = tokio::time::timeout(Duration::from_secs(30), client.get_rate_limits())
-                .await
-                .map_err(|_| "the usage request timed out".to_string())?
-                .map_err(|_| "the usage request failed".to_string())?;
+            let status_read = tokio::time::timeout(
+                Duration::from_secs(30),
+                client.get_rate_limits_with_reset_credits(),
+            )
+            .await
+            .map_err(|_| "the usage request timed out".to_string())?
+            .map_err(|_| "the usage request failed".to_string())?;
+            let snapshot = status_read
+                .rate_limits
+                .iter()
+                .find(|snapshot| snapshot.limit_id.as_deref() == Some("codex"))
+                .or_else(|| status_read.rate_limits.first())
+                .ok_or_else(|| "the usage request returned no limits".to_string())?;
             let now = chrono::Utc::now().timestamp();
-            let mut usage = AccountUsage::from_snapshot(&snapshot, now);
-            // The banked resets, best effort: when this read fails the last one is kept.
-            if let Ok(Ok(details)) = tokio::time::timeout(
+            let mut usage = AccountUsage::from_snapshot(snapshot, now);
+            let at_limit = [&usage.five_hour, &usage.weekly]
+                .into_iter()
+                .flatten()
+                .any(|window| window.used_percent >= 100.0);
+            // The banked resets: the list endpoint, else the count the usage payload carries.
+            let summary = status_read
+                .rate_limit_reset_credits
+                .as_ref()
+                .map(|summary| summary.available_count);
+            let listed = tokio::time::timeout(
                 Duration::from_secs(5),
                 client.list_rate_limit_reset_credits(),
             )
-            .await
-            {
-                let at_limit = [&usage.five_hour, &usage.weekly]
-                    .into_iter()
-                    .flatten()
-                    .any(|window| window.used_percent >= 100.0);
-                usage.reset_credit = Some(chatgpt_reset_credit(&details, at_limit, now));
-            }
+            .await;
+            let (credit, status) = match listed {
+                Ok(Ok(details)) => (
+                    Some(chatgpt_reset_credit(&details, at_limit, now)),
+                    account_pool::ResetStatus::ok(),
+                ),
+                Ok(Err(error)) => match (summary, classify_credit_error(&error.to_string())) {
+                    (Some(count), _) => (
+                        Some(counted_reset_credit(count, at_limit)),
+                        account_pool::ResetStatus::ok(),
+                    ),
+                    (None, status) => (None, status),
+                },
+                Err(_) => match summary {
+                    Some(count) => (
+                        Some(counted_reset_credit(count, at_limit)),
+                        account_pool::ResetStatus::ok(),
+                    ),
+                    None => (None, account_pool::ResetStatus::error("timeout")),
+                },
+            };
+            usage.reset_credit = credit;
+            usage.reset_status = Some(status);
             Ok(usage)
         })
     })
+}
+
+/// Why the credit list could not be read, from the request's own error text (which names the
+/// HTTP status). The response body is never carried over.
+fn classify_credit_error(message: &str) -> account_pool::ResetStatus {
+    let code: Option<u16> = message
+        .split_once("failed: ")
+        .and_then(|(_, rest)| rest.get(..3))
+        .and_then(|digits| digits.parse().ok());
+    match code {
+        Some(code @ (403 | 404)) => account_pool::ResetStatus::unavailable(&format!("http_{code}")),
+        Some(code) => account_pool::ResetStatus::error(&format!("http_{code}")),
+        None => account_pool::ResetStatus::error("request_failed"),
+    }
+}
+
+/// A credit known only by its count (the usage payload's summary), without grant details.
+fn counted_reset_credit(count: i64, at_limit: bool) -> account_pool::ResetCredit {
+    account_pool::ResetCredit {
+        eligible: true,
+        at_limit,
+        resets_left: count,
+        resets_total: count,
+        usable_now: count > 0,
+        ends_at: None,
+        cooldown_until: None,
+        grants: Vec::new(),
+    }
 }
 
 /// The ChatGPT backend's banked resets in the pool's shape. Each credit is one reset.
@@ -455,7 +516,7 @@ async fn reset_credit_consume(
     }
     let view = pool.list().into_iter().find(|view| view.id == params.id);
     let usage = view.and_then(|view| to_account(view).usage);
-    let reset_credit = usage.as_ref().and_then(|usage| usage.reset_credit.clone());
+    let reset_credit = usage.as_ref().map(|usage| usage.reset_credit.clone());
     Ok(InocodeAccountsResetCreditConsumeResponse {
         ok: outcome.ok,
         code: outcome.code,
@@ -1131,7 +1192,11 @@ fn to_account(view: AccountView) -> InocodeAccount {
             five_hour: usage.five_hour.map(to_window),
             weekly: usage.weekly.map(to_window),
             updated_at: usage.updated_at,
-            reset_credit: usage.reset_credit.map(to_reset_credit),
+            reset_credit: to_reset_credit(
+                usage.reset_credit,
+                usage.reset_status,
+                view.kind == AccountKind::ApiKey,
+            ),
         }),
         state: match view.state {
             AccountState::Active => InocodeAccountState::Active,
@@ -1146,30 +1211,68 @@ fn to_account(view: AccountView) -> InocodeAccount {
     }
 }
 
-fn to_reset_credit(credit: account_pool::ResetCredit) -> InocodeAccountResetCredit {
-    InocodeAccountResetCredit {
-        eligible: credit.eligible,
-        at_limit: credit.at_limit,
-        resets_left: credit.resets_left,
-        resets_total: credit.resets_total,
-        usable_now: credit.usable_now,
-        ends_at: credit.ends_at,
-        cooldown_until: credit.cooldown_until,
-        grants: credit
-            .grants
-            .into_iter()
-            .map(|grant| InocodeAccountResetGrant {
-                id: grant.id,
-                label: grant.label,
-                resets_left: grant.resets_left,
-                resets_total: grant.resets_total,
-                ends_at: grant.ends_at,
-                paused: grant.paused,
-                usable_now: grant.usable_now,
-                clears: grant.clears,
-            })
-            .collect(),
+/// The reset credit as the GUI sees it: always an object, with a status that says whether the
+/// numbers can be trusted.
+fn to_reset_credit(
+    credit: Option<account_pool::ResetCredit>,
+    status: Option<account_pool::ResetStatus>,
+    api_key: bool,
+) -> InocodeAccountResetCredit {
+    use account_pool::ResetStatusKind as Kind;
+    let (kind, reason, stale) = match status {
+        Some(status) => (status.kind, status.reason, status.stale),
+        None if api_key => (Kind::None, Some("api_key".to_string()), false),
+        // A credit read earlier, with no word since: it is the last thing the endpoint said.
+        None if credit.is_some() => (Kind::Ok, None, false),
+        None => (Kind::Error, Some("not_read".to_string()), false),
+    };
+    let status = match kind {
+        Kind::Ok => InocodeResetCreditStatus::Ok,
+        Kind::None => InocodeResetCreditStatus::None,
+        Kind::Unavailable => InocodeResetCreditStatus::Unavailable,
+        Kind::Error => InocodeResetCreditStatus::Error,
+    };
+    // Numbers go out for a good read, and for a failed one only as the stale last good value.
+    let credit = credit.filter(|_| matches!(kind, Kind::Ok) || (matches!(kind, Kind::Error) && stale));
+    let mut out = InocodeAccountResetCredit {
+        status,
+        reason,
+        stale: stale && credit.is_some(),
+        eligible: None,
+        at_limit: None,
+        resets_left: None,
+        resets_total: None,
+        usable_now: None,
+        ends_at: None,
+        cooldown_until: None,
+        grants: None,
+    };
+    if let Some(credit) = credit {
+        out.eligible = Some(credit.eligible);
+        out.at_limit = Some(credit.at_limit);
+        out.resets_left = Some(credit.resets_left);
+        out.resets_total = Some(credit.resets_total);
+        out.usable_now = Some(credit.usable_now);
+        out.ends_at = credit.ends_at;
+        out.cooldown_until = credit.cooldown_until;
+        out.grants = Some(
+            credit
+                .grants
+                .into_iter()
+                .map(|grant| InocodeAccountResetGrant {
+                    id: grant.id,
+                    label: grant.label,
+                    resets_left: grant.resets_left,
+                    resets_total: grant.resets_total,
+                    ends_at: grant.ends_at,
+                    paused: grant.paused,
+                    usable_now: grant.usable_now,
+                    clears: grant.clears,
+                })
+                .collect(),
+        );
     }
+    out
 }
 
 fn to_window(window: account_pool::UsageWindow) -> InocodeAccountUsageWindow {

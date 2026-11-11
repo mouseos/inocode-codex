@@ -92,32 +92,71 @@ pub struct InocodeAccountUsage {
     /// Unix seconds of the last refresh; `null` when never fetched.
     #[ts(type = "number | null")]
     pub updated_at: Option<i64>,
-    /// A banked usage-limit reset (Claude subscriptions). `null` when the account has none or it
-    /// has not been read yet.
-    pub reset_credit: Option<InocodeAccountResetCredit>,
+    /// The banked usage-limit resets. Never `null`: `status` says whether they could be read.
+    pub reset_credit: InocodeAccountResetCredit,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum InocodeResetCreditStatus {
+    /// Read. Zero resets is still `ok` (`resetsLeft: 0`).
+    Ok,
+    /// The account is outside the reset-credit scheme (API keys).
+    None,
+    /// The endpoint does not offer it for this account or plan.
+    Unavailable,
+    /// The read failed. The fields below are the last good value when `stale` is true.
+    Error,
+}
+
+/// `eligible` and the fields after it are present when `status` is `ok`, and also when it is
+/// `error` with `stale: true` (the last good value). Otherwise they are absent.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct InocodeAccountResetCredit {
-    pub eligible: bool,
+    pub status: InocodeResetCreditStatus,
+    /// Why, for `none`, `unavailable` and `error`: a short word such as `block_missing`,
+    /// `block_null`, `block_unreadable`, `grant_query_refused`, `http_404`, `http_403`,
+    /// `auth_refused`, `rate_limited`, `request_failed`, `timeout`, `token_unavailable`,
+    /// `api_key`, `not_read`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub reason: Option<String>,
+    /// The fields below are the last good value, kept because the latest read failed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(optional)]
+    pub stale: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub eligible: Option<bool>,
     /// The account is at a usage limit right now.
-    pub at_limit: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub at_limit: Option<bool>,
     /// Resets left across the grants that are not paused.
-    #[ts(type = "number")]
-    pub resets_left: i64,
-    #[ts(type = "number")]
-    pub resets_total: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number", optional = nullable)]
+    pub resets_left: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number", optional = nullable)]
+    pub resets_total: Option<i64>,
     /// A reset can be spent right now.
-    pub usable_now: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub usable_now: Option<bool>,
     /// Unix seconds; the soonest end among grants with resets left.
-    #[ts(type = "number | null")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number | null", optional = nullable)]
     pub ends_at: Option<i64>,
     /// Unix seconds; no reset can be spent before this.
-    #[ts(type = "number | null")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number | null", optional = nullable)]
     pub cooldown_until: Option<i64>,
-    pub grants: Vec<InocodeAccountResetGrant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub grants: Option<Vec<InocodeAccountResetGrant>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

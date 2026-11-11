@@ -14,6 +14,7 @@ use crate::AuthRouteConfig;
 use crate::account_pool::AccountUsage;
 use crate::account_pool::ResetCredit;
 use crate::account_pool::ResetGrant;
+use crate::account_pool::ResetStatus;
 use crate::account_pool::UsageWindow;
 use crate::auth::default_client::create_raw_auth_client;
 use serde_json::Value;
@@ -43,7 +44,16 @@ pub async fn fetch_usage(
         // The grant query is an extra; fall back to the plain read when the server balks at it.
         Err(Failure::Other) => get(route, &base, access)
             .await
-            .map(|body| parse_usage(&body, now))
+            .map(|body| {
+                let mut usage = parse_usage(&body, now);
+                // Without the grant query the block is expected to be missing: say so.
+                if let Some(status) = usage.reset_status.as_mut()
+                    && status.reason.as_deref() == Some("block_missing")
+                {
+                    status.reason = Some("grant_query_refused".to_string());
+                }
+                usage
+            })
             .map_err(Failure::message),
         Err(failure) => Err(failure.message()),
     }
@@ -113,14 +123,20 @@ pub(super) async fn fetch_credit(
 
 /// Turns a usage body into the pool's usage view.
 pub fn parse_usage(body: &Value, now: i64) -> AccountUsage {
+    let (reset_credit, reset_status) = match body.get("cedar_ember") {
+        None => (None, ResetStatus::unavailable("block_missing")),
+        Some(Value::Null) => (None, ResetStatus::unavailable("block_null")),
+        Some(block) => match parse_reset_credit(block) {
+            Some(parsed) => (Some(parsed.credit), ResetStatus::ok()),
+            None => (None, ResetStatus::error("block_unreadable")),
+        },
+    };
     AccountUsage {
         five_hour: window(body, "session", "five_hour", FIVE_HOUR_MINUTES),
         weekly: window(body, "weekly_all", "seven_day", WEEKLY_MINUTES),
         updated_at: Some(now),
-        reset_credit: body
-            .get("cedar_ember")
-            .and_then(parse_reset_credit)
-            .map(|parsed| parsed.credit),
+        reset_credit,
+        reset_status: Some(reset_status),
     }
 }
 

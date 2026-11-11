@@ -3,6 +3,7 @@
 use super::consts;
 use super::fetch_usage;
 use super::parse_usage;
+use crate::account_pool::ResetStatus;
 use crate::test_support::transport_default_auth_route_config;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -90,8 +91,35 @@ fn a_malformed_grant_block_reads_as_unknown_not_as_zero_and_keeps_the_windows() 
     body["cedar_ember"]["grants"][0]["resets_left"] = json!(5); // more than the total
     let usage = parse_usage(&body, NOW);
     assert_eq!(usage.reset_credit, None);
+    assert_eq!(usage.reset_status, Some(ResetStatus::error("block_unreadable")));
     assert!(usage.five_hour.is_some());
     assert!(usage.weekly.is_some());
+}
+
+#[test]
+fn the_reset_status_says_why_there_is_no_credit() {
+    let ok = parse_usage(&full_body(), NOW);
+    assert_eq!(ok.reset_status, Some(ResetStatus::ok()));
+
+    let mut empty = full_body();
+    empty["cedar_ember"]["grants"] = json!([]);
+    let zero = parse_usage(&empty, NOW);
+    assert_eq!(zero.reset_status, Some(ResetStatus::ok()), "zero resets is still a good read");
+    assert_eq!(zero.reset_credit.expect("credit").resets_left, 0);
+
+    let mut missing = full_body();
+    missing.as_object_mut().expect("object").remove("cedar_ember");
+    assert_eq!(
+        parse_usage(&missing, NOW).reset_status,
+        Some(ResetStatus::unavailable("block_missing"))
+    );
+
+    let mut null = full_body();
+    null["cedar_ember"] = json!(null);
+    assert_eq!(
+        parse_usage(&null, NOW).reset_status,
+        Some(ResetStatus::unavailable("block_null"))
+    );
 }
 
 #[test]
@@ -197,6 +225,7 @@ async fn a_server_that_balks_at_the_grant_query_is_asked_again_without_it() {
         .expect("usage");
     assert_eq!(usage.five_hour.expect("five-hour").used_percent, 3.0);
     assert_eq!(usage.reset_credit, None);
+    assert_eq!(usage.reset_status, Some(ResetStatus::unavailable("grant_query_refused")));
 }
 
 #[tokio::test]

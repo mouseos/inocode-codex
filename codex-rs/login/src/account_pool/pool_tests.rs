@@ -498,6 +498,18 @@ async fn a_claude_sign_in_reads_its_usage_from_the_endpoint_and_headers_keep_the
     let after = pool.list().into_iter().next().expect("one account").usage.expect("usage");
     assert_eq!(after.five_hour.expect("five-hour").used_percent, 45.0);
     assert_eq!(after.reset_credit.expect("credit kept").resets_left, 1);
+    assert_eq!(after.reset_status, Some(ResetStatus::ok()), "the last word is kept too");
+
+    // A failed read marks the kept credit stale instead of dropping it.
+    pool.record_usage(
+        &one.id,
+        AccountUsage { reset_status: Some(ResetStatus::error("request_failed")), ..usage_without_credit(46.0) },
+        false,
+    );
+    let stale = pool.list().into_iter().next().expect("one account").usage.expect("usage");
+    assert_eq!(stale.reset_credit.expect("last good credit").resets_left, 1);
+    let status = stale.reset_status.expect("status");
+    assert_eq!((status.kind, status.stale), (ResetStatusKind::Error, true));
 
     // A read just made is not repeated while it is fresh, and is when forced.
     pool.refresh_usage_if_stale(60).await;
