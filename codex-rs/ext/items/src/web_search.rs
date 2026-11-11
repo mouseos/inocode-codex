@@ -20,6 +20,17 @@ pub struct WebSearchItem {
     /// result fields and result types can pass through without a Codex release.
     #[serde(default)]
     pub results: Option<Vec<JsonValue>>,
+    /// The search tool that produced this item: `web_search`, `shopping_search` or
+    /// `media_search`. Absent for items from older rollouts and other producers, which are web
+    /// searches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tool: Option<String>,
+    /// The site searched by `shopping_search` / `media_search` (the tool's `provider` argument).
+    /// Absent for `web_search`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub provider: Option<String>,
 }
 
 // App-server-facing description of the action performed by standalone web search.

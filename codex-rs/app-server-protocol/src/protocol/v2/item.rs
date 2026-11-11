@@ -1098,6 +1098,8 @@ impl From<CoreTurnItem> for ThreadItemPayload {
                 agent_path: String::from(activity.agent_path),
             },
             CoreTurnItem::WebSearch(search) => Self::WebSearch(WebSearchItem {
+                tool: None,
+                provider: None,
                 id: search.id,
                 query: search.query,
                 action: Some(web_search_action_from_core(search.action)),

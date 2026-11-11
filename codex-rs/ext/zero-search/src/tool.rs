@@ -124,16 +124,17 @@ pub(crate) fn schema(kind: ToolKind) -> Value {
     }
 }
 
-fn description(kind: ToolKind) -> &'static str {
+fn description(kind: ToolKind) -> String {
     match kind {
         ToolKind::Web => {
-            "Searches the web with public search engines (no account or API key needed) and returns titles, URLs and snippets. Use it for current information. Pick the engine that fits the query: yahoo_jp for Japanese, baidu for Chinese, naver for Korean, yandex for Russian, bing or yahoo_us for English and general queries. Omit engine to ask all engines and merge the results. To read a page, fetch its URL with a command."
+            "Searches the web with public search engines (no account or API key needed) and returns titles, URLs and snippets. Use it for current information. Pick the engine that fits the query: yahoo_jp for Japanese, baidu for Chinese, naver for Korean, yandex for Russian, bing or yahoo_us for English and general queries. Omit engine to ask all engines and merge the results. To read a page, fetch its URL with a command.".to_string()
         }
-        ToolKind::Shopping => {
-            "Searches an online shopping or marketplace site (AliExpress, Mercari, Yahoo Auctions, Rakuten, Amazon and others) and returns the products found as JSON."
-        }
+        ToolKind::Shopping => format!(
+            "Searches an online shopping or marketplace site and returns the products found as JSON. Supported sites (the `provider` values): {}. A site that is not in this list cannot be searched here; use web_search for it.",
+            ids(ShopProvider::all(), ShopProvider::id).join(", ")
+        ),
         ToolKind::Media => {
-            "Searches YouTube, Bilibili or CSDN articles and returns the matching videos or articles as JSON."
+            "Searches YouTube, Bilibili or CSDN articles and returns the matching videos or articles as JSON.".to_string()
         }
     }
 }
@@ -150,7 +151,7 @@ impl<'call> ToolExecutor<ToolCall<'call>> for ZeroSearchTool {
         };
         ToolSpec::Function(ResponsesApiTool {
             name: self.name().to_string(),
-            description: description(self.kind).to_string(),
+            description: description(self.kind),
             strict: false,
             parameters,
             output_schema: None,
@@ -231,13 +232,7 @@ impl ZeroSearchTool {
             ),
         };
 
-        call.turn_item_emitter
-            .emit_started(web_item(call, "", None, None, EventMsg::WebSearchBegin(
-                WebSearchBeginEvent {
-                    call_id: call.call_id.clone(),
-                },
-            )))
-            .await;
+        emit_started(call, "web_search", None, &query).await;
         let outcomes = match engine {
             None => self.client.search_all(&query).await,
             Some(engine) => vec![single_engine(&self.client, engine, &query).await],
@@ -247,26 +242,7 @@ impl ZeroSearchTool {
             .into_iter()
             .filter_map(|item| serde_json::to_value(item).ok())
             .collect();
-        call.turn_item_emitter
-            .emit_completed(web_item(
-                call,
-                &query,
-                Some(WebSearchAction::Search {
-                    query: Some(query.clone()),
-                    queries: None,
-                }),
-                Some(results.clone()),
-                EventMsg::WebSearchEnd(WebSearchEndEvent {
-                    call_id: call.call_id.clone(),
-                    query: query.clone(),
-                    action: CoreWebSearchAction::Search {
-                        query: Some(query.clone()),
-                        queries: None,
-                    },
-                    results: Some(results),
-                }),
-            ))
-            .await;
+        emit_completed(call, "web_search", None, &query, Some(results)).await;
         if any { Ok(text) } else { Err(text) }
     }
 
@@ -278,33 +254,40 @@ impl ZeroSearchTool {
             .find(|provider| provider.id() == args.provider)
             .copied()
             .ok_or_else(|| format!("unknown provider {:?}", args.provider))?;
-        let value = self
+        emit_started(call, "shopping_search", Some(provider.id()), query).await;
+        let found = self
             .client
             .search_products(provider, query, item_limit(args.limit))
-            .await
-            .map_err(|err| failure_text(&format!("{err:#}")))?;
-        json_result(&value)
+            .await;
+        finish(call, "shopping_search", provider.id(), query, found).await
     }
 
     async fn media(&self, call: &ToolCall<'_>) -> Result<String, String> {
         let args: ProviderArgs = parse(call)?;
         let query = require_query(&args.query)?;
         let limit = item_limit(args.limit);
-        let value = if let Some(provider) = MediaProvider::all()
+        let (provider_id, found) = if let Some(provider) = MediaProvider::all()
             .iter()
             .find(|provider| provider.id() == args.provider)
         {
-            self.client.search_media(*provider, query, limit).await
+            emit_started(call, "media_search", Some(provider.id()), query).await;
+            (
+                provider.id(),
+                self.client.search_media(*provider, query, limit).await,
+            )
         } else if let Some(provider) = ArticleProvider::all()
             .iter()
             .find(|provider| provider.id() == args.provider)
         {
-            self.client.search_articles(*provider, query, limit).await
+            emit_started(call, "media_search", Some(provider.id()), query).await;
+            (
+                provider.id(),
+                self.client.search_articles(*provider, query, limit).await,
+            )
         } else {
             return Err(format!("unknown provider {:?}", args.provider));
-        }
-        .map_err(|err| failure_text(&format!("{err:#}")))?;
-        json_result(&value)
+        };
+        finish(call, "media_search", provider_id, query, found).await
     }
 }
 
@@ -348,10 +331,93 @@ async fn single_engine(client: &Client, engine: WebEngine, query: &str) -> Engin
     }
 }
 
-fn web_item(
+/// The rows of a provider reply: the array under `items` / `products` / `results` / `data`, or
+/// the whole reply as one row when it has none of them.
+fn result_rows(value: &Value) -> Vec<Value> {
+    if let Value::Array(rows) = value {
+        return rows.clone();
+    }
+    for key in ["items", "products", "results", "data"] {
+        if let Some(Value::Array(rows)) = value.get(key) {
+            return rows.clone();
+        }
+    }
+    vec![value.clone()]
+}
+
+/// Emits the completed item for a provider search and turns its reply into the tool result.
+async fn finish<E: std::fmt::Display>(
     call: &ToolCall<'_>,
+    tool: &'static str,
+    provider: &str,
     query: &str,
-    action: Option<WebSearchAction>,
+    found: Result<Value, E>,
+) -> Result<String, String> {
+    match found {
+        Ok(value) => {
+            let failed = value.get("ok").and_then(Value::as_bool) == Some(false);
+            let rows = if failed { None } else { Some(result_rows(&value)) };
+            emit_completed(call, tool, Some(provider), query, rows).await;
+            json_result(&value)
+        }
+        Err(err) => {
+            emit_completed(call, tool, Some(provider), query, None).await;
+            Err(failure_text(&format!("{err:#}")))
+        }
+    }
+}
+
+async fn emit_started(call: &ToolCall<'_>, tool: &'static str, provider: Option<&str>, query: &str) {
+    call.turn_item_emitter
+        .emit_started(search_item(
+            call,
+            tool,
+            provider,
+            query,
+            None,
+            EventMsg::WebSearchBegin(WebSearchBeginEvent {
+                call_id: call.call_id.clone(),
+            }),
+        ))
+        .await;
+}
+
+async fn emit_completed(
+    call: &ToolCall<'_>,
+    tool: &'static str,
+    provider: Option<&str>,
+    query: &str,
+    results: Option<Vec<Value>>,
+) {
+    call.turn_item_emitter
+        .emit_completed(search_item(
+            call,
+            tool,
+            provider,
+            query,
+            results.clone(),
+            EventMsg::WebSearchEnd(WebSearchEndEvent {
+                call_id: call.call_id.clone(),
+                query: query.to_string(),
+                action: CoreWebSearchAction::Search {
+                    query: Some(query.to_string()),
+                    queries: None,
+                },
+                results,
+                tool: Some(tool.to_string()),
+                provider: provider.map(str::to_string),
+            }),
+        ))
+        .await;
+}
+
+/// The item for any of the three search tools. `query` is the search text as given; the tool and
+/// the site are separate fields.
+fn search_item(
+    call: &ToolCall<'_>,
+    tool: &'static str,
+    provider: Option<&str>,
+    query: &str,
     results: Option<Vec<Value>>,
     legacy_event: EventMsg,
 ) -> ExtensionTurnItem {
@@ -359,8 +425,13 @@ fn web_item(
         item: ExtensionItem::WebSearch(WebSearchItem {
             id: call.call_id.clone(),
             query: query.to_string(),
-            action,
+            action: Some(WebSearchAction::Search {
+                query: Some(query.to_string()),
+                queries: None,
+            }),
             results,
+            tool: Some(tool.to_string()),
+            provider: provider.map(str::to_string),
         }),
         legacy_events: vec![legacy_event],
     }
@@ -454,5 +525,29 @@ mod tests {
         assert!(json_result(&json!({"ok": true, "items": []})).is_ok());
         assert!(json_result(&json!({"ok": false, "error": "captcha"})).is_err());
         assert!(failure_text("HTTP 429 too many requests").contains("rate_limited"));
+    }
+
+    #[test]
+    fn result_rows_come_from_the_reply_array_or_the_reply_itself() {
+        assert_eq!(result_rows(&json!([1, 2])), vec![json!(1), json!(2)]);
+        assert_eq!(
+            result_rows(&json!({"ok": true, "items": [{"title": "a"}]})),
+            vec![json!({"title": "a"})]
+        );
+        assert_eq!(
+            result_rows(&json!({"products": [{"t": 1}, {"t": 2}]})).len(),
+            2
+        );
+        let odd = json!({"ok": true, "other": 1});
+        assert_eq!(result_rows(&odd), vec![odd.clone()]);
+    }
+
+    #[test]
+    fn the_shopping_description_lists_the_sites_and_points_elsewhere_to_web_search() {
+        let text = description(ToolKind::Shopping);
+        for id in ids(ShopProvider::all(), ShopProvider::id) {
+            assert!(text.contains(id), "{id} missing from {text}");
+        }
+        assert!(text.contains("use web_search"));
     }
 }

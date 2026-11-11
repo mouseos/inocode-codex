@@ -6658,6 +6658,13 @@
             "id": {
               "type": "string"
             },
+            "provider": {
+              "description": "The site searched by `shopping_search` / `media_search` (the tool's `provider` argument). Absent for `web_search`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "query": {
               "type": "string"
             },
@@ -6667,6 +6674,13 @@
               "items": true,
               "type": [
                 "array",
+                "null"
+              ]
+            },
+            "tool": {
+              "description": "The search tool that produced this item: `web_search`, `shopping_search` or `media_search`. Absent for items from older rollouts and other producers, which are web searches.",
+              "type": [
+                "string",
                 "null"
               ]
             },

@@ -391,6 +391,8 @@ mod tests {
             call.turn_item_emitter
                 .emit_started(ExtensionTurnItem {
                     item: ExtensionItem::WebSearch(WebSearchItem {
+                        tool: None,
+                        provider: None,
                         id: call.call_id.clone(),
                         query: String::new(),
                         action: None,
@@ -604,6 +606,8 @@ mod tests {
         assert_eq!(
             started_item,
             WebSearchItem {
+                tool: None,
+                provider: None,
                 id: "call-extension".to_string(),
                 query: String::new(),
                 action: None,

@@ -465,6 +465,8 @@ impl SubAgentActivityItem {
 impl WebSearchItem {
     pub fn as_legacy_event(&self) -> EventMsg {
         EventMsg::WebSearchEnd(WebSearchEndEvent {
+            tool: None,
+            provider: None,
             call_id: self.id.clone(),
             query: self.query.clone(),
             action: self.action.clone(),

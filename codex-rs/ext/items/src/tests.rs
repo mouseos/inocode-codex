@@ -226,6 +226,8 @@ fn image_generation_request_id_stays_internal() {
 #[test]
 fn web_search_item_preserves_stable_wire_shape() {
     let item = ExtensionItem::WebSearch(WebSearchItem {
+        tool: None,
+        provider: None,
         id: "search-1".to_string(),
         query: "docs".to_string(),
         action: Some(WebSearchAction::Search {

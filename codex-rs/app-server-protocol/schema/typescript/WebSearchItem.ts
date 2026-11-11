@@ -11,4 +11,15 @@ export type WebSearchItem = { id: string, query: string, action: WebSearchAction
  * These stay as opaque JSON at the extension/app-server boundary so new
  * result fields and result types can pass through without a Codex release.
  */
-results: Array<JsonValue> | null, };
+results: Array<JsonValue> | null,
+/**
+ * The search tool that produced this item: `web_search`, `shopping_search` or
+ * `media_search`. Absent for items from older rollouts and other producers, which are web
+ * searches.
+ */
+tool?: string,
+/**
+ * The site searched by `shopping_search` / `media_search` (the tool's `provider` argument).
+ * Absent for `web_search`.
+ */
+provider?: string, };

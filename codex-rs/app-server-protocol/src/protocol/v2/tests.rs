@@ -3618,6 +3618,8 @@ fn core_turn_item_into_thread_item_converts_supported_variants() {
     });
 
     let expected_search_item = WebSearchItem {
+        tool: None,
+        provider: None,
         id: "search-1".to_string(),
         query: "docs".to_string(),
         action: Some(WebSearchAction::Search {

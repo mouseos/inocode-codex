@@ -141,6 +141,8 @@ fn tool_and_notice_projection_uses_normal_transcript_presentation() {
             review: "current changes".to_string(),
         },
         ThreadItemPayload::WebSearch(WebSearchItem {
+            tool: None,
+            provider: None,
             id: "search-1".to_string(),
             query: "fallback query".to_string(),
             action: Some(WebSearchAction::FindInPage {

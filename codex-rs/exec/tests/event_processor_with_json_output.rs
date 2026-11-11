@@ -384,6 +384,8 @@ fn web_search_completion_preserves_query_and_action() {
             "thread-1".to_string(),
             "turn-1".to_string(),
             ThreadItemPayload::WebSearch(ApiWebSearchItem {
+                tool: None,
+                provider: None,
                 id: "search-1".to_string(),
                 query: "rust async await".to_string(),
                 action: Some(ApiWebSearchAction::Search {
@@ -449,6 +451,8 @@ fn web_search_page_actions_and_results_survive_json_output() {
                     "thread-1".to_string(),
                     "turn-1".to_string(),
                     ThreadItemPayload::WebSearch(ApiWebSearchItem {
+                        tool: None,
+                        provider: None,
                         id: "search-1".to_string(),
                         query: url.to_string(),
                         action: Some(action.clone()),
@@ -485,6 +489,8 @@ fn web_search_start_and_completion_reuse_item_id() {
             "thread-1".to_string(),
             "turn-1".to_string(),
             ThreadItemPayload::WebSearch(ApiWebSearchItem {
+                tool: None,
+                provider: None,
                 id: "search-1".to_string(),
                 query: String::new(),
                 action: None,
@@ -499,6 +505,8 @@ fn web_search_start_and_completion_reuse_item_id() {
             "thread-1".to_string(),
             "turn-1".to_string(),
             ThreadItemPayload::WebSearch(ApiWebSearchItem {
+                tool: None,
+                provider: None,
                 id: "search-1".to_string(),
                 query: "rust async await".to_string(),
                 action: Some(ApiWebSearchAction::Search {

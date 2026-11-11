@@ -824,6 +824,8 @@ impl ThreadHistoryBuilder {
 
     fn handle_web_search_begin(&mut self, payload: &WebSearchBeginEvent) {
         let item = ThreadItemPayload::WebSearch(WebSearchItem {
+            tool: None,
+            provider: None,
             id: payload.call_id.clone(),
             query: String::new(),
             action: None,
@@ -834,6 +836,8 @@ impl ThreadHistoryBuilder {
 
     fn handle_web_search_end(&mut self, payload: &WebSearchEndEvent) {
         let item = ThreadItemPayload::WebSearch(WebSearchItem {
+            tool: payload.tool.clone(),
+            provider: payload.provider.clone(),
             id: payload.call_id.clone(),
             query: payload.query.clone(),
             action: Some(web_search_action_from_core(payload.action.clone())),
@@ -3536,6 +3540,8 @@ mod tests {
                 ..Default::default()
             }),
             EventMsg::WebSearchEnd(WebSearchEndEvent {
+                tool: None,
+                provider: None,
                 call_id: "search-1".into(),
                 query: "codex".into(),
                 action: CoreWebSearchAction::Search {
@@ -3598,6 +3604,8 @@ mod tests {
         assert_eq!(
             turns[0].items[1].payload,
             ThreadItemPayload::WebSearch(WebSearchItem {
+                tool: None,
+                provider: None,
                 id: "search-1".into(),
                 query: "codex".into(),
                 action: Some(WebSearchAction::Search {
@@ -5786,6 +5794,8 @@ mod tests {
 
         let changes = builder.handle_rollout_item_with_changes(&RolloutItem::EventMsg(
             EventMsg::WebSearchEnd(WebSearchEndEvent {
+                tool: None,
+                provider: None,
                 call_id: "search-1".into(),
                 query: "codex".into(),
                 action: CoreWebSearchAction::Search {
@@ -5801,6 +5811,8 @@ mod tests {
                 changed_items: vec![ThreadHistoryItemChange {
                     turn_id: "rollout-0".into(),
                     item: ThreadItem::untimed(ThreadItemPayload::WebSearch(WebSearchItem {
+                        tool: None,
+                        provider: None,
                         id: "search-1".into(),
                         query: "codex".into(),
                         action: Some(WebSearchAction::Search {
@@ -5928,6 +5940,8 @@ mod tests {
                 call_id: "search-1".into(),
             })),
             RolloutItem::EventMsg(EventMsg::WebSearchEnd(WebSearchEndEvent {
+                tool: None,
+                provider: None,
                 call_id: "search-1".into(),
                 query: "codex".into(),
                 action: CoreWebSearchAction::Search {
@@ -5943,6 +5957,8 @@ mod tests {
                 changed_items: vec![ThreadHistoryItemChange {
                     turn_id: "rollout-0".into(),
                     item: ThreadItem::untimed(ThreadItemPayload::WebSearch(WebSearchItem {
+                        tool: None,
+                        provider: None,
                         id: "search-1".into(),
                         query: "codex".into(),
                         action: Some(WebSearchAction::Search {
