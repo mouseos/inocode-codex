@@ -51,11 +51,23 @@ fn runtime_auth_config_accepts_modes_without_implicitly_enabling_the_feature() {
     );
 }
 
+/// Under-development features that are on by default (InstantInterrupt upstream; the other
+/// three are InoCode's: basic client-visible behaviour must work out of the box).
+const INOCODE_DEFAULT_ON_UNDER_DEVELOPMENT: &[Feature] = &[
+    Feature::InstantInterrupt,
+    Feature::ApplyPatchStreamingEvents,
+    Feature::ExecPermissionApprovals,
+    Feature::RequestPermissionsTool,
+];
+
 #[test]
 fn under_development_features_are_disabled_by_default() {
     for spec in crate::FEATURES {
         // Instant interrupts are enabled by default while retaining their development stage.
-        if matches!(spec.stage, Stage::UnderDevelopment) && spec.id != Feature::InstantInterrupt {
+        // InoCode also enables patch streaming events and permission requests by default.
+        if matches!(spec.stage, Stage::UnderDevelopment)
+            && !INOCODE_DEFAULT_ON_UNDER_DEVELOPMENT.contains(&spec.id)
+        {
             assert_eq!(
                 spec.default_enabled, false,
                 "feature `{}` is under development and must be disabled by default",
@@ -145,7 +157,7 @@ fn codex_apps_mcp_protocol_can_be_enabled_independently_of_generic_mcp() {
 fn default_enabled_features_have_shipped() {
     for spec in crate::FEATURES {
         // Instant interrupts are enabled by default while retaining their development stage.
-        if spec.default_enabled && spec.id != Feature::InstantInterrupt {
+        if spec.default_enabled && !INOCODE_DEFAULT_ON_UNDER_DEVELOPMENT.contains(&spec.id) {
             assert!(
                 matches!(
                     spec.stage,

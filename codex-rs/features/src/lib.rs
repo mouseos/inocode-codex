@@ -1488,7 +1488,7 @@ pub const FEATURES: &[FeatureSpec] = &[
         id: Feature::ApplyPatchStreamingEvents,
         key: "apply_patch_streaming_events",
         stage: Stage::UnderDevelopment,
-        default_enabled: false,
+        default_enabled: true,
     },
     FeatureSpec {
         id: Feature::ApplyPatchPreserveLineEndings,
@@ -1500,7 +1500,7 @@ pub const FEATURES: &[FeatureSpec] = &[
         id: Feature::ExecPermissionApprovals,
         key: "exec_permission_approvals",
         stage: Stage::UnderDevelopment,
-        default_enabled: false,
+        default_enabled: true,
     },
     FeatureSpec {
         id: Feature::WriteStdinApproval,
@@ -1518,7 +1518,7 @@ pub const FEATURES: &[FeatureSpec] = &[
         id: Feature::RequestPermissionsTool,
         key: "request_permissions_tool",
         stage: Stage::UnderDevelopment,
-        default_enabled: false,
+        default_enabled: true,
     },
     FeatureSpec {
         id: Feature::UseLinuxSandboxBwrap,
