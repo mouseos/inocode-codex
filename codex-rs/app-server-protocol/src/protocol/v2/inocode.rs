@@ -1619,3 +1619,90 @@ pub struct InocodeStatsSeedProgressNotification {
     pub samples_added: i64,
     pub done: bool,
 }
+
+// --------------------------------------------------------- message references
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase", export_to = "v2/")]
+pub enum InocodeMessageRole {
+    User,
+    Assistant,
+    Tool,
+}
+
+/// `#<turn>.<item>` is the 1-based position in the turn list and in that turn's items (every
+/// item counts); the server item id (`ThreadItem.id`) names the same item.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeMessagesResolveParams {
+    pub thread_id: String,
+    /// `#12.3`, `12.3` or an item id. Give this, or `turnId` with `itemIndex`.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub id: Option<String>,
+    /// A turn of `thread/read` (`Turn.id`), with the position of the item in that turn's `items`.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub turn_id: Option<String>,
+    /// 0-based position in `Turn.items`.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub item_index: Option<i64>,
+    /// Cut `text` to this many characters (`truncated` says so). Whole text when omitted.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub max_chars: Option<i64>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeMessagesResolveResponse {
+    pub thread_id: String,
+    /// 1-based.
+    pub turn_number: i64,
+    /// 1-based, inside the turn.
+    pub item_number: i64,
+    pub turn_id: String,
+    pub item_id: String,
+    pub role: InocodeMessageRole,
+    /// The complete text, or its first `maxChars` characters.
+    pub text: String,
+    pub truncated: bool,
+}
+
+// ------------------------------------------- sessions/slim (huge rollout rescue)
+
+/// Rewrites a rollout into a small copy, moving big tool outputs and images out to files.
+/// Streams one line at a time, so the memory use does not depend on the file size. The source
+/// is left as it is.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeSessionsSlimParams {
+    /// The rollout file to slim (a thread's `path`).
+    pub path: String,
+    /// Where to write the copy. Default: `<INOCODE_HOME>/slimmed/<file name>`. Must not exist.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub output_path: Option<String>,
+    /// A text part or image at least this many bytes is moved out. Default 32768.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub part_threshold_bytes: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeSessionsSlimResponse {
+    pub output_path: String,
+    pub lines: i64,
+    pub rewritten_lines: i64,
+    pub moved_texts: i64,
+    pub moved_images: i64,
+    pub bytes_before: i64,
+    pub bytes_after: i64,
+}

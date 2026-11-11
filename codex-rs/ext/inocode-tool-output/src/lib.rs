@@ -19,6 +19,42 @@ pub const PERSISTED_OUTPUT_CLOSE_TAG: &str = "</persisted-output>";
 /// Preview size shown to the model.
 pub const DEFAULT_PREVIEW_BYTES: usize = 2_000;
 
+mod slim;
+pub use slim::SlimOptions;
+pub use slim::SlimReport;
+pub use slim::default_slim_destination;
+pub use slim::slim_rollout;
+
+/// Writes the bytes of an inline image (`data:image/...;base64,...`) to `dir` as
+/// `img-<time>-<n>.<ext>` and returns the path. A value that is not a base64 data URL is saved
+/// as text. `None` when the file cannot be written.
+pub fn persist_image_data_url(dir: &Path, data_url: &str) -> Option<PathBuf> {
+    use base64::Engine as _;
+    std::fs::create_dir_all(dir).ok()?;
+    let (bytes, ext) = match data_url
+        .strip_prefix("data:")
+        .and_then(|rest| rest.split_once(";base64,"))
+    {
+        Some((mime, data)) => {
+            let ext = match mime {
+                "image/png" => "png",
+                "image/jpeg" | "image/jpg" => "jpg",
+                "image/webp" => "webp",
+                "image/gif" => "gif",
+                _ => "bin",
+            };
+            match base64::engine::general_purpose::STANDARD.decode(data.as_bytes()) {
+                Ok(bytes) => (bytes, ext),
+                Err(_) => (data_url.as_bytes().to_vec(), "txt"),
+            }
+        }
+        None => (data_url.as_bytes().to_vec(), "txt"),
+    };
+    let path = dir.join(format!("img-{}.{ext}", next_id()));
+    std::fs::write(&path, bytes).ok()?;
+    Some(path)
+}
+
 /// Resolve `INOCODE_HOME`, falling back to `~/.inocode`.
 pub fn inocode_home() -> Option<PathBuf> {
     if let Some(value) = std::env::var_os("INOCODE_HOME")

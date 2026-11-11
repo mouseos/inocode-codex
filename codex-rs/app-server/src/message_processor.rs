@@ -1233,9 +1233,11 @@ impl MessageProcessor {
             | ClientRequest::InocodeMetricsMarkFalsePositive { .. }
             | ClientRequest::InocodeAdvisorEvents { .. }
             | ClientRequest::InocodeMessagesList { .. }
+            | ClientRequest::InocodeMessagesResolve { .. }
             | ClientRequest::InocodeCompactionState { .. }
             | ClientRequest::InocodeToolOutputList { .. }
             | ClientRequest::InocodeToolOutputRead { .. }
+            | ClientRequest::InocodeSessionsSlim { .. }
             | ClientRequest::InocodeFlagsRead { .. }
             | ClientRequest::InocodeEvidenceListSpans { .. }
             | ClientRequest::InocodeEvidenceRemoveQuote { .. }

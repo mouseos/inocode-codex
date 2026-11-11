@@ -684,6 +684,12 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeToolOutputReadResponse,
     },
+    #[experimental("inocode/sessions/slim")]
+    InocodeSessionsSlim => "inocode/sessions/slim" {
+        params: v2::InocodeSessionsSlimParams,
+        serialization: None,
+        response: v2::InocodeSessionsSlimResponse,
+    },
     #[experimental("inocode/guard/list")]
     InocodeGuardList => "inocode/guard/list" {
         params: v2::InocodeGuardListParams,

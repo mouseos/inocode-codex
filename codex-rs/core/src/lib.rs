@@ -35,6 +35,8 @@ mod codex_thread;
 mod account_pool_hook;
 mod claude_auth;
 mod inocode_loop;
+mod inocode_rollout_spill;
+pub mod inocode_message_ref;
 mod thread_input;
 pub use thread_input::InputWaitOutcome;
 mod turn_extension_data;

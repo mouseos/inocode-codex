@@ -4080,6 +4080,9 @@ impl Session {
                 }
                 Some(revision)
             });
+        // InoCode: oversized tool output goes to tool-results/, so the rollout and the history
+        // hold the preview and the path instead of the full text.
+        crate::inocode_rollout_spill::spill_large_outputs(&mut items);
         let response_items = items
             .iter()
             .map(|envelope| envelope.item.clone())
@@ -4151,6 +4154,8 @@ impl Session {
         } else {
             None
         };
+        // The rollout copy only: big inline images become files plus a path note.
+        crate::inocode_rollout_spill::externalize_images(&mut items);
         let rollout_items = initial_settings
             .into_iter()
             .map(RolloutItem::EventMsg)

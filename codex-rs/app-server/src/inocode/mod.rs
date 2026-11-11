@@ -54,7 +54,7 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
         Some("stats") => stats::handle(request).await,
         Some("messages") => messages::handle(request).await,
         Some("compaction") => compaction::handle(request).await,
-        Some("toolOutput") => tooloutput::handle(request).await,
+        Some("toolOutput" | "sessions") => tooloutput::handle(request).await,
         Some("metrics") => metrics::handle(request).await,
         Some("flags") => flags::handle(request).await,
         Some("guard") => guard::handle(request).await,

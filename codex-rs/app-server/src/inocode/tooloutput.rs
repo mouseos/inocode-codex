@@ -6,6 +6,8 @@ use super::unknown_method;
 use crate::error_code::internal_error;
 use crate::error_code::invalid_params;
 use codex_app_server_protocol::ClientRequest;
+use codex_app_server_protocol::InocodeSessionsSlimParams;
+use codex_app_server_protocol::InocodeSessionsSlimResponse;
 use codex_app_server_protocol::InocodeToolOutputItem;
 use codex_app_server_protocol::InocodeToolOutputListParams;
 use codex_app_server_protocol::InocodeToolOutputListResponse;
@@ -90,6 +92,40 @@ pub(crate) fn read_in(
     })
 }
 
+pub(crate) fn slim_in(
+    params: &InocodeSessionsSlimParams,
+) -> Result<InocodeSessionsSlimResponse, JSONRPCErrorError> {
+    let src = PathBuf::from(&params.path);
+    if !src.is_file() {
+        return Err(invalid_params(format!("rollout not found: {}", params.path)));
+    }
+    let home = codex_inocode_flags::inocode_home();
+    let dst = params
+        .output_path
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| codex_inocode_tool_output::default_slim_destination(&home, &src));
+    let mut options = codex_inocode_tool_output::SlimOptions::default();
+    if let Some(bytes) = params.part_threshold_bytes {
+        options.part_threshold_bytes = bytes as usize;
+    }
+    options.preview_bytes = usize::try_from(codex_inocode_flags::int_param(
+        "compaction.preview_bytes",
+    ))
+    .unwrap_or(options.preview_bytes);
+    let report = codex_inocode_tool_output::slim_rollout(&src, &dst, &results_dir(), &options)
+        .map_err(|err| internal_error(format!("sessions slim failed: {err}")))?;
+    Ok(InocodeSessionsSlimResponse {
+        output_path: dst.display().to_string(),
+        lines: num(report.lines),
+        rewritten_lines: num(report.rewritten_lines),
+        moved_texts: num(report.moved_texts),
+        moved_images: num(report.moved_images),
+        bytes_before: num(report.bytes_before),
+        bytes_after: num(report.bytes_after),
+    })
+}
+
 pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
     match request {
         ClientRequest::InocodeToolOutputList { params, .. } => {
@@ -97,6 +133,13 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
         }
         ClientRequest::InocodeToolOutputRead { params, .. } => {
             Ok(Some(read_in(&results_dir(), &params)?.into()))
+        }
+        ClientRequest::InocodeSessionsSlim { params, .. } => {
+            // Streams a possibly multi-GB file, so keep it off the async threads.
+            let response = tokio::task::spawn_blocking(move || slim_in(&params))
+                .await
+                .map_err(|err| internal_error(format!("sessions slim failed to join: {err}")))??;
+            Ok(Some(response.into()))
         }
         other => Err(unknown_method(other.method_name())),
     }
