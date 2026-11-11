@@ -80,6 +80,45 @@ pub struct AccountUsage {
     pub weekly: Option<UsageWindow>,
     /// Unix seconds of the last refresh.
     pub updated_at: Option<i64>,
+    /// A banked usage-limit reset (Claude subscriptions); `None` when the account has none or it
+    /// has not been read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_credit: Option<ResetCredit>,
+}
+
+/// One banked usage-limit reset grant.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetGrant {
+    pub id: String,
+    pub label: String,
+    pub resets_left: i64,
+    pub resets_total: i64,
+    /// Unix seconds; `None` when the grant does not expire.
+    pub ends_at: Option<i64>,
+    pub paused: bool,
+    /// Whether this grant can be spent right now.
+    pub usable_now: bool,
+    /// The windows the grant clears (`five_hour`, `seven_day`, ...).
+    pub clears: Vec<String>,
+}
+
+/// What the account has banked: resets that clear the 5-hour and weekly windows.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetCredit {
+    pub eligible: bool,
+    pub at_limit: bool,
+    /// Resets left across the grants that are not paused.
+    pub resets_left: i64,
+    pub resets_total: i64,
+    /// Whether a reset can be spent right now.
+    pub usable_now: bool,
+    /// Unix seconds; the soonest end among grants with resets left.
+    pub ends_at: Option<i64>,
+    /// Unix seconds.
+    pub cooldown_until: Option<i64>,
+    pub grants: Vec<ResetGrant>,
 }
 
 impl AccountUsage {

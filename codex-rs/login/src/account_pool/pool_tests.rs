@@ -37,6 +37,7 @@ fn usage(five: f64, week: f64) -> AccountUsage {
             resets_at: Some(NOW + 86_400),
         }),
         updated_at: Some(NOW),
+        ..Default::default()
     }
 }
 
@@ -435,4 +436,85 @@ async fn re_authenticating_requires_the_same_account_and_keeps_its_settings() {
         .await
         .expect("token");
     assert_eq!(token, "access-FAKE-NEW");
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn a_claude_sign_in_reads_its_usage_from_the_endpoint_and_headers_keep_the_reset_credit() {
+    use crate::claude_oauth::ClaudeCredentials;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+    use wiremock::matchers::method;
+    use wiremock::matchers::path;
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/usage"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "five_hour": {"utilization": 30, "resets_at": "2099-01-01T00:00:00Z"},
+            "seven_day": {"utilization": 60, "resets_at": "2099-01-02T00:00:00Z"},
+            "cedar_ember": {"eligible": true, "grants": [{
+                "id": "g1", "resets_total": 1, "resets_left": 1, "usable_now": true
+            }]}
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+    // SAFETY: `#[serial]`, so nothing else reads the environment meanwhile.
+    unsafe {
+        std::env::set_var(
+            crate::claude_oauth::USAGE_URL_ENV,
+            format!("{}/usage", server.uri()),
+        );
+    }
+
+    let home = tempfile::tempdir().expect("tempdir");
+    let pool = AccountPool::open_group(env(home.path()), "claude", "accounts-claude").await;
+    let one = pool
+        .add_claude_oauth(
+            "Claude",
+            ClaudeCredentials {
+                access: "access-FAKE-1".to_string(),
+                refresh: "refresh-FAKE-1".to_string(),
+                expires_at_ms: i64::MAX,
+                account_uuid: Some("uuid-1".to_string()),
+                plan: Some("max".to_string()),
+            },
+        )
+        .await
+        .expect("add");
+    assert_eq!(one.usage, None, "nothing is known before the first read");
+
+    pool.refresh_usage_of(&one.id).await;
+    let view = pool.list().into_iter().next().expect("one account");
+    let usage = view.usage.expect("usage after the read");
+    assert_eq!(usage.five_hour.expect("five-hour").used_percent, 30.0);
+    assert_eq!(usage.weekly.expect("weekly").used_percent, 60.0);
+    assert_eq!(usage.reset_credit.expect("credit").resets_left, 1);
+
+    // A header-based reading (no reset credit) updates the windows but keeps the credit.
+    pool.record_usage(&one.id, usage_without_credit(45.0), false);
+    let after = pool.list().into_iter().next().expect("one account").usage.expect("usage");
+    assert_eq!(after.five_hour.expect("five-hour").used_percent, 45.0);
+    assert_eq!(after.reset_credit.expect("credit kept").resets_left, 1);
+
+    // A read just made is not repeated while it is fresh, and is when forced.
+    pool.refresh_usage_if_stale(60).await;
+    pool.refresh_usage().await;
+    // SAFETY: see above.
+    unsafe {
+        std::env::remove_var(crate::claude_oauth::USAGE_URL_ENV);
+    }
+}
+
+fn usage_without_credit(five: f64) -> AccountUsage {
+    AccountUsage {
+        five_hour: Some(UsageWindow {
+            used_percent: five,
+            window_minutes: Some(300),
+            resets_at: None,
+        }),
+        ..AccountUsage::default()
+    }
 }

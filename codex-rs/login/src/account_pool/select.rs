@@ -157,6 +157,7 @@ mod tests {
                 resets_at: Some(20_000),
             }),
             updated_at: Some(0),
+            ..Default::default()
         }
     }
 

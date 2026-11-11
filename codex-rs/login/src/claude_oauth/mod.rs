@@ -8,12 +8,14 @@ mod consts;
 mod flow;
 mod manager;
 mod store;
+mod usage;
 
 #[cfg(test)]
 mod tests;
 
 pub use consts::CALLBACK_PORT;
 pub use consts::CODE_REDIRECT_URI;
+pub use consts::USAGE_URL_ENV;
 pub use flow::CallbackListener;
 pub use flow::Pending;
 pub use flow::Profile;
@@ -24,5 +26,7 @@ pub use flow::refresh_credentials;
 pub use flow::split_code_input;
 pub use flow::wait_for_callback;
 pub use manager::ClaudeAuthManager;
+pub use usage::fetch_usage;
+pub use usage::parse_usage;
 pub use store::ClaudeCredentials;
 pub use store::claude_account_id;

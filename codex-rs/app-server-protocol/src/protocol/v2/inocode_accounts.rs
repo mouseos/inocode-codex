@@ -92,6 +92,51 @@ pub struct InocodeAccountUsage {
     /// Unix seconds of the last refresh; `null` when never fetched.
     #[ts(type = "number | null")]
     pub updated_at: Option<i64>,
+    /// A banked usage-limit reset (Claude subscriptions). `null` when the account has none or it
+    /// has not been read yet.
+    pub reset_credit: Option<InocodeAccountResetCredit>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeAccountResetCredit {
+    pub eligible: bool,
+    /// The account is at a usage limit right now.
+    pub at_limit: bool,
+    /// Resets left across the grants that are not paused.
+    #[ts(type = "number")]
+    pub resets_left: i64,
+    #[ts(type = "number")]
+    pub resets_total: i64,
+    /// A reset can be spent right now.
+    pub usable_now: bool,
+    /// Unix seconds; the soonest end among grants with resets left.
+    #[ts(type = "number | null")]
+    pub ends_at: Option<i64>,
+    /// Unix seconds; no reset can be spent before this.
+    #[ts(type = "number | null")]
+    pub cooldown_until: Option<i64>,
+    pub grants: Vec<InocodeAccountResetGrant>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeAccountResetGrant {
+    pub id: String,
+    pub label: String,
+    #[ts(type = "number")]
+    pub resets_left: i64,
+    #[ts(type = "number")]
+    pub resets_total: i64,
+    /// Unix seconds; `null` when the grant does not expire.
+    #[ts(type = "number | null")]
+    pub ends_at: Option<i64>,
+    pub paused: bool,
+    pub usable_now: bool,
+    /// The windows the grant clears: `five_hour`, `seven_day`, `seven_day_overage_included`.
+    pub clears: Vec<String>,
 }
 
 /// One pool entry. There is deliberately no e-mail address: identify by `alias` and `plan`.

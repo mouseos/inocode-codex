@@ -66,6 +66,8 @@ struct Entry {
     /// Percentage points one sampling typically adds.
     pace: f64,
     is_default: bool,
+    /// Unix seconds of the last usage-endpoint read (not persisted).
+    usage_fetched_at: Option<i64>,
 }
 
 struct Inner {
@@ -203,6 +205,7 @@ impl AccountPool {
                 claude,
                 pace: 0.0,
                 is_default: false,
+            usage_fetched_at: None,
             });
         }
         let (events, _) = broadcast::channel(64);
@@ -326,6 +329,7 @@ impl AccountPool {
                         claude: None,
                         pace: 0.0,
                         is_default: true,
+                    usage_fetched_at: None,
                     },
                 );
             }
@@ -574,6 +578,15 @@ impl AccountPool {
                     entry.pace *= 0.9;
                 }
             }
+            let mut usage = usage;
+            if usage.reset_credit.is_none() {
+                // Rate-limit headers carry no reset credit; keep the last one read from the endpoint.
+                usage.reset_credit = entry
+                    .meta
+                    .usage
+                    .as_ref()
+                    .and_then(|previous| previous.reset_credit.clone());
+            }
             entry.meta.usage = Some(usage);
             let meta = entry.meta.clone();
             let _ = self.store.save_meta(&meta);
@@ -590,17 +603,52 @@ impl AccountPool {
 
     /// Asks every enabled account's provider for its usage.
     pub async fn refresh_usage(&self) {
+        self.refresh_usage_where(None, None).await;
+    }
+
+    /// Like [`Self::refresh_usage`], but skips Claude sign-ins whose usage was read less than
+    /// `min_age_secs` ago (the endpoint rate-limits repeated reads).
+    pub async fn refresh_usage_if_stale(&self, min_age_secs: i64) {
+        self.refresh_usage_where(None, Some(min_age_secs)).await;
+    }
+
+    /// Reads one account's usage now (for example right after it signed in).
+    pub async fn refresh_usage_of(&self, id: &str) {
+        self.refresh_usage_where(Some(id), None).await;
+    }
+
+    async fn refresh_usage_where(&self, only: Option<&str>, min_age_secs: Option<i64>) {
         self.sync_default();
-        let targets: Vec<(String, AccountKind, Arc<AuthManager>)> = {
+        let now = self.now();
+        type Target = (String, AccountKind, Arc<AuthManager>, Option<Arc<ClaudeAuthManager>>);
+        let targets: Vec<Target> = {
             let inner = lock(&self.inner);
             inner
                 .entries
                 .iter()
                 .filter(|e| e.meta.enabled)
-                .map(|e| (e.meta.id.clone(), e.meta.kind, Arc::clone(&e.manager)))
+                .filter(|e| only.is_none_or(|id| e.meta.id == id))
+                .filter(|e| match (e.claude.as_ref(), min_age_secs, e.usage_fetched_at) {
+                    // Stale-only mode covers the Claude sign-ins; the others have their own loop.
+                    (None, Some(_), _) => false,
+                    (Some(_), Some(min), Some(at)) => now - at >= min,
+                    _ => true,
+                })
+                .map(|e| {
+                    (
+                        e.meta.id.clone(),
+                        e.meta.kind,
+                        Arc::clone(&e.manager),
+                        e.claude.clone(),
+                    )
+                })
                 .collect()
         };
-        for (id, kind, manager) in targets {
+        for (id, kind, manager, claude) in targets {
+            if let Some(claude) = claude {
+                self.refresh_claude_usage(&id, &claude).await;
+                continue;
+            }
             let Some(provider) = self.provider(kind) else {
                 continue;
             };
@@ -640,6 +688,28 @@ impl AccountPool {
                     }
                 }
             }
+        }
+    }
+
+    /// Reads a Claude sign-in's usage from the usage endpoint. A failure leaves the last reading.
+    async fn refresh_claude_usage(&self, id: &str, claude: &ClaudeAuthManager) {
+        let now = self.now();
+        {
+            let mut inner = lock(&self.inner);
+            if let Some(index) = inner.position(id) {
+                inner.entries[index].usage_fetched_at = Some(now);
+            }
+        }
+        let access = match claude.access_token().await {
+            Ok(access) => access,
+            Err(error) => {
+                tracing::debug!("claude usage refresh skipped for {id}: {error}");
+                return;
+            }
+        };
+        match crate::claude_oauth::fetch_usage(&self.env.auth_route_config, &access, now).await {
+            Ok(usage) => self.record_usage(id, usage, /*observed_while_in_use*/ false),
+            Err(error) => tracing::debug!("claude usage refresh failed for {id}: {error}"),
         }
     }
 
@@ -796,6 +866,7 @@ impl AccountPool {
             claude: None,
             pace: 0.0,
             is_default: false,
+        usage_fetched_at: None,
         });
         self.emit(PoolEvent::Updated);
         self.view(&id)
@@ -896,6 +967,7 @@ impl AccountPool {
                 claude: None,
                 pace: 0.0,
                 is_default: false,
+            usage_fetched_at: None,
             });
         }
         self.emit(PoolEvent::Updated);
@@ -1018,6 +1090,7 @@ impl AccountPool {
                 claude: Some(claude),
                 pace: 0.0,
                 is_default: false,
+                usage_fetched_at: None,
             });
         }
         self.emit(PoolEvent::Updated);
@@ -1066,6 +1139,7 @@ impl AccountPool {
             claude: None,
             pace: 0.0,
             is_default: false,
+            usage_fetched_at: None,
         });
     }
 

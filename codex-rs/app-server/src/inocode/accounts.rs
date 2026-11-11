@@ -21,6 +21,8 @@ use codex_app_server_protocol::InocodeAccountPolicy;
 use codex_app_server_protocol::InocodeAccountSelection;
 use codex_app_server_protocol::InocodeAccountState;
 use codex_app_server_protocol::InocodeAccountSwitchReason;
+use codex_app_server_protocol::InocodeAccountResetCredit;
+use codex_app_server_protocol::InocodeAccountResetGrant;
 use codex_app_server_protocol::InocodeAccountUsage;
 use codex_app_server_protocol::InocodeAccountUsageWindow;
 use codex_app_server_protocol::InocodeAccountWindowKind;
@@ -84,6 +86,8 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 const USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
+/// A listing re-reads a Claude sign-in's usage when the last read is at least this old.
+const CLAUDE_USAGE_MIN_AGE_SECS: i64 = 60;
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const OPENAI: &str = "openai";
 const CLAUDE: &str = "claude";
@@ -220,6 +224,7 @@ pub(crate) fn start(
         account_pool::install_global_for(OPENAI, Some(Arc::clone(&pool)));
         account_pool::install_global_for(CLAUDE, Some(Arc::clone(&claude)));
         pool.spawn_refresh_loop(USAGE_REFRESH_INTERVAL);
+        claude.spawn_refresh_loop(USAGE_REFRESH_INTERVAL);
         for source in [pool, claude] {
             let mut events = source.subscribe();
             let outgoing = Arc::clone(&outgoing);
@@ -285,6 +290,14 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
             if params.refresh.unwrap_or(false) {
                 for pool in all_pools() {
                     pool.refresh_usage().await;
+                }
+            } else {
+                // The answer below is not held up: a Claude sign-in whose usage is older than a
+                // minute is re-read in the background, and `inocode/accounts/updated` follows.
+                for pool in all_pools() {
+                    tokio::spawn(async move {
+                        pool.refresh_usage_if_stale(CLAUDE_USAGE_MIN_AGE_SECS).await;
+                    });
                 }
             }
             if all_pools().is_empty() {
@@ -650,6 +663,8 @@ async fn claude_finish(
         .await
         .map_err(|err| err.to_string())?;
     let _ = pool.set_identity(&view.id, profile.email, profile.name);
+    // Fill the usage bars now instead of waiting for the first request or the next refresh.
+    pool.refresh_usage_of(&view.id).await;
     Ok(view.id)
 }
 
@@ -696,6 +711,27 @@ fn supersede_claude_logins(runtime: &Runtime) {
     for id in stale {
         if let Some(PendingLogin::ClaudeListener(cancel)) = logins.remove(&id) {
             cancel.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+/// Ends every sign-in that is still waiting (the client went away), so no listener keeps a port
+/// or a blocking thread alive and the process can exit.
+pub(crate) fn cancel_all_logins() {
+    let Some(runtime) = RUNTIME.get() else { return };
+    let pending: Vec<PendingLogin> = runtime
+        .logins
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .drain()
+        .map(|(_, pending)| pending)
+        .collect();
+    for login in pending {
+        match login {
+            PendingLogin::Browser(handle) => handle.shutdown(),
+            PendingLogin::Device(cancel) => cancel.cancel(),
+            PendingLogin::ClaudeListener(cancel) => cancel.store(true, Ordering::SeqCst),
+            PendingLogin::ClaudeCode { .. } => {}
         }
     }
 }
@@ -782,6 +818,7 @@ fn to_account(view: AccountView) -> InocodeAccount {
             five_hour: usage.five_hour.map(to_window),
             weekly: usage.weekly.map(to_window),
             updated_at: usage.updated_at,
+            reset_credit: usage.reset_credit.map(to_reset_credit),
         }),
         state: match view.state {
             AccountState::Active => InocodeAccountState::Active,
@@ -793,6 +830,32 @@ fn to_account(view: AccountView) -> InocodeAccount {
         last_used_at: view.last_used_at,
         in_use: view.in_use,
         is_default: view.is_default,
+    }
+}
+
+fn to_reset_credit(credit: account_pool::ResetCredit) -> InocodeAccountResetCredit {
+    InocodeAccountResetCredit {
+        eligible: credit.eligible,
+        at_limit: credit.at_limit,
+        resets_left: credit.resets_left,
+        resets_total: credit.resets_total,
+        usable_now: credit.usable_now,
+        ends_at: credit.ends_at,
+        cooldown_until: credit.cooldown_until,
+        grants: credit
+            .grants
+            .into_iter()
+            .map(|grant| InocodeAccountResetGrant {
+                id: grant.id,
+                label: grant.label,
+                resets_left: grant.resets_left,
+                resets_total: grant.resets_total,
+                ends_at: grant.ends_at,
+                paused: grant.paused,
+                usable_now: grant.usable_now,
+                clears: grant.clears,
+            })
+            .collect(),
     }
 }
 

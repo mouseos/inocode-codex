@@ -4,7 +4,7 @@
 //! `flags` is implemented; the others return fixture-shaped placeholder
 //! responses until their owners replace them.
 
-mod accounts;
+pub(crate) mod accounts;
 mod advisor;
 mod compaction;
 mod evidence;
