@@ -1166,6 +1166,12 @@ client_request_definitions! {
         serialization: thread_id(params.thread_id),
         response: v2::ThreadApproveGuardianDeniedActionResponse,
     },
+    /// InoCode: the same override, by review id (the server remembers the denied assessment).
+    ThreadApproveGuardianDeniedActionById => "thread/approveGuardianDeniedActionById" {
+        params: v2::ThreadApproveGuardianDeniedActionByIdParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ThreadApproveGuardianDeniedActionByIdResponse,
+    },
     #[experimental("thread/backgroundTerminals/clean")]
     ThreadBackgroundTerminalsClean => "thread/backgroundTerminals/clean" {
         params: v2::ThreadBackgroundTerminalsCleanParams,

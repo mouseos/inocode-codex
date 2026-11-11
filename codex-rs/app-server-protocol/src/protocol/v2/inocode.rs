@@ -1873,6 +1873,22 @@ pub struct InocodeGoalEditRequestedNotification {
 }
 
 
+/// Approves an action the auto reviewer denied, by the review id the client already has from
+/// `item/autoApprovalReview/completed` (the server keeps the denied assessment).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadApproveGuardianDeniedActionByIdParams {
+    pub thread_id: String,
+    /// `reviewId` of the denied `item/autoApprovalReview/completed` notification.
+    pub review_id: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ThreadApproveGuardianDeniedActionByIdResponse {}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]

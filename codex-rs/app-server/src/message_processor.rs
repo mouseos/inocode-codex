@@ -1724,6 +1724,11 @@ impl MessageProcessor {
                     .thread_approve_guardian_denied_action(&request_id, params)
                     .await
             }
+            ClientRequest::ThreadApproveGuardianDeniedActionById { params, .. } => {
+                self.thread_processor
+                    .thread_approve_guardian_denied_action_by_id(&request_id, params)
+                    .await
+            }
             ClientRequest::GetConversationSummary { params, .. } => {
                 self.thread_processor.conversation_summary(params).await
             }

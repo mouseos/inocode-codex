@@ -2736,6 +2736,41 @@ impl ThreadRequestProcessor {
         Ok(ThreadShellCommandResponse {})
     }
 
+    /// `thread/approveGuardianDeniedActionById`: approves a denied action by its review id.
+    pub(crate) async fn thread_approve_guardian_denied_action_by_id(
+        &self,
+        request_id: &ConnectionRequestId,
+        params: codex_app_server_protocol::ThreadApproveGuardianDeniedActionByIdParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let thread_id = ThreadId::from_string(&params.thread_id)
+            .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
+        let (_, thread) = self.load_thread(&params.thread_id).await?;
+        ensure_direct_input_allowed(thread.as_ref()).await?;
+        let event = self
+            .thread_state_manager
+            .thread_state(thread_id)
+            .await
+            .lock()
+            .await
+            .take_denied_guardian_assessment(&params.review_id)
+            .ok_or_else(|| {
+                invalid_request(format!(
+                    "no denied Guardian review {} is remembered for this thread (it was already approved, or the server restarted)",
+                    params.review_id
+                ))
+            })?;
+        self.submit_core_op(
+            request_id,
+            thread.as_ref(),
+            Op::ApproveGuardianDeniedAction { event },
+        )
+        .await
+        .map_err(|err| internal_error(format!("failed to approve Guardian denial: {err}")))?;
+        Ok(Some(
+            codex_app_server_protocol::ThreadApproveGuardianDeniedActionByIdResponse {}.into(),
+        ))
+    }
+
     async fn thread_approve_guardian_denied_action_inner(
         &self,
         request_id: &ConnectionRequestId,

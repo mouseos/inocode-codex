@@ -348,6 +348,12 @@ pub(crate) async fn apply_bespoke_event_handling(
                 &assessment,
             );
             outgoing.send_server_notification(notification).await;
+            if assessment.status == codex_protocol::protocol::GuardianAssessmentStatus::Denied {
+                thread_state
+                    .lock()
+                    .await
+                    .remember_denied_guardian_assessment(assessment.clone());
+            }
             if assessment.status == codex_protocol::protocol::GuardianAssessmentStatus::InProgress
                 && matches!(
                     assessment.review_reason,

@@ -135,6 +135,8 @@ pub(crate) struct ThreadState {
     pub(crate) cancel_tx: Option<oneshot::Sender<()>>,
     pub(crate) experimental_raw_events: bool,
     pub(crate) listener_generation: u64,
+    /// Denied Guardian assessments (newest last), so a client can approve one by its review id.
+    denied_guardian_assessments: Vec<codex_protocol::protocol::GuardianAssessmentEvent>,
     last_thread_settings: Option<ThreadSettings>,
     listener_command_tx: Option<mpsc::UnboundedSender<ThreadListenerCommand>>,
     current_turn_history: ThreadHistoryBuilder,
@@ -145,6 +147,32 @@ pub(crate) struct ThreadState {
 }
 
 impl ThreadState {
+    const MAX_DENIED_GUARDIAN_ASSESSMENTS: usize = 32;
+
+    pub(crate) fn remember_denied_guardian_assessment(
+        &mut self,
+        assessment: codex_protocol::protocol::GuardianAssessmentEvent,
+    ) {
+        self.denied_guardian_assessments
+            .retain(|existing| existing.id != assessment.id);
+        self.denied_guardian_assessments.push(assessment);
+        if self.denied_guardian_assessments.len() > Self::MAX_DENIED_GUARDIAN_ASSESSMENTS {
+            self.denied_guardian_assessments.remove(0);
+        }
+    }
+
+    /// The remembered denied assessment for `review_id`, removed so it is approved once.
+    pub(crate) fn take_denied_guardian_assessment(
+        &mut self,
+        review_id: &str,
+    ) -> Option<codex_protocol::protocol::GuardianAssessmentEvent> {
+        let index = self
+            .denied_guardian_assessments
+            .iter()
+            .position(|existing| existing.id == review_id)?;
+        Some(self.denied_guardian_assessments.remove(index))
+    }
+
     /// Serializes goal edits, cold resume, and terminal cleanup for this exact state.
     pub(crate) async fn lock_goal_resume(state: &Mutex<Self>) -> tokio::sync::OwnedMutexGuard<()> {
         let lock = Arc::clone(&state.lock().await.goal_resume_lock);
@@ -313,6 +341,49 @@ mod tests {
     use codex_protocol::config_types::Settings;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
+
+    fn denied_assessment(id: &str) -> codex_protocol::protocol::GuardianAssessmentEvent {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "status": "denied",
+            "action": { "type": "command", "source": "shell", "command": "echo x", "cwd": "/x" }
+        }))
+            .expect("a minimal denied assessment deserializes")
+    }
+
+    #[test]
+    fn denied_guardian_assessments_are_approved_once_by_review_id() {
+        let mut state = ThreadState::default();
+        state.remember_denied_guardian_assessment(denied_assessment("review-1"));
+        state.remember_denied_guardian_assessment(denied_assessment("review-2"));
+        assert!(state.take_denied_guardian_assessment("unknown").is_none());
+        assert_eq!(
+            state
+                .take_denied_guardian_assessment("review-1")
+                .map(|event| event.id),
+            Some("review-1".to_string())
+        );
+        // Taken once: the second approval of the same review finds nothing.
+        assert!(state.take_denied_guardian_assessment("review-1").is_none());
+        assert!(state.take_denied_guardian_assessment("review-2").is_some());
+    }
+
+    #[test]
+    fn denied_guardian_assessments_keep_only_the_newest() {
+        let mut state = ThreadState::default();
+        for index in 0..(ThreadState::MAX_DENIED_GUARDIAN_ASSESSMENTS + 5) {
+            state.remember_denied_guardian_assessment(denied_assessment(&format!("r{index}")));
+        }
+        assert!(state.take_denied_guardian_assessment("r0").is_none());
+        assert!(
+            state
+                .take_denied_guardian_assessment(&format!(
+                    "r{}",
+                    ThreadState::MAX_DENIED_GUARDIAN_ASSESSMENTS + 4
+                ))
+                .is_some()
+        );
+    }
 
     #[test]
     fn note_thread_settings_reports_only_effective_changes() {
