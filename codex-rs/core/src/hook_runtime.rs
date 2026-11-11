@@ -241,7 +241,9 @@ pub(crate) async fn run_pre_tool_use_hooks(
     // or warn. No-op when `knowledge.enabled` / `knowledge.guard` is false.
     {
         let guard_cwd = tool_hook_cwd(&step_context.environments, turn_context);
-        let action = codex_inocode_knowledge::action_from_tool_input(tool_name.name(), tool_input);
+        let mut action =
+            codex_inocode_knowledge::action_from_tool_input(tool_name.name(), tool_input);
+        action.model = Some(turn_context.model_info().slug.clone());
         let verdict = codex_inocode_knowledge::guard_check(guard_cwd.as_path(), &action);
         codex_inocode_knowledge::record_guard_hits(
             &verdict,

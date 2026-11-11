@@ -97,11 +97,39 @@ pub enum Severity {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MatchSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<String>,
+    /// ツール名の glob(例 `apply_patch`、`Write`、`mcp__*`)。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
+    /// MCP の `server` または `server/tool`(glob 可)。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp: Vec<String>,
+    /// モデル名(スラッグ)の glob。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<String>,
+    /// 書き込む内容(ファイルの書き込み・編集・パッチの本文)に対する正規表現。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub content: Vec<String>,
+    /// これに合うパスを触る操作は、この規則の対象外にする(glob)。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_paths: Vec<String>,
+}
+
+impl MatchSpec {
+    /// 照合の条件を 1 つでも持つか(`exclude_paths` だけでは条件にならない)。
+    pub fn has_criteria(&self) -> bool {
+        !(self.paths.is_empty()
+            && self.commands.is_empty()
+            && self.tools.is_empty()
+            && self.mcp.is_empty()
+            && self.models.is_empty()
+            && self.content.is_empty())
+    }
 }
 
 /// front-matter + 本文。`id` が空なら書き込み時に採番する。
@@ -139,6 +167,10 @@ pub struct Record {
     pub enforced_by: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_failure: Option<String>,
+    /// 対象を絞るパス(glob。絶対でも `gui/inocode-desktop` のような相対でもよい)。
+    /// セッションの cwd かこの操作のパスがどれかに合うときだけ効く。空なら scope の範囲全体。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub applies_to: Vec<String>,
     // failure_case
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
@@ -183,6 +215,7 @@ impl Record {
             reason: None,
             enforced_by: None,
             from_failure: None,
+            applies_to: Vec::new(),
             signature: None,
             symptom: None,
             root_cause: None,

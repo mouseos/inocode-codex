@@ -11,9 +11,9 @@ mod guard;
 mod record;
 mod store;
 
-pub use guard::{GuardAction, action_from_tool_input, GuardHit, GuardVerdict, check_action, guard_message};
+pub use guard::{GuardAction, action_from_tool_input, builtin_check, GuardHit, GuardVerdict, check_action, guard_message};
 pub use events::{
-    GuardEvent, GuardOutcome, GuardTarget, KnowledgeRecorded, guard_events_path, list_guard_events,
+    GuardEvent, GuardOutcome, GuardRuleStats, GuardTarget, guard_stats, KnowledgeRecorded, guard_events_path, list_guard_events,
     record_guard_hits, subscribe_guard, subscribe_recorded,
 };
 pub use record::{Confidence, Kind, MatchSpec, Record, Scope, Severity, Status};
@@ -28,7 +28,22 @@ pub fn inocode_home() -> PathBuf {
 
 /// 現在の cwd と共通領域に対する Store。
 pub fn store_for(cwd: &Path) -> Store {
-    Store::new(Some(cwd.to_path_buf()), inocode_home())
+    let home = inocode_home();
+    Store::new(Some(project_root_for(cwd, &home)), home).with_session_cwd(cwd.to_path_buf())
+}
+
+/// プロジェクトの知識の置き場の親: `cwd` かその上位で、最初に `.inocode/knowledge` を持つフォルダ。
+/// 無ければ `cwd` そのもの。共通領域(`<home>/knowledge`)は数えない。
+/// 親フォルダに置いた規則が、その下のリポジトリで開いたセッションにも効く。
+pub fn project_root_for(cwd: &Path, home: &Path) -> PathBuf {
+    let global = home.join("knowledge");
+    for dir in cwd.ancestors() {
+        let candidate = dir.join(".inocode").join("knowledge");
+        if candidate != global && candidate.is_dir() {
+            return dir.to_path_buf();
+        }
+    }
+    cwd.to_path_buf()
 }
 
 /// 重大度 `block` の有効な rule を、1 行 1 件(理由付き)のリストにして返す。
@@ -99,7 +114,12 @@ pub fn guard_check_with(
     if !(flags.knowledge_enabled && flags.knowledge_guard) {
         return GuardVerdict::default();
     }
-    check_action(store, action)
+    let mut verdict = check_action(store, action);
+    let home = inocode_home();
+    if codex_inocode_flags::guard_protect_self_from(&home) {
+        verdict.blocked.extend(guard::builtin_check(action, &home));
+    }
+    verdict
 }
 
 #[cfg(test)]

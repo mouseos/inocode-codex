@@ -47,6 +47,50 @@ pub struct GuardEvent {
     pub scope: Scope,
     #[serde(default)]
     pub cwd: String,
+    /// 同じスレッドで、同じ規則・同じ対象が、すでに発動していた(止められたあとの再実行など)。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub repeat: bool,
+}
+
+/// 規則ごとの発動の集計(測定用)。`repeat` は、同じ操作の再発動の回数。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GuardRuleStats {
+    pub rule_id: String,
+    pub blocked: u64,
+    pub warned: u64,
+    pub repeat: u64,
+}
+
+/// 発動の記録を、規則ごとに集計する(`cwd` を渡せばそのプロジェクトだけ)。
+pub fn guard_stats(cwd: Option<&str>) -> Vec<GuardRuleStats> {
+    let Ok(text) = std::fs::read_to_string(guard_events_path()) else {
+        return Vec::new();
+    };
+    let mut map: std::collections::BTreeMap<String, GuardRuleStats> = Default::default();
+    for e in text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<GuardEvent>(l).ok())
+        .filter(|e| cwd.is_none_or(|c| e.cwd == c))
+    {
+        let s = map.entry(e.rule_id.clone()).or_insert_with(|| GuardRuleStats {
+            rule_id: e.rule_id.clone(),
+            ..Default::default()
+        });
+        match e.result {
+            GuardOutcome::Blocked => s.blocked += 1,
+            GuardOutcome::Warned => s.warned += 1,
+        }
+        if e.repeat {
+            s.repeat += 1;
+        }
+    }
+    map.into_values().collect()
+}
+
+fn seen_hits() -> &'static std::sync::Mutex<std::collections::HashSet<(String, String, String)>> {
+    static S: OnceLock<std::sync::Mutex<std::collections::HashSet<(String, String, String)>>> =
+        OnceLock::new();
+    S.get_or_init(Default::default)
 }
 
 fn guard_sender() -> &'static tokio::sync::broadcast::Sender<GuardEvent> {
@@ -90,6 +134,12 @@ pub fn record_guard_hits(verdict: &GuardVerdict, t: &GuardTarget) -> Vec<GuardEv
             reason: h.reason.clone(),
             scope: h.scope,
             cwd: t.cwd.clone(),
+            repeat: !seen_hits()
+                .lock()
+                .map(|mut set| {
+                    set.insert((t.thread_id.clone(), h.id.clone(), t.target.clone()))
+                })
+                .unwrap_or(true),
         };
         append_guard(&ev);
         let _ = guard_sender().send(ev.clone());

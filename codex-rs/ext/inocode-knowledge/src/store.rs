@@ -11,6 +11,8 @@ use std::path::PathBuf;
 pub struct Store {
     project_root: Option<PathBuf>,
     home: PathBuf,
+    /// 呼び出したセッションの cwd。規則の `appliesTo` の判定に使う(None なら絞り込まない)。
+    session_cwd: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -32,7 +34,51 @@ pub struct SummaryRow {
 
 impl Store {
     pub fn new(project_root: Option<PathBuf>, home: PathBuf) -> Self {
-        Self { project_root, home }
+        Self {
+            project_root,
+            home,
+            session_cwd: None,
+        }
+    }
+
+    pub fn with_session_cwd(mut self, cwd: PathBuf) -> Self {
+        self.session_cwd = Some(cwd);
+        self
+    }
+
+    /// 規則の `appliesTo` に照らして、この場所(セッションの cwd と `extra_paths`)で効くか。
+    pub(crate) fn applies(&self, rec: &Record, extra_paths: &[String]) -> bool {
+        if rec.applies_to.is_empty() {
+            return true;
+        }
+        let Some(cwd) = &self.session_cwd else {
+            return true;
+        };
+        let mut candidates = vec![cwd.to_string_lossy().into_owned()];
+        candidates.extend(extra_paths.iter().cloned());
+        crate::guard::applies_to_matches(&rec.applies_to, &candidates)
+    }
+
+    /// プロジェクトのレコードを、共通領域へ複製する(元は残す)。
+    /// 同じ種類・題・本文の有効な共通レコードがあれば、それの ID を返す。
+    pub fn promote(&self, id: &str) -> io::Result<String> {
+        let rec = self
+            .read(Scope::Project, id)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("not found: {id}")))?;
+        if let Some(same) = self.all(Some(Scope::Global)).into_iter().find(|g| {
+            g.kind == rec.kind && g.status.is_live() && g.title == rec.title && g.body == rec.body
+        }) {
+            return Ok(same.id);
+        }
+        let mut copy = rec.clone();
+        copy.scope = Scope::Global;
+        copy.id = String::new();
+        copy.supersedes = None;
+        copy.source = Some(match &rec.source {
+            Some(s) if !s.is_empty() => format!("{s}(プロジェクトの {id} から昇格)"),
+            _ => format!("プロジェクトの {id} から昇格"),
+        });
+        self.write(copy)
     }
 
     fn root(&self, scope: Scope) -> Option<PathBuf> {
@@ -169,7 +215,7 @@ impl Store {
             let has_match = rec
                 .match_spec
                 .as_ref()
-                .is_some_and(|m| !m.paths.is_empty() || !m.commands.is_empty());
+                .is_some_and(|m| m.has_criteria());
             rec.enforced_by = Some(if has_match { "hook" } else { "prompt" }.to_string());
         }
         // supersedes 指定で新規作成した場合も、古い方に印を付ける。
@@ -291,14 +337,14 @@ impl Store {
     pub fn pinned_rules(&self) -> Vec<Record> {
         self.live_rules()
             .into_iter()
-            .filter(|r| r.severity == Some(Severity::Block))
+            .filter(|r| r.severity == Some(Severity::Block) && self.applies(r, &[]))
             .collect()
     }
 
     pub fn pinned_rules_text(&self) -> String {
         let mut lines = Vec::new();
         for r in self.live_rules() {
-            if r.severity != Some(Severity::Block) {
+            if r.severity != Some(Severity::Block) || !self.applies(&r, &[]) {
                 continue;
             }
             let reason = r.reason.as_deref().filter(|s| !s.is_empty()).unwrap_or("");
@@ -451,6 +497,7 @@ mod tests {
         r.match_spec = Some(MatchSpec {
             paths: paths.iter().map(|s| s.to_string()).collect(),
             commands: commands.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
         });
         r
     }
@@ -508,6 +555,7 @@ mod tests {
             &GuardAction {
                 command: Some("cd x && git push --force origin main".into()),
                 paths: vec![],
+                ..Default::default()
             },
         );
         assert_eq!(v.blocked.len(), 1);
@@ -517,6 +565,7 @@ mod tests {
             &GuardAction {
                 command: None,
                 paths: vec!["D:\\work\\codex-rs\\Cargo.lock".into()],
+                ..Default::default()
             },
         );
         assert_eq!((v.blocked.len(), v.warnings.len()), (0, 1));
@@ -536,6 +585,7 @@ mod tests {
             &GuardAction {
                 command: Some("rm -rf /tmp".into()),
                 paths: vec![],
+                ..Default::default()
             },
         );
         assert_eq!(v.blocked.len(), 1);
@@ -567,6 +617,273 @@ mod tests {
         assert_eq!(b.command.as_deref(), Some("git push --force"));
     }
 
+    fn spec_rule(title: &str, sev: Severity, spec: MatchSpec) -> Record {
+        let mut r = Record::new(Kind::Rule, title);
+        r.severity = Some(sev);
+        r.match_spec = Some(spec);
+        r
+    }
+
+    #[test]
+    fn extended_match_tools_mcp_models_content_and_exclusions() {
+        let (_d, s) = store();
+        let s1 = |v: &str| vec![v.to_string()];
+        s.write(spec_rule(
+            "mcp server",
+            Severity::Block,
+            MatchSpec { mcp: s1("badsrv"), ..Default::default() },
+        ))
+        .unwrap();
+        s.write(spec_rule(
+            "mcp one tool",
+            Severity::Warn,
+            MatchSpec { mcp: s1("other/delete_*"), ..Default::default() },
+        ))
+        .unwrap();
+        s.write(spec_rule(
+            "model",
+            Severity::Warn,
+            MatchSpec { models: s1("gpt-6-*"), ..Default::default() },
+        ))
+        .unwrap();
+        s.write(spec_rule(
+            "content in writes, tests excluded",
+            Severity::Block,
+            MatchSpec {
+                tools: vec!["apply_patch".into(), "Write".into()],
+                content: s1("resetCredit/consume"),
+                exclude_paths: vec!["**/tests/**".into(), "**/*_tests.rs".into()],
+                ..Default::default()
+            },
+        ))
+        .unwrap();
+        let hits = |a: GuardAction| {
+            let v = check_action(&s, &a);
+            let mut t: Vec<String> = v.blocked.iter().chain(&v.warnings).map(|h| h.title.clone()).collect();
+            t.sort();
+            t
+        };
+        let a = crate::guard::action_from_tool_input("mcp__badsrv__anything", &serde_json::json!({}));
+        assert_eq!(a.mcp, Some(("badsrv".into(), "anything".into())));
+        assert_eq!(hits(a), vec!["mcp server"]);
+        let a = crate::guard::action_from_tool_input("mcp__other__delete_all", &serde_json::json!({}));
+        assert_eq!(hits(a), vec!["mcp one tool"]);
+        let a = crate::guard::action_from_tool_input("mcp__other__read", &serde_json::json!({}));
+        assert!(hits(a).is_empty());
+        let mut a = crate::guard::action_from_tool_input("Bash", &serde_json::json!({"command": "ls"}));
+        a.model = Some("GPT-6-astra".into());
+        assert_eq!(hits(a), vec!["model"]);
+        // Write with content: both conditions (tool AND content) are required.
+        let write = |path: &str, body: &str| {
+            crate::guard::action_from_tool_input(
+                "Write",
+                &serde_json::json!({"file_path": path, "content": body}),
+            )
+        };
+        assert_eq!(hits(write("src/a.rs", "call resetCredit/consume now")).len(), 1);
+        assert!(hits(write("src/a.rs", "harmless")).is_empty());
+        assert!(hits(write("tests/x.rs", "resetCredit/consume")).is_empty());
+        assert!(hits(write("src/foo_tests.rs", "resetCredit/consume")).is_empty());
+        // The same content in a shell command does not match (tool is Bash).
+        let sh = crate::guard::action_from_tool_input(
+            "Bash",
+            &serde_json::json!({"command": "echo resetCredit/consume"}),
+        );
+        assert!(hits(sh).is_empty());
+        // patch bodies count as content
+        let patch = crate::guard::action_from_tool_input(
+            "apply_patch",
+            &serde_json::json!({"command": "*** Begin Patch\n*** Add File: src/b.rs\n+resetCredit/consume\n*** End Patch"}),
+        );
+        assert_eq!(hits(patch).len(), 1);
+        // A rule with a match spec made of new fields is enforced by a hook.
+        assert!(s
+            .all(None)
+            .iter()
+            .all(|r| r.enforced_by.as_deref() == Some("hook")));
+    }
+
+    /// Mirrors `store_for`, but with an explicit home.
+    fn store_at(cwd: &std::path::Path, home: &std::path::Path) -> Store {
+        Store::new(Some(crate::project_root_for(cwd, home)), home.to_path_buf())
+            .with_session_cwd(cwd.to_path_buf())
+    }
+
+    #[test]
+    fn project_rules_reach_sessions_under_the_folder_only() {
+        let d = tempfile::tempdir().unwrap();
+        let home = d.path().join("home");
+        let ws = d.path().join("ws");
+        let repo = ws.join("cli").join("inocode");
+        let other = d.path().join("elsewhere");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        // The rule is written from the workspace folder (parent of the repositories).
+        let at_ws = store_at(&ws, &home);
+        let mut r = rule("名前でプロセスを止めない", Severity::Block, &["re:taskkill\\s+/IM"], &[]);
+        r.status = Status::Verified;
+        at_ws.write(r).unwrap();
+        assert!(ws.join(".inocode").join("knowledge").is_dir());
+        assert!(!repo.join(".inocode").exists(), "nothing is written inside the repository");
+
+        // A session in a repository below it gets the list and the guard.
+        let in_repo = store_at(&repo, &home);
+        assert!(in_repo.pinned_rules_text().contains("名前でプロセスを止めない"));
+        let act = GuardAction { command: Some("taskkill /IM foo.exe".into()), ..Default::default() };
+        assert_eq!(check_action(&in_repo, &act).blocked.len(), 1);
+
+        // A session elsewhere gets neither.
+        let elsewhere = store_at(&other, &home);
+        assert!(elsewhere.pinned_rules_text().is_empty());
+        assert!(check_action(&elsewhere, &act).blocked.is_empty());
+        // Nor does a global store without it.
+        assert!(!home.join("knowledge").exists());
+    }
+
+    #[test]
+    fn applies_to_narrows_a_rule_and_promote_copies_to_global() {
+        let d = tempfile::tempdir().unwrap();
+        let home = d.path().join("home");
+        let ws = d.path().join("ws");
+        let gui = ws.join("gui").join("inocode-desktop");
+        let cli = ws.join("cli").join("inocode");
+        std::fs::create_dir_all(&gui).unwrap();
+        std::fs::create_dir_all(&cli).unwrap();
+        let mut r = rule("GUI だけ", Severity::Block, &["re:npm\\s+publish"], &[]);
+        r.applies_to = vec!["gui/inocode-desktop".into()];
+        let id = store_at(&ws, &home).write(r).unwrap();
+        let act = GuardAction { command: Some("npm publish".into()), ..Default::default() };
+        assert_eq!(check_action(&store_at(&gui, &home), &act).blocked.len(), 1);
+        assert_eq!(check_action(&store_at(&gui.join("src"), &home), &act).blocked.len(), 1);
+        assert!(check_action(&store_at(&cli, &home), &act).blocked.is_empty());
+        assert!(store_at(&cli, &home).pinned_rules_text().is_empty());
+        // From the parent, an operation on a path inside the GUI repo still matches.
+        let on_path = GuardAction {
+            command: Some("npm publish".into()),
+            paths: vec![gui.join("package.json").to_string_lossy().into_owned()],
+            ..Default::default()
+        };
+        assert_eq!(check_action(&store_at(&ws, &home), &on_path).blocked.len(), 1);
+
+        // promote: copy to global, keep the original, idempotent.
+        let s = store_at(&ws, &home);
+        let gid = s.promote(&id).unwrap();
+        assert_eq!(s.promote(&id).unwrap(), gid);
+        assert!(s.read(Scope::Project, &id).is_some());
+        let g = s.read(Scope::Global, &gid).unwrap();
+        assert_eq!(g.scope, Scope::Global);
+        assert!(g.source.unwrap().contains(&id));
+        assert_eq!(g.applies_to, vec!["gui/inocode-desktop"]);
+        assert!(s.promote("rule-9999").is_err());
+    }
+
+    #[test]
+    fn content_rule_sees_commands_and_writes_with_test_paths_excluded() {
+        let (_d, s) = store();
+        s.write(spec_rule(
+            "reset credit",
+            Severity::Block,
+            MatchSpec {
+                content: vec!["resetCredit/consume|reset_rate_limits".into()],
+                exclude_paths: vec!["**/tests/**".into(), "**/*_tests.rs".into(), "**/*reset_tests*".into()],
+                ..Default::default()
+            },
+        ))
+        .unwrap();
+        let blocked = |a: GuardAction| check_action(&s, &a).blocked.len();
+        let cmd = crate::guard::action_from_tool_input(
+            "Bash",
+            &serde_json::json!({"command": "curl -X POST http://x/resetCredit/consume"}),
+        );
+        assert_eq!(blocked(cmd), 1);
+        let w = |p: &str| {
+            crate::guard::action_from_tool_input(
+                "Write",
+                &serde_json::json!({"file_path": p, "content": "call(reset_rate_limits)"}),
+            )
+        };
+        assert_eq!(blocked(w("src/a.rs")), 1);
+        assert_eq!(blocked(w("tests/a.rs")), 0);
+        assert_eq!(blocked(w("src/x_tests.rs")), 0);
+        assert_eq!(blocked(w("src/account_reset_tests.rs")), 0);
+    }
+
+    #[test]
+    fn builtin_self_protection() {
+        let home = std::path::Path::new("/h/.inocode");
+        let chk = |tool: &str, input: serde_json::Value| {
+            crate::guard::builtin_check(&crate::guard::action_from_tool_input(tool, &input), home)
+        };
+        let cmd = |c: &str| chk("Bash", serde_json::json!({"command": c}));
+        // verification switched off
+        for c in [
+            "git commit --no-verify -m x",
+            "git commit -n -m x",
+            "git commit -an -m x",
+            "git -c core.hooksPath=/dev/null commit -m x",
+            "git config core.hooksPath .nohooks",
+            "HUSKY=0 git commit -m x",
+            "SKIP=lint git commit -m x",
+            "git config --global hooks.x 1",
+        ] {
+            assert!(!cmd(c).is_empty(), "should block: {c}");
+        }
+        for c in ["git commit -m \"fix\"", "git status", "git log -n 3", "ls .inocode/knowledge/rule"] {
+            assert!(cmd(c).is_empty(), "should allow: {c}");
+        }
+        // the rule files
+        assert!(!cmd("rm -rf D:/w/.inocode/knowledge/rule/rule-0001.md").is_empty());
+        assert!(!cmd("Remove-Item D:\\w\\.inocode\\knowledge -Recurse").is_empty());
+        assert!(!cmd("echo x > ~/.inocode/knowledge/rule/a.md").is_empty());
+        assert!(cmd("cat D:/w/.inocode/knowledge/rule/rule-0001.md 2>&1").is_empty());
+        assert!(!chk("apply_patch", serde_json::json!({"command": "*** Begin Patch\n*** Update File: D:/w/.inocode/knowledge/rule/rule-0001.md\n*** End Patch"})).is_empty());
+        assert!(!chk("Write", serde_json::json!({"file_path": "/h/.inocode/knowledge/rule/x.md", "content": "x"})).is_empty());
+        // a read tool on the same path is fine
+        assert!(chk("Read", serde_json::json!({"file_path": "/h/.inocode/knowledge/rule/x.md"})).is_empty());
+        // hook configuration
+        assert!(!chk("Write", serde_json::json!({"file_path": "/p/.codex/hooks.json", "content": "{}"})).is_empty());
+        assert!(!chk("Write", serde_json::json!({"file_path": "/h/config.toml", "content": "[hooks]\nx=1"})).is_empty());
+        assert!(chk("Write", serde_json::json!({"file_path": "/h/config.toml", "content": "[inocode.metrics]\nenabled=true"})).is_empty());
+        assert!(!cmd("sed -i '/hooks/d' ~/.inocode/config.toml").is_empty());
+        // reported as a block from the built-in guard
+        let hit = &cmd("git commit --no-verify")[0];
+        assert_eq!((hit.id.as_str(), hit.severity), ("builtin-protect-self", Severity::Block));
+    }
+
+    #[test]
+    fn protect_self_switch_in_config() {
+        let d = tempfile::tempdir().unwrap();
+        assert!(codex_inocode_flags::guard_protect_self_from(d.path()));
+        std::fs::write(d.path().join("config.toml"), "[inocode.guard]\nprotect_self = false\n").unwrap();
+        assert!(!codex_inocode_flags::guard_protect_self_from(d.path()));
+    }
+
+    #[test]
+    fn match_spec_new_fields_roundtrip_and_old_files_still_load() {
+        let mut r = Record::new(Kind::Rule, "t");
+        r.match_spec = Some(MatchSpec {
+            tools: vec!["Write".into()],
+            mcp: vec!["srv/tool".into()],
+            models: vec!["m-*".into()],
+            content: vec!["secret".into()],
+            ..Default::default()
+        });
+        let text = r.to_file_text();
+        assert!(text.contains("tools:") && text.contains("mcp:") && text.contains("content:"));
+        let back = Record::from_file_text(&text).unwrap();
+        assert_eq!(back.match_spec, r.match_spec);
+        let old = "---\nkind: rule\ntitle: old\nmatch:\n  commands:\n  - rm -rf\n---\n";
+        let old = Record::from_file_text(old).unwrap();
+        assert_eq!(old.match_spec.unwrap().commands, vec!["rm -rf"]);
+        // JSON-style flow lists with camelCase keys (how rules are registered from a script).
+        let flow = "---\nid: rule-0008\nkind: rule\ntitle: t\nstatus: verified\nseverity: warn\nmatch:\n  tools: [\"Write\"]\n  content: [\"a\\\\.b|c\"]\n  excludePaths: [\"**/tests/**\"]\nappliesTo: [\"gui/inocode-desktop\"]\n---\n";
+        let flow = Record::from_file_text(flow).unwrap();
+        let spec = flow.match_spec.unwrap();
+        assert_eq!(spec.content, vec!["a\\.b|c"]);
+        assert_eq!(spec.exclude_paths, vec!["**/tests/**"]);
+        assert_eq!(flow.applies_to, vec!["gui/inocode-desktop"]);
+    }
+
     #[test]
     fn guard_disabled_by_flag() {
         let d = tempfile::tempdir().unwrap();
@@ -579,7 +896,7 @@ guard = false
         s.write(rule("x", Severity::Block, &["rm -rf"], &[])).unwrap();
         let flags = codex_inocode_flags::InocodeFlags::load_from(&home);
         assert!(!flags.knowledge_guard);
-        let act = GuardAction { command: Some("rm -rf /".into()), paths: vec![] };
+        let act = GuardAction { command: Some("rm -rf /".into()), ..Default::default() };
         let v = crate::guard_check_with(&flags, &s, &act);
         assert!(v.blocked.is_empty() && v.warnings.is_empty());
         let on = codex_inocode_flags::InocodeFlags::default();

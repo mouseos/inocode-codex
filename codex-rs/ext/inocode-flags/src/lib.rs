@@ -76,6 +76,24 @@ pub fn inocode_home() -> PathBuf {
     }
 }
 
+/// `[inocode.guard] protect_self` (default true): the guard blocks edits to its own rules and
+/// hook configuration and the switching off of verification. Read from `home/config.toml`.
+pub fn guard_protect_self_from(home: &Path) -> bool {
+    let table = std::fs::read_to_string(config_path(home))
+        .ok()
+        .and_then(|s| s.parse::<toml::Table>().ok());
+    table
+        .as_ref()
+        .and_then(|t| t.get("inocode"))
+        .and_then(|v| v.as_table())
+        .and_then(|inocode| lookup(inocode, "guard.protect_self"))
+        .unwrap_or(true)
+}
+
+pub fn guard_protect_self() -> bool {
+    guard_protect_self_from(&inocode_home())
+}
+
 pub(crate) fn config_path(home: &Path) -> PathBuf {
     home.join("config.toml")
 }
