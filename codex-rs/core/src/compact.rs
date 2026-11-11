@@ -108,6 +108,9 @@ pub(crate) async fn build_compaction_replacement_history(
     {
         context.push(item);
     }
+    if let Some(item) = crate::compact_inocode::saved_outputs_item(&sess.thread_id.to_string()) {
+        context.push(item);
+    }
     (
         assemble_compaction_history(compacted_history, prefix, context),
         snapshot,
@@ -520,6 +523,9 @@ async fn run_compact_task_inner_impl(
     if let Some(item) =
         crate::compact_inocode::ledger_item(&sess.thread_id.to_string(), &new_history)
     {
+        context.push(item);
+    }
+    if let Some(item) = crate::compact_inocode::saved_outputs_item(&sess.thread_id.to_string()) {
         context.push(item);
     }
     let new_history = assemble_compaction_history(new_history, prefix, context);

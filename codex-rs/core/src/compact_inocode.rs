@@ -471,6 +471,36 @@ fn offload_old_observations_with(
     (count, bytes)
 }
 
+/// A compaction drops the old tool outputs together with their stubs, so the model would no longer
+/// know where the full text went. This lists the files this thread saved (path, tool, size) so it
+/// can read one back with the shell when it needs the text.
+fn saved_outputs_text(dir: &std::path::Path, thread_id: &str) -> Option<String> {
+    let mut lines = Vec::new();
+    for entry in codex_inocode_tool_output::list_outputs(dir) {
+        if entry.thread_id.as_deref() != Some(thread_id) {
+            continue;
+        }
+        let path = dir.join(format!("{}.txt", entry.id));
+        let what = entry
+            .tool
+            .or(entry.call_id)
+            .unwrap_or_else(|| "tool output".to_string());
+        lines.push(format!("- {} ({what}, {} bytes)", path.display(), entry.bytes));
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "Full text of earlier tool outputs, saved to files (read one with the shell if you need it):\n{}",
+        lines.join("\n")
+    ))
+}
+
+pub(crate) fn saved_outputs_item(thread_id: &str) -> Option<ResponseItem> {
+    let dir = codex_inocode_flags::inocode_home().join("tool-results");
+    saved_outputs_text(&dir, thread_id).map(user_text_item)
+}
+
 /// The text parts of a tool output: the string itself, or each text content item.
 pub(crate) fn output_texts(
     body: &mut codex_protocol::models::FunctionCallOutputBody,
@@ -692,5 +722,25 @@ mod tests {
             unreachable!()
         };
         assert!(output_texts(&mut output.body)[0].starts_with("<persisted-output>"));
+    }
+
+    #[test]
+    fn saved_outputs_are_listed_for_the_thread_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = codex_inocode_tool_output::PersistConfig::new(true, 0, dir.path());
+        config.preview_bytes = 10;
+        // PersistConfig::new puts files in <home>/tool-results.
+        let results = dir.path().join("tool-results");
+        let meta = |t: &str| codex_inocode_tool_output::PersistMeta {
+            tool: Some("exec_command".into()),
+            thread_id: Some(t.into()),
+            call_id: Some("c1".into()),
+        };
+        let text = "z".repeat(500);
+        codex_inocode_tool_output::persist_if_large_with(&text, &config, &meta("mine")).unwrap();
+        codex_inocode_tool_output::persist_if_large_with(&text, &config, &meta("other")).unwrap();
+        let listed = saved_outputs_text(&results, "mine").unwrap();
+        assert_eq!(listed.matches("exec_command, 500 bytes").count(), 1);
+        assert!(saved_outputs_text(&results, "nobody").is_none());
     }
 }
