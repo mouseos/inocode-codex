@@ -709,6 +709,31 @@
           "type": "object"
         },
         {
+          "description": "InoCode: the same override, by review id (the server remembers the denied assessment).",
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/v2/RequestId"
+            },
+            "method": {
+              "enum": [
+                "thread/approveGuardianDeniedActionById"
+              ],
+              "title": "Thread/approveGuardianDeniedActionByIdRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadApproveGuardianDeniedActionByIdParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/approveGuardianDeniedActionByIdRequest",
+          "type": "object"
+        },
+        {
           "properties": {
             "id": {
               "$ref": "#/definitions/v2/RequestId"
@@ -26541,6 +26566,30 @@
           "waitingOnUserInput"
         ],
         "type": "string"
+      },
+      "ThreadApproveGuardianDeniedActionByIdParams": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "Approves an action the auto reviewer denied, by the review id the client already has from `item/autoApprovalReview/completed` (the server keeps the denied assessment).",
+        "properties": {
+          "reviewId": {
+            "description": "`reviewId` of the denied `item/autoApprovalReview/completed` notification.",
+            "type": "string"
+          },
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "reviewId",
+          "threadId"
+        ],
+        "title": "ThreadApproveGuardianDeniedActionByIdParams",
+        "type": "object"
+      },
+      "ThreadApproveGuardianDeniedActionByIdResponse": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "ThreadApproveGuardianDeniedActionByIdResponse",
+        "type": "object"
       },
       "ThreadApproveGuardianDeniedActionParams": {
         "$schema": "http://json-schema.org/draft-07/schema#",

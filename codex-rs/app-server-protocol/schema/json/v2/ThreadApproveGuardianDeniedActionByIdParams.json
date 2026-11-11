@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Approves an action the auto reviewer denied, by the review id the client already has from `item/autoApprovalReview/completed` (the server keeps the denied assessment).",
+  "properties": {
+    "reviewId": {
+      "description": "`reviewId` of the denied `item/autoApprovalReview/completed` notification.",
+      "type": "string"
+    },
+    "threadId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "reviewId",
+    "threadId"
+  ],
+  "title": "ThreadApproveGuardianDeniedActionByIdParams",
+  "type": "object"
+}

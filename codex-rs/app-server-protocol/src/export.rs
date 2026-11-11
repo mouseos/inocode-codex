@@ -2441,7 +2441,13 @@ mod tests {
                     || (path == Path::new("v2/MisalignmentErrorDetails.ts")
                         && field_prefix.trim() == "reviewTarget?")
                     || (path == Path::new("v2/ItemCompletedNotification.ts")
-                        && field_prefix.trim() == "contentTokenCount?");
+                        && field_prefix.trim() == "contentTokenCount?")
+                    // InoCode's own wire types (`inocode/*` methods) use optional nullable fields
+                    // freely; the rule above guards the upstream types.
+                    || path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("Inocode"));
                 if field_prefix.chars().rev().find(|c| !c.is_whitespace()) == Some('?')
                     && !allow_optional_nullable
                     && !legacy_optional_nullable_field
