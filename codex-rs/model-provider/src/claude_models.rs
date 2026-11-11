@@ -377,7 +377,46 @@ impl ModelsManager for ClaudeModelsManager {
         model: &'a str,
         config: &'a ModelsManagerConfig,
     ) -> ModelsManagerFuture<'a, CatalogModel> {
-        Box::pin(async move { self.current().get_model_info(model, config).await })
+        Box::pin(async move {
+            let inner = self.current();
+            let known = inner.get_remote_models().await;
+            if known.iter().any(|m| m.slug == model) {
+                return inner.get_model_info(model, config).await;
+            }
+            // A name the list does not have: an alias of a dated model (`claude-haiku-4-5` for
+            // `claude-haiku-4-5-20251001`) takes that entry's data; anything else still gets the
+            // Claude defaults, so it never falls back to the OpenAI-shaped catalog (which sends
+            // every tool on every request).
+            let prefix = format!("{model}-");
+            let mut dated: Vec<&ModelInfo> = known
+                .iter()
+                .filter(|m| m.slug.starts_with(&prefix))
+                .collect();
+            dated.sort_by(|a, b| b.slug.cmp(&a.slug));
+            let mut info = match dated.first() {
+                Some(found) => (*found).clone(),
+                None => model_info(
+                    &RemoteModel {
+                        id: model.to_string(),
+                        display_name: None,
+                        created_at: None,
+                        max_input_tokens: None,
+                        max_tokens: None,
+                        image_input: None,
+                        thinking: None,
+                    },
+                    i32::MAX,
+                ),
+            };
+            info.slug = model.to_string();
+            StaticModelsManager::new(
+                /*auth_manager*/ None,
+                ModelsResponse { models: vec![info] },
+                self.origin(),
+            )
+            .get_model_info(model, config)
+            .await
+        })
     }
 
     fn refresh_if_new_etag(

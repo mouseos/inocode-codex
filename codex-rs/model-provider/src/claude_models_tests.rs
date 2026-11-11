@@ -104,3 +104,34 @@ fn a_manager_starts_from_the_snapshot_and_then_from_a_fresh_cache() {
         .collect();
     assert_eq!(slugs, vec!["claude-cached-1".to_string()]);
 }
+
+#[tokio::test]
+async fn an_alias_or_unknown_name_still_gets_the_claude_catalog_entry() {
+    let home = tempfile::tempdir().expect("tempdir");
+    super::write_cache(
+        &home.path().join("models_cache_claude.json"),
+        chrono::Utc::now().timestamp(),
+        &[RemoteModel {
+            id: "claude-haiku-4-5-20251001".to_string(),
+            display_name: None,
+            created_at: None,
+            max_input_tokens: Some(190_000),
+            max_tokens: None,
+            image_input: None,
+            thinking: None,
+        }],
+    );
+    let manager =
+        ClaudeModelsManager::new("https://api.anthropic.com".to_string(), Some(home.path().into()));
+    let config = codex_models_manager::ModelsManagerConfig::default();
+
+    let alias = manager.get_model_info("claude-haiku-4-5", &config).await.model;
+    assert_eq!(alias.slug, "claude-haiku-4-5");
+    assert_eq!(alias.context_window, Some(190_000), "the dated entry's data");
+    assert!(alias.supports_search_tool);
+
+    let unknown = manager.get_model_info("claude-zzz-9", &config).await.model;
+    assert_eq!(unknown.slug, "claude-zzz-9");
+    assert!(unknown.supports_search_tool, "Claude defaults, not the fallback catalog");
+    assert_eq!(unknown.apply_patch_tool_type, None);
+}
