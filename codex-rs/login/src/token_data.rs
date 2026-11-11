@@ -212,6 +212,28 @@ pub fn parse_chatgpt_jwt_claims(jwt: &str) -> Result<IdTokenInfo, IdTokenInfoErr
     }
 }
 
+/// The account holder's display name from the ID token (`name`), when it carries one.
+pub fn chatgpt_jwt_display_name(jwt: &str) -> Option<String> {
+    #[derive(Deserialize)]
+    struct NameClaims {
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(rename = "https://api.openai.com/profile", default)]
+        profile: Option<ProfileName>,
+    }
+    #[derive(Deserialize)]
+    struct ProfileName {
+        #[serde(default)]
+        name: Option<String>,
+    }
+    let claims: NameClaims = decode_jwt_payload(jwt).ok()?;
+    claims
+        .name
+        .or_else(|| claims.profile.and_then(|p| p.name))
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+}
+
 fn deserialize_id_token<'de, D>(deserializer: D) -> Result<IdTokenInfo, D::Error>
 where
     D: serde::Deserializer<'de>,

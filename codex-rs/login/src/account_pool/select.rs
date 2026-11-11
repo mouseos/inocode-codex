@@ -105,7 +105,10 @@ pub fn select(input: &SelectInput<'_>) -> Option<String> {
         .enumerate()
         .find(|(_, tier)| !tier.is_empty())?;
 
-    let stay_put = tier_index != last && (policy.selection != SelectionStrategy::RoundRobin || !advance);
+    // Fill-first never rests on a lower-priority account when a higher one is usable again.
+    let stay_put = tier_index != last
+        && policy.selection != SelectionStrategy::FillFirst
+        && (policy.selection != SelectionStrategy::RoundRobin || !advance);
     if stay_put
         && let Some(current) = current
         && tier.iter().any(|c| c.id == current)

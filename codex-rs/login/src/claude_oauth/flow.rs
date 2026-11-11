@@ -164,8 +164,51 @@ async fn post_token(route: &AuthRouteConfig, body: Value) -> io::Result<TokenRes
     serde_json::from_str(&text).map_err(|_| io::Error::other("the token response was not valid JSON"))
 }
 
+/// What the profile endpoint says about the account. Every field is best effort.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Profile {
+    pub plan: Option<String>,
+    pub email: Option<String>,
+    pub name: Option<String>,
+}
+
+/// The first non-empty string under any of `keys` in `object`.
+fn first_string(object: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| object.get(*key).and_then(Value::as_str))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn parse_profile(data: &Value) -> Profile {
+    let account = data.get("account").unwrap_or(&Value::Null);
+    Profile {
+        plan: data.get("organization").and_then(|org| {
+            ["rate_limit_tier", "organization_type"]
+                .iter()
+                .find_map(|key| org.get(*key).and_then(Value::as_str))
+                .map(|plan| plan.to_ascii_lowercase())
+        }),
+        email: first_string(account, &["email", "email_address"]).or_else(|| first_string(data, &["email"])),
+        name: first_string(account, &["display_name", "full_name", "name"]).or_else(|| first_string(data, &["name"])),
+    }
+}
+
+/// The signed-in account's plan, e-mail address and display name.
+pub async fn fetch_profile(route: &AuthRouteConfig, access: &str) -> Profile {
+    fetch_profile_within(route, access, PROFILE_TIMEOUT).await
+}
+
+async fn fetch_profile_within(route: &AuthRouteConfig, access: &str, timeout: Duration) -> Profile {
+    fetch_profile_inner(route, access, timeout).await.unwrap_or_default()
+}
+
 /// Best effort: the account's plan, from the profile endpoint.
 async fn fetch_plan(route: &AuthRouteConfig, access: &str, timeout: Duration) -> Option<String> {
+    fetch_profile_within(route, access, timeout).await.plan
+}
+
+async fn fetch_profile_inner(route: &AuthRouteConfig, access: &str, timeout: Duration) -> Option<Profile> {
     let url = consts::profile_url();
     let client = create_raw_auth_client(&url, route).ok()?;
     let request = client
@@ -179,11 +222,7 @@ async fn fetch_plan(route: &AuthRouteConfig, access: &str, timeout: Duration) ->
         return None;
     }
     let data: Value = serde_json::from_str(&response.text().await.ok()?).ok()?;
-    let organization = data.get("organization")?;
-    ["rate_limit_tier", "organization_type"]
-        .iter()
-        .find_map(|key| organization.get(*key).and_then(Value::as_str))
-        .map(|plan| plan.to_ascii_lowercase())
+    Some(parse_profile(&data))
 }
 
 /// Exchanges what the user pasted (or the listener received) for credentials.
@@ -358,5 +397,17 @@ mod tests {
         let kept = credentials_from(response(Some(60.0), None), Some("old"), now).expect("ok");
         assert_eq!(kept.refresh, "old");
         assert!(credentials_from(response(Some(60.0), None), None, now).is_err());
+    }
+
+    #[test]
+    fn the_profile_yields_plan_email_and_name_when_present() {
+        let profile = parse_profile(&json!({
+            "account": {"uuid": "u", "email": " me@example.test ", "display_name": "Me"},
+            "organization": {"rate_limit_tier": "Default_Claude_Max_5x"}
+        }));
+        assert_eq!(profile.plan.as_deref(), Some("default_claude_max_5x"));
+        assert_eq!(profile.email.as_deref(), Some("me@example.test"));
+        assert_eq!(profile.name.as_deref(), Some("Me"));
+        assert_eq!(parse_profile(&json!({})), Profile::default());
     }
 }

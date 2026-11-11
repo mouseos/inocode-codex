@@ -19,11 +19,13 @@ pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 pub type UsageFetcher =
     Arc<dyn Fn(CodexAuth) -> BoxFuture<'static, Result<AccountUsage, String>> + Send + Sync>;
 
-/// What a credential says about itself. No e-mail address, ever.
+/// What a credential says about itself. The e-mail address and name are kept in the local pool metadata only.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AccountIdentity {
     pub id: String,
     pub plan: Option<String>,
+    pub email: Option<String>,
+    pub name: Option<String>,
 }
 
 pub trait AccountProvider: Send + Sync {
@@ -59,7 +61,16 @@ impl AccountProvider for OpenAiChatgptProvider {
             .account_plan_type()
             .and_then(|plan| serde_json::to_value(plan).ok())
             .and_then(|value| value.as_str().map(str::to_string));
-        Some(AccountIdentity { id, plan })
+        let name = auth
+            .get_token_data()
+            .ok()
+            .and_then(|tokens| crate::token_data::chatgpt_jwt_display_name(&tokens.id_token.raw_jwt));
+        Some(AccountIdentity {
+            id,
+            plan,
+            email: auth.get_account_email(),
+            name,
+        })
     }
 
     fn fetch_usage(&self, auth: CodexAuth) -> BoxFuture<'static, Result<Option<AccountUsage>, String>> {
@@ -84,6 +95,8 @@ impl AccountProvider for OpenAiApiKeyProvider {
         Some(AccountIdentity {
             id: super::store::api_key_account_id(key),
             plan: None,
+            email: None,
+            name: None,
         })
     }
 

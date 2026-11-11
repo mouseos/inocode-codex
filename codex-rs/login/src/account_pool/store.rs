@@ -300,6 +300,8 @@ mod tests {
             usage: None,
             added_at: 5,
             provider: "openai".to_string(),
+            email: None,
+            name: None,
         };
         store.save_meta(&meta).expect("save meta");
         assert_eq!(store.ids(), vec![id.clone()]);
@@ -336,6 +338,8 @@ mod tests {
             usage: None,
             added_at: 0,
             provider: "openai".to_string(),
+            email: None,
+            name: None,
         };
         store.save_meta(&meta).expect("save");
         assert_eq!(store.load_meta(DEFAULT_ID), Some(meta));

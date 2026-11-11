@@ -637,10 +637,13 @@ async fn claude_finish(
     )
     .await
     .map_err(|err| err.to_string())?;
-    pool.add_claude_oauth_expecting(alias, credentials, expected)
+    let profile = claude_oauth::fetch_profile(&pool.env().auth_route_config, &credentials.access).await;
+    let view = pool
+        .add_claude_oauth_expecting(alias, credentials, expected)
         .await
-        .map(|view| view.id)
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    let _ = pool.set_identity(&view.id, profile.email, profile.name);
+    Ok(view.id)
 }
 
 async fn login_complete(params: InocodeAccountsLoginCompleteParams) -> Result<(), JSONRPCErrorError> {
@@ -742,6 +745,8 @@ fn to_account(view: AccountView) -> InocodeAccount {
         },
         provider: view.provider,
         alias: view.alias,
+        email: view.email,
+        name: view.name,
         plan: view.plan,
         usage: view.usage.map(|usage| InocodeAccountUsage {
             five_hour: usage.five_hour.map(to_window),
@@ -851,11 +856,14 @@ mod tests {
             in_use: false,
             is_default: false,
             provider: "openai".to_string(),
+            email: None,
+            name: None,
         };
         let json = serde_json::to_string(&to_account(view)).expect("json");
         assert!(!json.contains("sk-") && !json.contains('@'), "{json}");
         assert!(json.contains("\"kind\":\"apiKey\""));
         assert!(json.contains("\"provider\":\"openai\""));
+        assert!(json.contains("\"email\":null") && json.contains("\"name\":null"));
     }
 
     #[test]

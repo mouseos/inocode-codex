@@ -192,6 +192,11 @@ pub struct AccountMeta {
     /// Which provider group the entry belongs to (`openai`, `claude`).
     #[serde(default = "default_provider")]
     pub provider: String,
+    /// Local only. Shown to the owner on the account screen; never sent anywhere else.
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -217,6 +222,8 @@ pub struct AccountView {
     pub in_use: bool,
     pub is_default: bool,
     pub provider: String,
+    pub email: Option<String>,
+    pub name: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

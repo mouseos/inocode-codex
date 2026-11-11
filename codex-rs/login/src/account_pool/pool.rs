@@ -20,6 +20,7 @@ use super::types::AccountPolicy;
 use super::types::AccountState;
 use super::types::AccountUsage;
 use super::types::AccountView;
+use super::types::SelectionStrategy;
 use super::types::PoolEvent;
 use super::types::SwitchEvent;
 use super::types::SwitchReason;
@@ -113,6 +114,15 @@ async fn make_manager(env: &PoolEnv, dir: PathBuf) -> Arc<AuthManager> {
         )
         .await,
     )
+}
+
+/// The use order is the accounts' priority (top first), whatever `selection` says: the setting is
+/// kept in the policy for compatibility and ignored.
+fn priority_order(policy: &AccountPolicy) -> AccountPolicy {
+    AccountPolicy {
+        selection: SelectionStrategy::FillFirst,
+        ..policy.clone()
+    }
 }
 
 fn io_err(message: impl Into<String>) -> std::io::Error {
@@ -291,15 +301,22 @@ impl AccountPool {
                     usage: None,
                     added_at: self.now(),
                     provider: self.group.clone(),
+                    email: None,
+                    name: None,
                 });
-                let plan = self
-                    .provider(kind)
-                    .and_then(|p| p.identify(&auth))
-                    .and_then(|identity| identity.plan);
+                let identity = self.provider(kind).and_then(|p| p.identify(&auth));
                 let mut meta = meta;
                 meta.kind = kind;
-                if plan.is_some() {
-                    meta.plan = plan;
+                if let Some(identity) = identity {
+                    if identity.plan.is_some() {
+                        meta.plan = identity.plan;
+                    }
+                    if identity.email.is_some() {
+                        meta.email = identity.email;
+                    }
+                    if identity.name.is_some() {
+                        meta.name = identity.name;
+                    }
                 }
                 inner.entries.insert(
                     0,
@@ -351,7 +368,7 @@ impl AccountPool {
             let now = self.now();
             let chosen = select(&SelectInput {
                 candidates: &inner.candidates(),
-                policy: &inner.policy,
+                policy: &priority_order(&inner.policy),
                 now,
                 current: None,
                 pinned: inner.pinned.as_deref(),
@@ -383,7 +400,7 @@ impl AccountPool {
             let candidates = inner.candidates();
             let chosen = select(&SelectInput {
                 candidates: &candidates,
-                policy: &inner.policy,
+                policy: &priority_order(&inner.policy),
                 now,
                 current: inner.current.as_deref(),
                 pinned: inner.pinned.as_deref(),
@@ -461,7 +478,7 @@ impl AccountPool {
             let candidates = inner.candidates();
             let chosen = select(&SelectInput {
                 candidates: &candidates,
-                policy: &inner.policy,
+                policy: &priority_order(&inner.policy),
                 now,
                 current: None,
                 pinned: None,
@@ -590,7 +607,7 @@ impl AccountPool {
             let Some(auth) = manager.auth().await else {
                 continue;
             };
-            let plan = provider.identify(&auth).and_then(|identity| identity.plan);
+            let identity = provider.identify(&auth);
             match provider.fetch_usage(auth).await {
                 Ok(Some(usage)) => {
                     self.record_usage(&id, usage, /*observed_while_in_use*/ false);
@@ -600,14 +617,27 @@ impl AccountPool {
                     tracing::debug!("account usage refresh failed for {id}: {error}");
                 }
             }
-            if let Some(plan) = plan {
+            if let Some(identity) = identity {
                 let mut inner = lock(&self.inner);
-                if let Some(index) = inner.position(&id)
-                    && inner.entries[index].meta.plan.as_deref() != Some(plan.as_str())
-                {
-                    inner.entries[index].meta.plan = Some(plan);
-                    let meta = inner.entries[index].meta.clone();
-                    let _ = self.store.save_meta(&meta);
+                if let Some(index) = inner.position(&id) {
+                    let meta = &mut inner.entries[index].meta;
+                    let mut changed = false;
+                    if identity.plan.is_some() && meta.plan != identity.plan {
+                        meta.plan = identity.plan;
+                        changed = true;
+                    }
+                    if identity.email.is_some() && meta.email != identity.email {
+                        meta.email = identity.email;
+                        changed = true;
+                    }
+                    if identity.name.is_some() && meta.name != identity.name {
+                        meta.name = identity.name;
+                        changed = true;
+                    }
+                    if changed {
+                        let meta = meta.clone();
+                        let _ = self.store.save_meta(&meta);
+                    }
                 }
             }
         }
@@ -656,6 +686,8 @@ impl AccountPool {
                     in_use: inner.current.as_deref() == Some(e.meta.id.as_str()),
                     is_default: e.is_default,
                     provider: self.group.clone(),
+                    email: e.meta.email.clone(),
+                    name: e.meta.name.clone(),
                 }
             })
             .collect()
@@ -680,6 +712,23 @@ impl AccountPool {
         self.store.save_meta(&meta)?;
         self.emit(PoolEvent::Updated);
         Ok(result)
+    }
+
+    /// Records the owner's e-mail address and display name (kept in the local metadata only).
+    pub fn set_identity(
+        &self,
+        id: &str,
+        email: Option<String>,
+        name: Option<String>,
+    ) -> Result<(), std::io::Error> {
+        self.mutate(id, |meta| {
+            if email.is_some() {
+                meta.email = email;
+            }
+            if name.is_some() {
+                meta.name = name;
+            }
+        })
     }
 
     pub fn rename(&self, id: &str, alias: &str) -> Result<(), std::io::Error> {
@@ -736,6 +785,8 @@ impl AccountPool {
             usage: None,
             added_at: self.now(),
             provider: self.group.clone(),
+            email: None,
+            name: None,
         };
         self.store.save_meta(&meta)?;
         let manager = make_manager(&self.env, self.store.account_dir(&id)).await;
@@ -811,6 +862,12 @@ impl AccountPool {
             if let Some(index) = inner.position(&identity.id) {
                 inner.entries[index].manager = manager;
                 inner.entries[index].meta.plan = identity.plan.clone();
+                if identity.email.is_some() {
+                    inner.entries[index].meta.email.clone_from(&identity.email);
+                }
+                if identity.name.is_some() {
+                    inner.entries[index].meta.name.clone_from(&identity.name);
+                }
                 inner.entries[index].meta.cooldown_until = None;
                 let meta = inner.entries[index].meta.clone();
                 drop(inner);
@@ -829,6 +886,8 @@ impl AccountPool {
                 usage: None,
                 added_at: self.now(),
                 provider: self.group.clone(),
+                email: identity.email.clone(),
+                name: identity.name.clone(),
             };
             self.store.save_meta(&meta)?;
             lock(&self.inner).entries.push(Entry {
@@ -949,6 +1008,8 @@ impl AccountPool {
                 usage: None,
                 added_at: self.now(),
                 provider: self.group.clone(),
+                email: None,
+                name: None,
             };
             self.store.save_meta(&meta)?;
             lock(&self.inner).entries.push(Entry {
@@ -978,7 +1039,7 @@ impl AccountPool {
             let now = self.now();
             let chosen = select(&SelectInput {
                 candidates: &inner.candidates(),
-                policy: &inner.policy,
+                policy: &priority_order(&inner.policy),
                 now,
                 current: None,
                 pinned: inner.pinned.as_deref(),

@@ -178,7 +178,9 @@ async fn add_claude(pool: &Arc<AccountPool>, config: &Config, args: AddArgs) -> 
         now_ms,
     )
     .await?;
+    let profile = codex_login::claude_oauth::fetch_profile(&config.auth_route_config(), &credentials.access).await;
     let view = pool.add_claude_oauth(&args.alias, credentials).await?;
+    pool.set_identity(&view.id, profile.email, profile.name)?;
     if let Some(priority) = args.priority {
         pool.set_priority(&view.id, priority)?;
     }

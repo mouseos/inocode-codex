@@ -53,6 +53,8 @@ fn meta(id: &str, alias: &str, priority: i32, five: f64) -> AccountMeta {
         usage: Some(usage(five, 10.0)),
         added_at: NOW,
         provider: "openai".to_string(),
+        email: None,
+        name: None,
     }
 }
 

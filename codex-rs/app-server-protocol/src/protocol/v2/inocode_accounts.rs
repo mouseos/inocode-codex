@@ -105,6 +105,11 @@ pub struct InocodeAccount {
     pub provider: String,
     /// User-chosen name.
     pub alias: String,
+    /// The account's e-mail address, from the sign-in (ChatGPT: ID token; Claude: profile).
+    /// `null` when unknown. Local only; shown on the account screen.
+    pub email: Option<String>,
+    /// The owner's display name; `null` when unknown.
+    pub name: Option<String>,
     /// Plan name for ChatGPT accounts (for example `plus`, `pro`); `null` for API keys.
     pub plan: Option<String>,
     /// `null` for API keys (no usage concept) or before the first fetch.
