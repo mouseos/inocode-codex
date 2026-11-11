@@ -447,26 +447,46 @@ fn offload_old_observations_with(
             } => (call_id.clone(), output),
             _ => continue,
         };
-        let codex_protocol::models::FunctionCallOutputBody::Text(text) = &mut output.body else {
-            continue;
-        };
-        // A stub bigger than the output saves nothing.
-        if text.len() <= config.preview_bytes.saturating_mul(2) {
-            continue;
-        }
+        // Shell and code-mode results come as content items, not a plain string: handle both.
         let meta = codex_inocode_tool_output::PersistMeta {
             tool: None,
             thread_id: Some(thread_id.to_string()),
             call_id: (!call_id.is_empty()).then_some(call_id),
         };
-        let original = text.len() as u64;
-        if let Some(stub) = codex_inocode_tool_output::persist_if_large_with(text, config, &meta) {
-            *text = stub;
-            count += 1;
-            bytes += original;
+        for text in output_texts(&mut output.body) {
+            // A stub bigger than the output saves nothing.
+            if text.len() <= config.preview_bytes.saturating_mul(2) {
+                continue;
+            }
+            let original = text.len() as u64;
+            if let Some(stub) =
+                codex_inocode_tool_output::persist_if_large_with(text, config, &meta)
+            {
+                *text = stub;
+                count += 1;
+                bytes += original;
+            }
         }
     }
     (count, bytes)
+}
+
+/// The text parts of a tool output: the string itself, or each text content item.
+pub(crate) fn output_texts(
+    body: &mut codex_protocol::models::FunctionCallOutputBody,
+) -> Vec<&mut String> {
+    use codex_protocol::models::FunctionCallOutputBody;
+    use codex_protocol::models::FunctionCallOutputContentItem;
+    match body {
+        FunctionCallOutputBody::Text(text) => vec![text],
+        FunctionCallOutputBody::ContentItems(items) => items
+            .iter_mut()
+            .filter_map(|item| match item {
+                FunctionCallOutputContentItem::InputText { text } => Some(text),
+                _ => None,
+            })
+            .collect(),
+    }
 }
 
 /// Items to record at the start of a turn: the `team.auto_select` recommendation for a request
@@ -642,5 +662,35 @@ mod tests {
         assert_eq!(text(2), big);
         // Already offloaded outputs are not processed again.
         assert_eq!(offload_old_observations_with("t", &mut items, 2, &config), (0, 0));
+    }
+
+    #[test]
+    fn content_item_outputs_are_offloaded_too() {
+        use codex_protocol::models::FunctionCallOutputBody;
+        use codex_protocol::models::FunctionCallOutputContentItem;
+        use codex_protocol::models::FunctionCallOutputPayload;
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = codex_inocode_tool_output::PersistConfig::new(true, 0, dir.path());
+        config.preview_bytes = 100;
+        let big = "y".repeat(1000);
+        let out = |i: usize| ResponseItem::CustomToolCallOutput {
+            id: None,
+            call_id: format!("c{i}"),
+            name: None,
+            output: FunctionCallOutputPayload {
+                body: FunctionCallOutputBody::ContentItems(vec![
+                    FunctionCallOutputContentItem::InputText { text: big.clone() },
+                ]),
+                success: None,
+            },
+            internal_chat_message_metadata_passthrough: None,
+        };
+        let mut items = vec![out(0), out(1), out(2)];
+        let (n, bytes) = offload_old_observations_with("t", &mut items, 1, &config);
+        assert_eq!((n, bytes), (2, 2000));
+        let ResponseItem::CustomToolCallOutput { output, .. } = &mut items[0] else {
+            unreachable!()
+        };
+        assert!(output_texts(&mut output.body)[0].starts_with("<persisted-output>"));
     }
 }

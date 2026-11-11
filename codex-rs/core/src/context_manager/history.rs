@@ -1609,16 +1609,18 @@ fn inocode_persist_or_placeholder(
     tool_name: Option<&str>,
     call_id: &str,
 ) {
-    let FunctionCallOutputBody::Text(text) = &mut output.body else {
-        return;
-    };
-    if text.trim().is_empty() {
+    if let FunctionCallOutputBody::Text(text) = &mut output.body
+        && text.trim().is_empty()
+    {
         *text = codex_inocode_tool_output::empty_output_placeholder(tool_name.unwrap_or("tool"));
         return;
     }
     let threshold = policy.token_budget();
     // Cheap pre-check so the flag file is only read for genuinely large outputs.
-    if text.len() <= threshold {
+    if crate::compact_inocode::output_texts(&mut output.body)
+        .iter()
+        .all(|text| text.len() <= threshold)
+    {
         return;
     }
     let flags = codex_inocode_flags::InocodeFlags::load();
@@ -1640,10 +1642,13 @@ fn inocode_persist_or_placeholder(
         thread_id: None,
         call_id: (!call_id.is_empty()).then(|| call_id.to_string()),
     };
-    if let Some(replacement) =
-        codex_inocode_tool_output::persist_if_large_with(text, &config, &meta)
-    {
-        *text = replacement;
+    // Shell and code-mode results are content items; each large text part is spilled.
+    for text in crate::compact_inocode::output_texts(&mut output.body) {
+        if let Some(replacement) =
+            codex_inocode_tool_output::persist_if_large_with(text, &config, &meta)
+        {
+            *text = replacement;
+        }
     }
 }
 
