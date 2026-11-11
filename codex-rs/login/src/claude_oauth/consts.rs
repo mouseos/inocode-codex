@@ -40,6 +40,8 @@ pub fn client_id() -> String {
 pub const TOKEN_URL_ENV: &str = "INOCODE_CLAUDE_OAUTH_TOKEN_URL";
 pub const PROFILE_URL_ENV: &str = "INOCODE_CLAUDE_OAUTH_PROFILE_URL";
 pub const USAGE_URL_ENV: &str = "INOCODE_CLAUDE_OAUTH_USAGE_URL";
+/// Origin of the organization endpoints (the reset claim); overridable for mock servers.
+pub const API_ORIGIN_ENV: &str = "INOCODE_CLAUDE_API_ORIGIN";
 
 fn overridden(env: &str, default: &str) -> String {
     match std::env::var(env) {
@@ -54,6 +56,10 @@ pub fn token_url() -> String {
 
 pub fn profile_url() -> String {
     overridden(PROFILE_URL_ENV, PROFILE_URL)
+}
+
+pub fn api_origin() -> String {
+    overridden(API_ORIGIN_ENV, "https://api.anthropic.com")
 }
 
 pub fn usage_url() -> String {

@@ -7,6 +7,7 @@
 mod consts;
 mod flow;
 mod manager;
+mod reset;
 mod store;
 mod usage;
 
@@ -15,6 +16,7 @@ mod tests;
 
 pub use consts::CALLBACK_PORT;
 pub use consts::CODE_REDIRECT_URI;
+pub use consts::API_ORIGIN_ENV;
 pub use consts::USAGE_URL_ENV;
 pub use flow::CallbackListener;
 pub use flow::Pending;
@@ -26,6 +28,11 @@ pub use flow::refresh_credentials;
 pub use flow::split_code_input;
 pub use flow::wait_for_callback;
 pub use manager::ClaudeAuthManager;
+pub use reset::ConsumeFailure;
+pub use reset::PendingOperation;
+pub use reset::Settled;
+pub use reset::consume as consume_reset;
+pub use reset::pending_operation as pending_reset_operation;
 pub use usage::fetch_usage;
 pub use usage::parse_usage;
 pub use store::ClaudeCredentials;

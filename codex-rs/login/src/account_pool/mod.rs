@@ -15,6 +15,7 @@ mod pool_tests;
 pub use pool::AccountPool;
 pub use pool::ClaudeCredential;
 pub use pool::PoolEnv;
+pub use pool::SpendHandles;
 pub use provider::AccountIdentity;
 pub use provider::AccountProvider;
 pub use provider::BoxFuture;

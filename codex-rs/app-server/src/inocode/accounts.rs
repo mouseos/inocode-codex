@@ -22,6 +22,10 @@ use codex_app_server_protocol::InocodeAccountSelection;
 use codex_app_server_protocol::InocodeAccountState;
 use codex_app_server_protocol::InocodeAccountSwitchReason;
 use codex_app_server_protocol::InocodeAccountResetCredit;
+use codex_app_server_protocol::InocodeAccountsResetCreditConsumeParams;
+use codex_app_server_protocol::InocodeAccountsResetCreditConsumeResponse;
+use codex_app_server_protocol::InocodeResetCreditFailure;
+use codex_app_server_protocol::InocodeResetCreditFailureReason;
 use codex_app_server_protocol::InocodeAccountResetGrant;
 use codex_app_server_protocol::InocodeAccountUsage;
 use codex_app_server_protocol::InocodeAccountUsageWindow;
@@ -108,6 +112,8 @@ enum PendingLogin {
 
 struct Runtime {
     outgoing: Arc<OutgoingMessageSender>,
+    chatgpt_base_url: String,
+    http_client_factory: codex_http_client::HttpClientFactory,
     logins: Mutex<HashMap<String, PendingLogin>>,
 }
 
@@ -207,16 +213,18 @@ pub(crate) fn start(
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         return;
     };
+    let inputs = pool_inputs(config);
     if RUNTIME
         .set(Runtime {
             outgoing: Arc::clone(&outgoing),
+            chatgpt_base_url: inputs.chatgpt_base_url.clone(),
+            http_client_factory: inputs.http_client_factory.clone(),
             logins: Mutex::new(HashMap::new()),
         })
         .is_err()
     {
         return;
     }
-    let inputs = pool_inputs(config);
     let claude_env = inputs.env.clone();
     handle.spawn(async move {
         let pool = open_with(inputs, auth_manager).await;
@@ -276,12 +284,314 @@ fn usage_fetcher(
                 .await
                 .map_err(|_| "the usage request timed out".to_string())?
                 .map_err(|_| "the usage request failed".to_string())?;
-            Ok(AccountUsage::from_snapshot(
-                &snapshot,
-                chrono::Utc::now().timestamp(),
-            ))
+            let now = chrono::Utc::now().timestamp();
+            let mut usage = AccountUsage::from_snapshot(&snapshot, now);
+            // The banked resets, best effort: when this read fails the last one is kept.
+            if let Ok(Ok(details)) = tokio::time::timeout(
+                Duration::from_secs(5),
+                client.list_rate_limit_reset_credits(),
+            )
+            .await
+            {
+                let at_limit = [&usage.five_hour, &usage.weekly]
+                    .into_iter()
+                    .flatten()
+                    .any(|window| window.used_percent >= 100.0);
+                usage.reset_credit = Some(chatgpt_reset_credit(&details, at_limit, now));
+            }
+            Ok(usage)
         })
     })
+}
+
+/// The ChatGPT backend's banked resets in the pool's shape. Each credit is one reset.
+fn chatgpt_reset_credit(
+    details: &codex_backend_client::RateLimitResetCreditsDetails,
+    at_limit: bool,
+    now: i64,
+) -> account_pool::ResetCredit {
+    let timestamp = |text: &str| {
+        chrono::DateTime::parse_from_rfc3339(text)
+            .ok()
+            .map(|t| t.timestamp())
+    };
+    let grants: Vec<account_pool::ResetGrant> = details
+        .credits
+        .iter()
+        .map(|credit| {
+            let ends_at = credit.expires_at.as_deref().and_then(timestamp);
+            let available = credit.status == "available" && ends_at.is_none_or(|end| end > now);
+            account_pool::ResetGrant {
+                id: credit.id.clone(),
+                label: credit
+                    .title
+                    .clone()
+                    .or_else(|| credit.description.clone())
+                    .unwrap_or_default(),
+                resets_left: i64::from(credit.status == "available"),
+                resets_total: 1,
+                ends_at,
+                paused: false,
+                usable_now: available,
+                clears: vec![credit.reset_type.clone()],
+            }
+        })
+        .collect();
+    let ends_at = grants
+        .iter()
+        .filter(|grant| grant.resets_left > 0)
+        .filter_map(|grant| grant.ends_at)
+        .min();
+    account_pool::ResetCredit {
+        eligible: true,
+        at_limit,
+        resets_left: details.available_count,
+        resets_total: i64::try_from(grants.len()).unwrap_or(i64::MAX),
+        usable_now: grants.iter().any(|grant| grant.usable_now),
+        ends_at,
+        cooldown_until: None,
+        grants,
+    }
+}
+
+// ------------------------------------------------------------ reset credit
+
+/// What a spend came to, before it is put into the response.
+struct SpendOutcome {
+    ok: bool,
+    code: Option<String>,
+    replayed: bool,
+    operation_id: String,
+    grant_id: Option<String>,
+    failure: Option<InocodeResetCreditFailure>,
+}
+
+fn failed(
+    operation_id: &str,
+    reason: InocodeResetCreditFailureReason,
+    detail: Option<&str>,
+    retryable: bool,
+) -> SpendOutcome {
+    SpendOutcome {
+        ok: false,
+        code: None,
+        replayed: false,
+        operation_id: operation_id.to_string(),
+        grant_id: None,
+        failure: Some(InocodeResetCreditFailure {
+            reason,
+            detail: detail.map(str::to_string),
+            retryable,
+        }),
+    }
+}
+
+/// A provider's terminal code as an outcome. `reset` is the only success.
+fn from_code(code: &str, replayed: bool, operation_id: &str, grant_id: Option<String>) -> SpendOutcome {
+    use InocodeResetCreditFailureReason as Reason;
+    let (ok, reason, detail) = match code {
+        "reset" => (true, None, None),
+        "already_used" | "already_redeemed" => (false, Some(Reason::AlreadyUsed), None),
+        "cooldown" => (false, Some(Reason::Cooldown), None),
+        "rate_limited" => (false, Some(Reason::RateLimited), None),
+        "auth_error" => (false, Some(Reason::AuthFailed), None),
+        "not_limited" => (false, Some(Reason::NotUsable), Some("not_limited")),
+        "nothing_to_reset" => (false, Some(Reason::NotUsable), Some("nothing_to_reset")),
+        "no_credit" => (false, Some(Reason::NotUsable), Some("no_credit")),
+        "ineligible" => (false, Some(Reason::NotUsable), Some("ineligible")),
+        _ => (false, Some(Reason::NotUsable), Some("unavailable")),
+    };
+    SpendOutcome {
+        ok,
+        code: Some(code.to_string()),
+        replayed,
+        operation_id: operation_id.to_string(),
+        grant_id,
+        failure: reason.map(|reason| InocodeResetCreditFailure {
+            reason,
+            detail: detail.map(str::to_string),
+            retryable: false,
+        }),
+    }
+}
+
+async fn reset_credit_consume(
+    params: InocodeAccountsResetCreditConsumeParams,
+) -> Result<InocodeAccountsResetCreditConsumeResponse, JSONRPCErrorError> {
+    use InocodeResetCreditFailureReason as Reason;
+    let located = all_pools().into_iter().find_map(|pool| {
+        let handles = pool.spend_handles(&params.id)?;
+        Some((pool, handles))
+    });
+    let Some((pool, handles)) = located else {
+        return Err(invalid_params(format!("unknown account `{}`", params.id)));
+    };
+    if params.grant_id.as_deref().is_some_and(str::is_empty)
+        || params.operation_id.as_deref().is_some_and(str::is_empty)
+    {
+        return Err(invalid_params("grantId and operationId must not be empty"));
+    }
+    let operation_id = params
+        .operation_id
+        .clone()
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+
+    let outcome = match handles.kind {
+        AccountKind::ApiKey => failed(&operation_id, Reason::Unsupported, Some("api_key"), false),
+        AccountKind::ClaudeOauth => {
+            let Some(claude) = handles.claude else {
+                return Err(internal_error("the Claude sign-in is not loaded"));
+            };
+            spend_claude(&pool, &params, &claude, &operation_id).await?
+        }
+        AccountKind::Chatgpt => {
+            spend_chatgpt(&handles.manager, params.grant_id.as_deref(), &operation_id).await?
+        }
+    };
+
+    // A spend changes the windows: read them again so the answer and `accounts/updated` agree.
+    if outcome.ok {
+        pool.refresh_usage_of(&params.id).await;
+    }
+    let view = pool.list().into_iter().find(|view| view.id == params.id);
+    let usage = view.and_then(|view| to_account(view).usage);
+    let reset_credit = usage.as_ref().and_then(|usage| usage.reset_credit.clone());
+    Ok(InocodeAccountsResetCreditConsumeResponse {
+        ok: outcome.ok,
+        code: outcome.code,
+        replayed: outcome.replayed,
+        operation_id: outcome.operation_id,
+        grant_id: outcome.grant_id,
+        failure: outcome.failure,
+        usage,
+        reset_credit,
+    })
+}
+
+async fn spend_claude(
+    pool: &AccountPool,
+    params: &InocodeAccountsResetCreditConsumeParams,
+    claude: &claude_oauth::ClaudeAuthManager,
+    operation_id: &str,
+) -> Result<SpendOutcome, JSONRPCErrorError> {
+    use InocodeResetCreditFailureReason as Reason;
+    use claude_oauth::ConsumeFailure as Failure;
+    let Ok(access) = claude.access_token().await else {
+        return Ok(failed(operation_id, Reason::AuthFailed, None, false));
+    };
+    let result = claude_oauth::consume_reset(
+        &pool.env().auth_route_config,
+        &access,
+        &pool.reset_journal_path(),
+        &params.id,
+        params.grant_id.as_deref(),
+        operation_id,
+        now_ms(),
+    )
+    .await;
+    Ok(match result {
+        Ok(settled) => from_code(
+            &settled.code,
+            settled.replayed,
+            &settled.operation_id,
+            Some(settled.grant_id),
+        ),
+        Err(Failure::AuthFailed) => failed(operation_id, Reason::AuthFailed, None, false),
+        Err(Failure::UpstreamUnavailable) => {
+            failed(operation_id, Reason::NetworkError, None, false)
+        }
+        Err(Failure::NotUsable(word)) => {
+            // "Not usable" for grants that have all ended is an expired reset.
+            let now = chrono::Utc::now().timestamp();
+            let credit = pool
+                .list()
+                .into_iter()
+                .find(|view| view.id == params.id)
+                .and_then(|view| view.usage)
+                .and_then(|usage| usage.reset_credit);
+            let expired = matches!(word, "not_usable" | "exhausted")
+                && credit.is_some_and(|credit| {
+                    let mut grants = credit
+                        .grants
+                        .iter()
+                        .filter(|g| params.grant_id.as_deref().is_none_or(|id| g.id == id))
+                        .peekable();
+                    grants.peek().is_some() && grants.all(|g| g.ends_at.is_some_and(|end| end <= now))
+                });
+            if expired {
+                failed(operation_id, Reason::Expired, Some(word), false)
+            } else {
+                failed(operation_id, Reason::NotUsable, Some(word), false)
+            }
+        }
+        Err(Failure::InvalidInput) => {
+            return Err(invalid_params("grantId or operationId is malformed"));
+        }
+        Err(Failure::IdentityMismatch) => {
+            return Err(invalid_request(
+                "this operationId belongs to another account or grant",
+            ));
+        }
+        Err(Failure::InFlight) => failed(operation_id, Reason::InProgress, Some("in_flight"), false),
+        Err(Failure::UnresolvedPrior { operation_id: prior }) => {
+            // An earlier spend of this grant has no answer yet: it is the one to retry.
+            failed(&prior, Reason::InProgress, Some("unresolved_prior"), true)
+        }
+        Err(Failure::Expired) => failed(operation_id, Reason::Expired, Some("operation_expired"), false),
+        Err(Failure::UnknownOutcome { operation_id }) => {
+            failed(&operation_id, Reason::NetworkError, Some("unknown_outcome"), true)
+        }
+        Err(Failure::JournalWriteFailed { operation_id }) => {
+            failed(&operation_id, Reason::JournalError, Some("write_failed"), false)
+        }
+        Err(Failure::LedgerUnavailable) => {
+            failed(operation_id, Reason::JournalError, Some("unavailable"), false)
+        }
+    })
+}
+
+/// The ChatGPT backend's own spend (`account/rateLimitResetCredit/consume`), made with this
+/// account's credentials. The operation id is the backend's `redeem_request_id`, so a resend is
+/// the same request.
+async fn spend_chatgpt(
+    manager: &AuthManager,
+    credit_id: Option<&str>,
+    operation_id: &str,
+) -> Result<SpendOutcome, JSONRPCErrorError> {
+    use InocodeResetCreditFailureReason as Reason;
+    let runtime = runtime()?;
+    let Some(auth) = manager.auth().await else {
+        return Ok(failed(operation_id, Reason::AuthFailed, None, false));
+    };
+    if !auth.uses_codex_backend() {
+        return Ok(failed(operation_id, Reason::Unsupported, Some("not_chatgpt"), false));
+    }
+    let client = codex_backend_client::Client::from_auth(
+        runtime.chatgpt_base_url.clone(),
+        &auth,
+        runtime.http_client_factory.clone(),
+    );
+    let request = async {
+        match credit_id {
+            Some(id) => client.consume_rate_limit_reset_credit_by_id(operation_id, id).await,
+            None => client.consume_rate_limit_reset_credit(operation_id).await,
+        }
+    };
+    let response = match tokio::time::timeout(Duration::from_secs(10), request).await {
+        Ok(Ok(response)) => response,
+        // No readable answer: the same operation id may be resent safely.
+        Ok(Err(_)) | Err(_) => {
+            return Ok(failed(operation_id, Reason::NetworkError, Some("unknown_outcome"), true));
+        }
+    };
+    use codex_backend_client::ConsumeRateLimitResetCreditCode as Code;
+    let code = match response.code {
+        Code::Reset => "reset",
+        Code::NothingToReset => "nothing_to_reset",
+        Code::NoCredit => "no_credit",
+        Code::AlreadyRedeemed => "already_redeemed",
+    };
+    Ok(from_code(code, false, operation_id, credit_id.map(str::to_string)))
 }
 
 pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
@@ -360,6 +670,9 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
             Ok(Some(
                 InocodeAccountsReauthResponse::from(reauth(params).await?).into(),
             ))
+        }
+        ClientRequest::InocodeAccountsResetCreditConsume { params, .. } => {
+            Ok(Some(reset_credit_consume(params).await?.into()))
         }
         ClientRequest::InocodeAccountsLoginComplete { params, .. } => {
             login_complete(params).await?;

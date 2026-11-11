@@ -499,3 +499,83 @@ pub struct InocodeAccountsLoginCompletedNotification {
     pub account_id: Option<String>,
     pub error: Option<String>,
 }
+
+/// Spends one banked usage-limit reset of the account `id` (Claude subscription or ChatGPT).
+/// API-key accounts have none: the answer is `ok: false` with reason `unsupported`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeAccountsResetCreditConsumeParams {
+    pub id: String,
+    /// The grant to spend (`usage.resetCredit.grants[].id`). Omitted: the server's suggestion,
+    /// or the first one that can be spent.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub grant_id: Option<String>,
+    /// Identifies this confirmation. Omitted: a new one is made. Pass the `operationId` of an
+    /// earlier answer that said `retryable: true` to resend that very spend (it is the same
+    /// request to the provider, so it cannot be spent twice).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub operation_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/", rename_all = "camelCase")]
+pub enum InocodeResetCreditFailureReason {
+    /// No reset can be spent right now (none left, not at a limit, paused, not eligible).
+    NotUsable,
+    /// The reset itself has expired.
+    Expired,
+    /// The provider says a reset was used recently; try later.
+    Cooldown,
+    /// This reset was already used.
+    AlreadyUsed,
+    /// The provider could not be reached or gave no readable answer.
+    NetworkError,
+    /// Sign in to this account again.
+    AuthFailed,
+    /// The provider is rate limiting; try again shortly.
+    RateLimited,
+    /// A spend for this account is still being processed or waits for its answer.
+    InProgress,
+    /// This kind of account has no resets (API keys).
+    Unsupported,
+    /// The local record of the spend could not be read or written.
+    JournalError,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeResetCreditFailure {
+    pub reason: InocodeResetCreditFailureReason,
+    /// A fixed word with more detail (for example `not_limited`, `paused`, `exhausted`,
+    /// `no_grant`, `unknown_grant`, `ineligible`), or `null`.
+    pub detail: Option<String>,
+    /// Resending with the same `operationId` is safe and may succeed (the earlier attempt got no
+    /// answer). When `false`, nothing was spent, or the answer is final.
+    pub retryable: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeAccountsResetCreditConsumeResponse {
+    /// A reset was used (now, or by this very operation earlier: see `replayed`).
+    pub ok: bool,
+    /// The provider's code (`reset`, `already_used`, `cooldown`, `no_credit`, ...), or `null`
+    /// when there was no answer.
+    pub code: Option<String>,
+    /// The answer comes from the local record of an earlier attempt with this `operationId`.
+    pub replayed: bool,
+    /// Use this to retry (when `failure.retryable`).
+    pub operation_id: String,
+    pub grant_id: Option<String>,
+    pub failure: Option<InocodeResetCreditFailure>,
+    /// The account's usage after the spend (re-read), as in `accounts/list`.
+    pub usage: Option<InocodeAccountUsage>,
+    /// Shortcut for `usage.resetCredit`.
+    pub reset_credit: Option<InocodeAccountResetCredit>,
+}

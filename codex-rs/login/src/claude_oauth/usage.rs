@@ -49,14 +49,14 @@ pub async fn fetch_usage(
     }
 }
 
-enum Failure {
+pub(super) enum Failure {
     Auth,
     RateLimited,
     Other,
 }
 
 impl Failure {
-    fn message(self) -> String {
+    pub(super) fn message(self) -> String {
         match self {
             Self::Auth => "the usage request was refused (sign in again)",
             Self::RateLimited => "the usage request was rate limited",
@@ -66,7 +66,7 @@ impl Failure {
     }
 }
 
-async fn get(route: &AuthRouteConfig, url: &str, access: &str) -> Result<Value, Failure> {
+pub(super) async fn get(route: &AuthRouteConfig, url: &str, access: &str) -> Result<Value, Failure> {
     let client = create_raw_auth_client(url, route).map_err(|_| Failure::Other)?;
     let request = client
         .get(url)
@@ -93,13 +93,34 @@ async fn get(route: &AuthRouteConfig, url: &str, access: &str) -> Result<Value, 
     serde_json::from_str(&text).map_err(|_| Failure::Other)
 }
 
+/// Reads the reset-grant block fresh (the spend gate). A malformed or missing block is a failure,
+/// never "no grants".
+pub(super) async fn fetch_credit(
+    route: &AuthRouteConfig,
+    access: &str,
+) -> Result<ParsedCredit, Failure> {
+    let base = consts::usage_url();
+    let url = if base.contains('?') {
+        format!("{base}&{}", consts::USAGE_QUERY)
+    } else {
+        format!("{base}?{}", consts::USAGE_QUERY)
+    };
+    let body = get(route, &url, access).await?;
+    body.get("cedar_ember")
+        .and_then(parse_reset_credit)
+        .ok_or(Failure::Other)
+}
+
 /// Turns a usage body into the pool's usage view.
 pub fn parse_usage(body: &Value, now: i64) -> AccountUsage {
     AccountUsage {
         five_hour: window(body, "session", "five_hour", FIVE_HOUR_MINUTES),
         weekly: window(body, "weekly_all", "seven_day", WEEKLY_MINUTES),
         updated_at: Some(now),
-        reset_credit: body.get("cedar_ember").and_then(parse_reset_credit),
+        reset_credit: body
+            .get("cedar_ember")
+            .and_then(parse_reset_credit)
+            .map(|parsed| parsed.credit),
     }
 }
 
@@ -251,9 +272,47 @@ fn parse_grant(value: &Value) -> Option<ResetGrant> {
     })
 }
 
+/// A parsed reset-grant block plus what a spend needs and the credit does not show.
+pub(super) struct ParsedCredit {
+    pub credit: ResetCredit,
+    /// Per grant: the server says it must be at a limit to be used.
+    requires_limit: Vec<bool>,
+    /// Per grant: the server's own `usable_now`.
+    upstream_usable: Vec<bool>,
+    /// The grant the server suggests spending first.
+    pub next_grant_id: Option<String>,
+}
+
+impl ParsedCredit {
+    /// Why a grant cannot be spent right now, or `None` when it can (OpenCodex
+    /// `anthropicResetGrantBlocker`).
+    pub(super) fn blocker(&self, grant_id: &str) -> Option<&'static str> {
+        if !self.credit.eligible {
+            return Some("ineligible");
+        }
+        let Some(index) = self.credit.grants.iter().position(|g| g.id == grant_id) else {
+            return Some("unknown_grant");
+        };
+        let grant = &self.credit.grants[index];
+        if grant.paused {
+            return Some("paused");
+        }
+        if !self.upstream_usable[index] {
+            return Some("not_usable");
+        }
+        if grant.resets_left <= 0 {
+            return Some("exhausted");
+        }
+        if self.requires_limit[index] && !self.credit.at_limit {
+            return Some("not_limited");
+        }
+        None
+    }
+}
+
 /// The `cedar_ember` block. One malformed grant, a duplicate id, or a bad timestamp rejects the
 /// whole block (fail closed).
-fn parse_reset_credit(block: &Value) -> Option<ResetCredit> {
+pub(super) fn parse_reset_credit(block: &Value) -> Option<ParsedCredit> {
     let object = block.as_object()?;
     let eligible = object.get("eligible")?.as_bool()?;
     let at_limit = optional_bool(object.get("at_limit"), false).ok()?;
@@ -265,25 +324,30 @@ fn parse_reset_credit(block: &Value) -> Option<ResetCredit> {
     };
     let mut grants: Vec<ResetGrant> = Vec::new();
     let mut requires_limit: Vec<bool> = Vec::new();
+    let mut upstream_usable: Vec<bool> = Vec::new();
     for item in raw {
         let grant = parse_grant(item)?;
         if grants.iter().any(|g| g.id == grant.id) {
             return None;
         }
-        requires_limit.push(
-            optional_bool(item.get("use_requires_limit"), true).ok()?,
-        );
+        requires_limit.push(optional_bool(item.get("use_requires_limit"), true).ok()?);
+        upstream_usable.push(grant.usable_now);
         grants.push(grant);
     }
-    let spendable = |index: usize| {
-        let grant = &grants[index];
-        eligible
+    let next_grant_id = object
+        .get("next_grant_id")
+        .and_then(Value::as_str)
+        .filter(|id| grants.iter().any(|g| g.id == *id))
+        .map(str::to_string);
+    // From here on a grant's `usable_now` means "can be spent right now".
+    for (index, grant) in grants.iter_mut().enumerate() {
+        grant.usable_now = eligible
             && !grant.paused
-            && grant.usable_now
+            && upstream_usable[index]
             && grant.resets_left > 0
-            && (!requires_limit[index] || at_limit)
-    };
-    let usable_now = (0..grants.len()).any(spendable);
+            && (!requires_limit[index] || at_limit);
+    }
+    let usable_now = grants.iter().any(|g| g.usable_now);
     let resets_left = grants
         .iter()
         .filter(|g| !g.paused)
@@ -295,15 +359,20 @@ fn parse_reset_credit(block: &Value) -> Option<ResetCredit> {
         .filter(|g| g.resets_left > 0)
         .filter_map(|g| g.ends_at)
         .min();
-    Some(ResetCredit {
-        eligible,
-        at_limit,
-        resets_left,
-        resets_total,
-        usable_now,
-        ends_at,
-        cooldown_until,
-        grants,
+    Some(ParsedCredit {
+        credit: ResetCredit {
+            eligible,
+            at_limit,
+            resets_left,
+            resets_total,
+            usable_now,
+            ends_at,
+            cooldown_until,
+            grants,
+        },
+        requires_limit,
+        upstream_usable,
+        next_grant_id,
     })
 }
 

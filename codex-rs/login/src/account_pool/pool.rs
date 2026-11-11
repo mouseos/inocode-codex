@@ -58,6 +58,13 @@ pub struct PoolEnv {
     pub auth_route_config: AuthRouteConfig,
 }
 
+/// See [`AccountPool::spend_handles`].
+pub struct SpendHandles {
+    pub kind: AccountKind,
+    pub manager: Arc<AuthManager>,
+    pub claude: Option<Arc<ClaudeAuthManager>>,
+}
+
 struct Entry {
     meta: AccountMeta,
     manager: Arc<AuthManager>,
@@ -1095,6 +1102,24 @@ impl AccountPool {
         }
         self.emit(PoolEvent::Updated);
         self.view(&id)
+    }
+
+    /// The handles a reset-credit spend needs for one account: its kind, its ChatGPT/API-key
+    /// manager and (for a Claude sign-in) the Claude manager. `None` for an unknown id.
+    pub fn spend_handles(&self, id: &str) -> Option<SpendHandles> {
+        let inner = lock(&self.inner);
+        let index = inner.position(id)?;
+        let entry = &inner.entries[index];
+        Some(SpendHandles {
+            kind: entry.meta.kind,
+            manager: Arc::clone(&entry.manager),
+            claude: entry.claude.clone(),
+        })
+    }
+
+    /// Where this group's reset-spend journal lives.
+    pub fn reset_journal_path(&self) -> PathBuf {
+        self.store.root().join("reset-journal.json")
     }
 
     /// The Claude sign-in requests should use right now (selects on first use).

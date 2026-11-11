@@ -660,6 +660,12 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeMessagesListResponse,
     },
+    #[experimental("inocode/messages/resolve")]
+    InocodeMessagesResolve => "inocode/messages/resolve" {
+        params: v2::InocodeMessagesResolveParams,
+        serialization: None,
+        response: v2::InocodeMessagesResolveResponse,
+    },
     #[experimental("inocode/compaction/state")]
     InocodeCompactionState => "inocode/compaction/state" {
         params: v2::InocodeCompactionStateParams,
@@ -821,6 +827,12 @@ client_request_definitions! {
         params: v2::InocodeAccountsReauthParams,
         serialization: None,
         response: v2::InocodeAccountsReauthResponse,
+    },
+    #[experimental("inocode/accounts/resetCredit/consume")]
+    InocodeAccountsResetCreditConsume => "inocode/accounts/resetCredit/consume" {
+        params: v2::InocodeAccountsResetCreditConsumeParams,
+        serialization: None,
+        response: v2::InocodeAccountsResetCreditConsumeResponse,
     },
     #[experimental("inocode/accounts/login/complete")]
     InocodeAccountsLoginComplete => "inocode/accounts/login/complete" {
