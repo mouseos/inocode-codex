@@ -92,7 +92,9 @@ fn isolate_inocode_home_for_tests() {
     if std::env::var_os("INOCODE_HOME").is_some_and(|value| !value.is_empty()) {
         return;
     }
-    let home = std::env::temp_dir().join(format!("inocode-core-tests-{}", std::process::id()));
+    // One shared directory (not one per process): it only holds a read-only flag file, so a
+    // run never leaves a pile of directories behind.
+    let home = std::env::temp_dir().join("inocode-core-tests-home");
     if std::fs::create_dir_all(&home).is_err() {
         return;
     }
