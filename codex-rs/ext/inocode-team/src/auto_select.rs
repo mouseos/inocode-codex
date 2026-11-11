@@ -107,6 +107,12 @@ pub fn recommend_for_input(
     user_text: &str,
     cfg: &EstimateConfig,
 ) -> Option<(Estimate, Option<String>)> {
+    // Messages the host injects (an advisor consultation, a sub-agent notification) are not a
+    // request: their bullet lists are recent actions and results, not work to split up.
+    let head = user_text.trim_start();
+    if ["[advisor]", "<subagent_notification>"].iter().any(|p| head.starts_with(p)) {
+        return None;
+    }
     let tasks = detect_tasks_with_secs(user_text, cfg.default_task_secs);
     if tasks.len() < 2 {
         return None;
@@ -163,6 +169,20 @@ mod tests {
         let (e, rec) = recommend_for_input(text, &EstimateConfig::default()).unwrap();
         assert_eq!(e.decision, Decision::Single);
         assert!(rec.is_none());
+    }
+
+    #[test]
+    fn injected_advisor_and_notification_messages_are_not_requests() {
+        let advisor = "[advisor] Stall detected (no_progress).
+Recent actions:
+- web_search {\"query\":\"a\"} -> ok
+- web_search {\"query\":\"b\"} -> ok";
+        assert!(recommend_for_input(advisor, &EstimateConfig::default()).is_none());
+        let note = "<subagent_notification>
+- a
+- b
+</subagent_notification>";
+        assert!(recommend_for_input(note, &EstimateConfig::default()).is_none());
     }
 
     #[test]
