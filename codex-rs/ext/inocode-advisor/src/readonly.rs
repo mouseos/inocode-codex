@@ -2,11 +2,13 @@
 //! them is not a stall. Used so that "no progress" does not count research.
 
 /// Shell programs that only read.
-const READ_PROGRAMS: [&str; 30] = [
+const READ_PROGRAMS: &[&str] = &[
     "ls", "dir", "cat", "type", "head", "tail", "rg", "grep", "egrep", "find", "pwd", "echo", "wc",
     "which", "where", "tree", "stat", "file", "get-content", "get-childitem", "select-string",
     "get-item", "test-path", "get-location", "get-command", "get-process", "sort", "diff",
-    "findstr", "gc",
+    "findstr", "gc", "get-date", "select-object", "where-object", "foreach-object",
+    "measure-object", "sort-object", "format-table", "out-string", "convertfrom-json",
+    "convertto-json", "invoke-webrequest", "invoke-restmethod",
 ];
 
 /// `git` sub-commands that only read.
@@ -26,10 +28,37 @@ fn first_words(segment: &str) -> Vec<String> {
         .collect()
 }
 
+/// The command inside `<path to a shell> ... "<command>"`, when the first word names a shell by
+/// a path (`"C:\Windows\...\powershell.exe" -Command "..."`).
+fn inner_of_shell_path(text: &str) -> Option<String> {
+    let first = if let Some(rest) = text.strip_prefix('"') {
+        rest.split('"').next()?
+    } else {
+        text.split_whitespace().next()?
+    };
+    if !first.contains(['\\', '/']) {
+        return None;
+    }
+    let file = first.rsplit(['\\', '/']).next()?.to_lowercase();
+    let stem = file.strip_suffix(".exe").unwrap_or(&file);
+    if !["powershell", "pwsh", "cmd", "bash", "sh"].contains(&stem) {
+        return None;
+    }
+    let pos = text.find(first)? + first.len();
+    let rest = text[pos..].strip_prefix('"').unwrap_or(&text[pos..]);
+    let quote = rest.find(['"', '\''])?;
+    Some(rest[quote + 1..].trim_end_matches(['"', '\'']).to_string())
+}
+
+
 /// A command line is read-only when every pipeline segment starts with a reading program and
 /// nothing is redirected. Anything unrecognised is not read-only.
 pub fn command_is_read_only(command: &str) -> bool {
     let mut text = command.trim().to_string();
+    // `"C:\...\powershell.exe" -Command "..."`: the shell may be named by its path.
+    if let Some(inner) = inner_of_shell_path(&text) {
+        text = inner;
+    }
     // `powershell -NoProfile -Command "..."`: look at the inner command.
     let lower = text.to_lowercase();
     for shell in ["powershell", "pwsh", "bash -lc", "bash -c", "sh -c", "cmd /c"] {
@@ -96,12 +125,46 @@ pub fn is_read_only_call(tool: &str, args: &str) -> bool {
     let name = tool.to_lowercase();
     if name.contains("exec") || name.contains("shell") || name.contains("bash") || name.contains("terminal")
     {
-        return command_is_read_only(&shell_command_of(args));
+        let command = shell_command_of(args);
+        if let Some(read_only) = code_mode_is_read_only(&command) {
+            return read_only;
+        }
+        return command_is_read_only(&command);
+    }
+    tool_name_is_read_only(&name)
+}
+
+/// Tools named for looking, plus the ones that hand work to other agents: starting or briefing
+/// an agent is the work of an orchestrator, not a stall.
+fn tool_name_is_read_only(name: &str) -> bool {
+    if ["spawn_agent", "send_input"].iter().any(|w| name.contains(w)) {
+        return true;
     }
     ["read", "view", "list", "grep", "glob", "search", "fetch", "get_goal", "find"]
         .iter()
         .any(|w| name.contains(w))
         && !name.contains("write")
+}
+
+/// A code-mode `exec` script (JavaScript calling `tools.<name>(...)`): read-only when every tool
+/// it calls is. `None` when the text does not look like such a script.
+fn code_mode_is_read_only(source: &str) -> Option<bool> {
+    if !source.contains("tools.") && !source.contains("ALL_TOOLS") {
+        return None;
+    }
+    let mut rest = source;
+    while let Some(pos) = rest.find("tools.") {
+        let after = &rest[pos + "tools.".len()..];
+        let end = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(after.len());
+        let name = after[..end].to_lowercase();
+        if !name.is_empty() && !tool_name_is_read_only(&name) {
+            return Some(false);
+        }
+        rest = after;
+    }
+    Some(true)
 }
 
 #[cfg(test)]
@@ -138,6 +201,37 @@ mod tests {
         ] {
             assert!(!command_is_read_only(cmd), "{cmd}");
         }
+    }
+
+    #[test]
+    fn a_shell_named_by_its_path_is_looked_through() {
+        let read = "\"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command \"Get-Content -Raw 'C:\\\\a\\\\SKILL.md'\"";
+        assert!(command_is_read_only(read), "{read}");
+        let date = "\"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command \"Get-Date -Format 'yyyy'\"";
+        assert!(command_is_read_only(date), "{date}");
+        let write = "\"C:\\\\WINDOWS\\\\System32\\\\WindowsPowerShell\\\\v1.0\\\\powershell.exe\" -Command \"Remove-Item x\"";
+        assert!(!command_is_read_only(write), "{write}");
+    }
+
+    #[test]
+    fn a_research_exec_script_is_read_only_and_a_writing_one_is_not() {
+        let look = "const xs = ALL_TOOLS.filter(x => /agent/.test(x.name));\ntext(xs);";
+        assert!(is_read_only_call("exec", look));
+        let shop = "const r = await tools.shopping_search({provider:'mercari', query:'x'}); text(r);";
+        assert!(is_read_only_call("exec", shop));
+        let web = "await Promise.all(q.map(x => tools.web_search({query: x})));";
+        assert!(is_read_only_call("exec", web));
+        let edit = "await tools.apply_patch({input: p});";
+        assert!(!is_read_only_call("exec", edit));
+        let mixed = "await tools.web_search({query:'a'}); await tools.apply_patch({input: p});";
+        assert!(!is_read_only_call("exec", mixed));
+    }
+
+    #[test]
+    fn handing_work_to_an_agent_is_not_counted_as_standing_still() {
+        assert!(is_read_only_call("multi_agent_v1spawn_agent", "{}"));
+        assert!(is_read_only_call("multi_agent_v1send_input", "{}"));
+        assert!(!is_read_only_call("multi_agent_v1wait_agent", "{}"));
     }
 
     #[test]
