@@ -10,9 +10,12 @@ pub(crate) fn truncate_output(mut text: String) -> String {
     if text.len() <= MAX_OUTPUT_BYTES {
         return text;
     }
-    const SUFFIX: &str = "\n… [truncated]";
-    text.truncate(text.floor_char_boundary(MAX_OUTPUT_BYTES - SUFFIX.len()));
-    text.push_str(SUFFIX);
+    // The suffix tells the model where the text was cut and how large the whole reply was.
+    const SUFFIX_RESERVE: usize = 64;
+    let total = text.len();
+    text.truncate(text.floor_char_boundary(MAX_OUTPUT_BYTES - SUFFIX_RESERVE));
+    let shown = text.len();
+    text.push_str(&format!("\n… [truncated: first {shown} of {total} bytes shown]"));
     text
 }
 

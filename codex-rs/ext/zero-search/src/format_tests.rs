@@ -95,5 +95,6 @@ fn long_output_is_cut_on_a_character_boundary() {
     let text = "検".repeat(MAX_OUTPUT_BYTES);
     let cut = truncate_output(text);
     assert!(cut.len() <= MAX_OUTPUT_BYTES);
-    assert!(cut.ends_with("… [truncated]"));
+    assert!(cut.ends_with(&format!("of {} bytes shown]", MAX_OUTPUT_BYTES * 3)));
+    assert!(cut.contains("… [truncated: first "));
 }
