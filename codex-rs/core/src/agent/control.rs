@@ -550,9 +550,16 @@ impl LocalAgentControl {
                         .unwrap_or(ContentItemNamespace::Functions),
                 ),
             };
+            // What the host saw the child do, next to what the child says it did.
+            let host_facts = if codex_inocode_flags::load().peer_messaging_enabled {
+                codex_inocode_team::take_report(&child_thread_id.to_string())
+            } else {
+                None
+            };
             parent_thread
                 .inject_fragment_without_turn(
                     SubagentNotification::new(child_reference.as_str(), status)
+                        .with_host_facts(host_facts)
                         .with_metadata(ContentItemMetadata::tool(namespace)),
                 )
                 .await;
