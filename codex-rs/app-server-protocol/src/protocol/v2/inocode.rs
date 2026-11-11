@@ -74,6 +74,26 @@ pub struct InocodeRuleMatch {
     pub paths: Vec<String>,
     #[serde(default)]
     pub commands: Vec<String>,
+    /// Tool-name globs (`apply_patch`, `Write`, `mcp__*`).
+    #[ts(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
+    /// MCP `server` or `server/tool` globs.
+    #[ts(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp: Option<Vec<String>>,
+    /// Model-name globs.
+    #[ts(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub models: Option<Vec<String>>,
+    /// Regexes on the content a file write/edit/patch carries.
+    #[ts(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<Vec<String>>,
+    /// Operations touching a matching path are exempt (globs).
+    #[ts(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude_paths: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -131,6 +151,11 @@ pub struct InocodeKnowledgeRecord {
     #[ts(optional)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_failure: Option<String>,
+    /// Narrows a rule to these paths (globs, absolute or relative): it applies only when the
+    /// session cwd or the operation's path matches. Empty/absent = the whole scope.
+    #[ts(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applies_to: Option<Vec<String>>,
     // failure_case
     #[ts(optional)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -198,6 +223,11 @@ pub struct InocodeKnowledgeRecordInput {
     #[ts(optional)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_failure: Option<String>,
+    /// Narrows a rule to these paths (globs, absolute or relative): it applies only when the
+    /// session cwd or the operation's path matches. Empty/absent = the whole scope.
+    #[ts(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applies_to: Option<Vec<String>>,
     #[ts(optional)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
@@ -295,6 +325,23 @@ pub struct InocodeKnowledgeSetStatusParams {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct InocodeKnowledgeSetStatusResponse {}
+
+/// Copies a project record to the global scope (the project one stays).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeKnowledgePromoteParams {
+    pub id: String,
+    pub cwd: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeKnowledgePromoteResponse {
+    /// The id of the global copy (the existing one if the same record was promoted before).
+    pub id: String,
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]

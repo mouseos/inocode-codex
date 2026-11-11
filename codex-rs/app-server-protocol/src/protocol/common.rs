@@ -558,6 +558,12 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeKnowledgeSetStatusResponse,
     },
+    #[experimental("inocode/knowledge/promote")]
+    InocodeKnowledgePromote => "inocode/knowledge/promote" {
+        params: v2::InocodeKnowledgePromoteParams,
+        serialization: None,
+        response: v2::InocodeKnowledgePromoteResponse,
+    },
     #[experimental("inocode/knowledge/search")]
     InocodeKnowledgeSearch => "inocode/knowledge/search" {
         params: v2::InocodeKnowledgeSearchParams,

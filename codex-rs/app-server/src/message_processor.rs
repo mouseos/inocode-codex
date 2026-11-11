@@ -1216,6 +1216,7 @@ impl MessageProcessor {
             | ClientRequest::InocodeKnowledgeRead { .. }
             | ClientRequest::InocodeKnowledgeWrite { .. }
             | ClientRequest::InocodeKnowledgeSetStatus { .. }
+            | ClientRequest::InocodeKnowledgePromote { .. }
             | ClientRequest::InocodeKnowledgeSearch { .. }
             | ClientRequest::InocodeEvidenceListSources { .. }
             | ClientRequest::InocodeEvidenceReadSource { .. }

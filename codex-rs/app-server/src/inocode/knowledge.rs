@@ -12,6 +12,7 @@ use codex_app_server_protocol::InocodeKnowledgeKind;
 use codex_app_server_protocol::InocodeKnowledgeListResponse;
 use codex_app_server_protocol::InocodeKnowledgePinnedResponse;
 use codex_app_server_protocol::InocodeKnowledgePinnedRule;
+use codex_app_server_protocol::InocodeKnowledgePromoteResponse;
 use codex_app_server_protocol::InocodeKnowledgeReadResponse;
 use codex_app_server_protocol::InocodeKnowledgeScope;
 use codex_app_server_protocol::InocodeKnowledgeSearchResponse;
@@ -174,6 +175,12 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
                 .set_status(scope(params.scope), &params.id, st)
                 .map_err(|e| invalid_params(format!("knowledge setStatus failed: {e}")))?;
             Ok(Some(InocodeKnowledgeSetStatusResponse {}.into()))
+        }
+        ClientRequest::InocodeKnowledgePromote { params, .. } => {
+            let id = store(&params.cwd)
+                .promote(&params.id)
+                .map_err(|e| invalid_params(format!("knowledge promote failed: {e}")))?;
+            Ok(Some(InocodeKnowledgePromoteResponse { id }.into()))
         }
         ClientRequest::InocodeKnowledgeSearch { params, .. } => {
             let (records, next_cursor) = list(
