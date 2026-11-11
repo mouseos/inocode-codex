@@ -277,6 +277,23 @@ fn is_edit_tool(tool: &str) -> bool {
     tool.contains("apply_patch") || tool.contains("edit") || tool.contains("write_file")
 }
 
+/// The part of a tool output that says what happened: a command's output without the header
+/// (`Chunk ID: <random>`, wall time, exit code), which differs on every call.
+fn output_body(output: &str) -> &str {
+    match output.split_once("
+Output:
+") {
+        Some((_, body)) => body,
+        None => output,
+    }
+}
+
+/// The last `max` characters: build and test output ends with the error summary.
+fn tail(text: &str, max: usize) -> String {
+    let count = text.chars().count();
+    text.chars().skip(count.saturating_sub(max)).collect()
+}
+
 pub(crate) fn build_observation(
     tool: &str,
     args: &str,
@@ -289,10 +306,13 @@ pub(crate) fn build_observation(
         tool: tool.to_string(),
         args: truncate(args, 500),
         exit_code,
-        error: (!success || nonzero_exit).then(|| truncate(output, 400)),
+        // The error text is the end of the output without the per-call header, so two failures
+        // are "the same" only when they end the same way (a different compile error is a
+        // different failure).
+        error: (!success || nonzero_exit).then(|| tail(output_body(output), 200)),
         changed_files: success && !nonzero_exit && (is_edit_tool(tool) || is_evidence_record(tool)),
         test_result: test_result_in_output(output),
-        observation: codex_inocode_advisor::normalize_error(output),
+        observation: codex_inocode_advisor::normalize_error(&tail(output_body(output), 200)),
         read_only: codex_inocode_advisor::is_read_only_call(tool, args),
         at_ms: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -631,6 +651,61 @@ Output:
             fired.map(|s| s.trigger),
             Some(codex_inocode_advisor::Trigger::SameFailure)
         );
+    }
+
+    fn exec_output(chunk: &str, body: &str) -> String {
+        format!(
+            "Chunk ID: {chunk}
+Wall time: 1.2345 seconds
+Process exited with code 101
+Original token count: 12
+Output:
+{body}"
+        )
+    }
+
+    fn run_failures(bodies: &[&str]) -> Option<codex_inocode_advisor::Trigger> {
+        let mut detector = StallDetector::new(StallConfig::default());
+        let mut fired = None;
+        for (i, body) in bodies.iter().enumerate() {
+            let mut obs = build_observation(
+                "exec_command",
+                "{\"cmd\":\"cargo test\"}",
+                true,
+                &exec_output(&format!("c{i}f{i}a"), body),
+            );
+            obs.at_ms = Some(10_000 + i as u64 * 5_000);
+            fired = detector.observe(obs).map(|s| s.trigger);
+        }
+        fired
+    }
+
+    #[test]
+    fn the_same_command_failing_the_same_way_is_a_stall_despite_a_new_chunk_id_each_time() {
+        let same = "error[E0308]: mismatched types
+  --> src/a.rs:10:5
+error: could not compile `x`";
+        assert_eq!(
+            run_failures(&[same, same, same]),
+            Some(codex_inocode_advisor::Trigger::SameFailure)
+        );
+    }
+
+    #[test]
+    fn the_same_command_failing_differently_each_time_is_not_one_failure() {
+        // Edit, rerun, a new error each time: the fix loop is moving.
+        let bodies = [
+            "error[E0308]: mismatched types
+  --> src/a.rs:10:5
+error: could not compile `x`",
+            "error[E0425]: cannot find value `y` in this scope
+  --> src/a.rs:22:9
+error: could not compile `x`",
+            "error[E0599]: no method named `z` found for struct `S`
+  --> src/b.rs:7:3
+error: could not compile `x`",
+        ];
+        assert_eq!(run_failures(&bodies), None);
     }
 
     #[test]
