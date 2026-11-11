@@ -16,7 +16,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 /// All flag keys, in contract order.
-pub const FLAG_KEYS: [&str; 11] = [
+pub const FLAG_KEYS: [&str; 12] = [
     "metrics.enabled",
     "wait.event_driven",
     "knowledge.enabled",
@@ -28,6 +28,7 @@ pub const FLAG_KEYS: [&str; 11] = [
     "compaction.persist_large_output",
     "team.auto_select",
     "evidence.enabled",
+    "read_message.enabled",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +44,7 @@ pub struct InocodeFlags {
     pub compaction_persist_large_output: bool,
     pub team_auto_select: bool,
     pub evidence_enabled: bool,
+    pub read_message_enabled: bool,
 }
 
 impl Default for InocodeFlags {
@@ -59,6 +61,7 @@ impl Default for InocodeFlags {
             compaction_persist_large_output: true,
             team_auto_select: true,
             evidence_enabled: true,
+            read_message_enabled: true,
         }
     }
 }
@@ -116,6 +119,7 @@ impl InocodeFlags {
             "compaction.persist_large_output" => self.compaction_persist_large_output,
             "team.auto_select" => self.team_auto_select,
             "evidence.enabled" => self.evidence_enabled,
+            "read_message.enabled" => self.read_message_enabled,
             _ => return None,
         })
     }
@@ -134,6 +138,7 @@ impl InocodeFlags {
             "compaction.persist_large_output" => &mut self.compaction_persist_large_output,
             "team.auto_select" => &mut self.team_auto_select,
             "evidence.enabled" => &mut self.evidence_enabled,
+            "read_message.enabled" => &mut self.read_message_enabled,
             _ => return false,
         };
         *slot = value;

@@ -4,6 +4,7 @@
 pub mod common;
 pub mod event_mapping;
 pub mod item_builders;
+pub mod message_ref;
 mod mappers;
 mod serde_helpers;
 pub mod thread_history;

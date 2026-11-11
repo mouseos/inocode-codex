@@ -4,6 +4,9 @@
 
 use super::InocodeResult;
 use super::unknown_method;
+use crate::error_code::internal_error;
+use crate::error_code::invalid_params;
+use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::InocodeMessage;
 use codex_app_server_protocol::InocodeMessageConfidence;
@@ -11,7 +14,10 @@ use codex_app_server_protocol::InocodeMessageField;
 use codex_app_server_protocol::InocodeMessageKind;
 use codex_app_server_protocol::InocodeMessagesAppendedNotification;
 use codex_app_server_protocol::InocodeMessagesListParams;
+use codex_app_server_protocol::InocodeMessageRole;
 use codex_app_server_protocol::InocodeMessagesListResponse;
+use codex_app_server_protocol::InocodeMessagesResolveParams;
+use codex_app_server_protocol::InocodeMessagesResolveResponse;
 use codex_app_server_protocol::InocodeParsedMessage;
 use codex_inocode_protocol::Confidence;
 use codex_inocode_protocol::Kind;
@@ -120,8 +126,99 @@ pub(crate) fn spawn_notifier(
     });
 }
 
+fn response_of(
+    thread_id: &str,
+    found: codex_app_server_protocol::ResolvedMessage,
+    max_chars: Option<i64>,
+) -> InocodeMessagesResolveResponse {
+    let limit = max_chars.and_then(|n| usize::try_from(n).ok());
+    let (text, truncated) = match limit {
+        Some(n) if found.text.chars().count() > n => (found.text.chars().take(n).collect(), true),
+        _ => (found.text, false),
+    };
+    InocodeMessagesResolveResponse {
+        thread_id: thread_id.to_string(),
+        turn_number: i64::try_from(found.turn_number).unwrap_or(i64::MAX),
+        item_number: i64::try_from(found.item_number).unwrap_or(i64::MAX),
+        turn_id: found.turn_id,
+        item_id: found.item_id,
+        role: match found.role {
+            codex_app_server_protocol::MessageRole::User => InocodeMessageRole::User,
+            codex_app_server_protocol::MessageRole::Assistant => InocodeMessageRole::Assistant,
+            codex_app_server_protocol::MessageRole::Tool => InocodeMessageRole::Tool,
+        },
+        text,
+        truncated,
+    }
+}
+
+/// Finds the message `params.id` names in the rollout at `path` (indexed, one turn read).
+pub(crate) async fn resolve_at(
+    path: std::path::PathBuf,
+    params: &InocodeMessagesResolveParams,
+) -> Result<InocodeMessagesResolveResponse, JSONRPCErrorError> {
+    let (id, turn_id, item_index) = (
+        params.id.clone().filter(|i| !i.trim().is_empty()),
+        params.turn_id.clone(),
+        params.item_index,
+    );
+    let described = id
+        .clone()
+        .or_else(|| turn_id.clone().map(|t| format!("turn {t}")))
+        .unwrap_or_default();
+    let looked_up = tokio::task::spawn_blocking(move || {
+        let selector = match (id, turn_id, item_index) {
+            (Some(id), _, _) => codex_app_server_protocol::parse_message_ref(&id),
+            (None, Some(turn_id), Some(index)) => {
+                let Some(turn) = codex_core::inocode_message_ref::turn_number_of(&path, &turn_id)?
+                else {
+                    return Ok(None);
+                };
+                codex_app_server_protocol::MessageSelector::Position {
+                    turn,
+                    item: usize::try_from(index).unwrap_or(0) + 1,
+                }
+            }
+            _ => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "give `id`, or `turnId` with `itemIndex`",
+                ));
+            }
+        };
+        codex_core::inocode_message_ref::resolve_in_rollout(&path, &selector)
+    })
+    .await
+    .map_err(|err| internal_error(format!("failed to read the history: {err}")))?
+    .map_err(|err| {
+        if err.kind() == std::io::ErrorKind::InvalidInput {
+            invalid_params(err.to_string())
+        } else {
+            internal_error(format!("failed to read the history: {err}"))
+        }
+    })?;
+    let (found, _) = looked_up
+        .ok_or_else(|| invalid_params(format!("no message found for {described}")))?;
+    Ok(response_of(&params.thread_id, found, params.max_chars))
+}
+
+async fn resolve(
+    params: InocodeMessagesResolveParams,
+) -> Result<InocodeMessagesResolveResponse, JSONRPCErrorError> {
+    let codex_home = codex_core::config::find_codex_home()
+        .map_err(|err| internal_error(format!("failed to find the Codex home: {err}")))?;
+    let path = codex_rollout::find_thread_path_by_id_str(&codex_home, &params.thread_id, None)
+        .await
+        .map_err(|err| {
+            internal_error(format!("failed to locate thread {}: {err}", params.thread_id))
+        })?
+        .ok_or_else(|| invalid_params(format!("thread not found: {}", params.thread_id)))?;
+    resolve_at(path, &params).await
+}
+
 pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
     match request {
+        ClientRequest::InocodeMessagesResolve { params, .. } => Ok(Some(resolve(params).await?.into())),
         ClientRequest::InocodeMessagesList { params, .. } => Ok(Some(
             list_in(&codex_inocode_flags::inocode_home(), &params).into(),
         )),

@@ -14,6 +14,7 @@ pub use precomputed_exports::generate_types;
 pub use protocol::common::*;
 pub use protocol::event_mapping::*;
 pub use protocol::item_builders::*;
+pub use protocol::message_ref::*;
 pub use protocol::thread_history::*;
 pub use protocol::thread_history_projection::*;
 pub use protocol::v1::ApplyPatchApprovalParams;

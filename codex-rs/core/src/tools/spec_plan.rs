@@ -14,6 +14,7 @@ use crate::tools::handlers::DynamicToolHandler;
 use crate::tools::handlers::ExecCommandHandler;
 use crate::tools::handlers::ExecCommandHandlerOptions;
 use crate::tools::handlers::GetContextRemainingHandler;
+use crate::tools::handlers::ReadMessageHandler;
 use crate::tools::handlers::ListAvailablePluginsToInstallHandler;
 use crate::tools::handlers::ListMcpResourceTemplatesHandler;
 use crate::tools::handlers::ListMcpResourcesHandler;
@@ -1366,6 +1367,10 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
         registry.add(GetContextRemainingHandler::new(
             messages.and_then(|messages| messages.get_context_remaining.as_ref()),
         ));
+    }
+
+    if codex_inocode_flags::load().read_message_enabled {
+        registry.add(ReadMessageHandler);
     }
 
     let current_time_reminder_enabled = features.enabled(Feature::CurrentTimeReminder);
