@@ -1878,7 +1878,7 @@ async fn multi_agent_v2_send_message_rejects_interrupt_parameter() {
         panic!("expected model-facing parse error");
     };
     assert!(message.starts_with(
-        "failed to parse function arguments: unknown field `interrupt`, expected `target` or `message`"
+        "failed to parse function arguments: unknown field `interrupt`, expected one of `target`, `message`, `reply_to`"
     ));
 
     let ops = manager.captured_ops();
@@ -2039,11 +2039,12 @@ async fn multi_agent_v2_followup_task_completion_notifies_parent_on_every_turn()
                 .collect::<Vec<_>>();
             let first_count = notifications
                 .iter()
-                .filter(|message| **message == first_notification)
+                // The host appends its recorded facts after the child's own report.
+                .filter(|message| message.starts_with(first_notification.as_str()))
                 .count();
             let second_count = notifications
                 .iter()
-                .filter(|message| **message == second_notification)
+                .filter(|message| message.starts_with(second_notification.as_str()))
                 .count();
             if first_count == 1 && second_count == 1 {
                 break notifications;
