@@ -25,7 +25,7 @@ impl Candidate {
 
     /// Whether the next turn is expected to push this account over the threshold.
     pub fn over_threshold(&self, policy: &AccountPolicy, now: i64) -> bool {
-        if self.kind != AccountKind::Chatgpt {
+        if self.kind == AccountKind::ApiKey {
             return false;
         }
         let Some(used) = self
@@ -85,7 +85,7 @@ pub fn select(input: &SelectInput<'_>) -> Option<String> {
     let chatgpt_ok: Vec<&Candidate> = ok
         .iter()
         .copied()
-        .filter(|c| c.kind == AccountKind::Chatgpt)
+        .filter(|c| c.kind != AccountKind::ApiKey)
         .collect();
     let keys_ok: Vec<&Candidate> = ok
         .iter()
@@ -105,7 +105,10 @@ pub fn select(input: &SelectInput<'_>) -> Option<String> {
         .enumerate()
         .find(|(_, tier)| !tier.is_empty())?;
 
-    let stay_put = tier_index != last && (policy.selection != SelectionStrategy::RoundRobin || !advance);
+    // Fill-first never rests on a lower-priority account when a higher one is usable again.
+    let stay_put = tier_index != last
+        && policy.selection != SelectionStrategy::FillFirst
+        && (policy.selection != SelectionStrategy::RoundRobin || !advance);
     if stay_put
         && let Some(current) = current
         && tier.iter().any(|c| c.id == current)

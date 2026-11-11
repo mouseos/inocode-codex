@@ -1,8 +1,11 @@
-//! `inocode/accounts/*`: the native account pool. Contract: ref/docs/16-account-pool-contract.md.
+//! `inocode/accounts/*` and `inocode/providers/*`: the native account pool.
+//! Contract: ref/docs/16-account-pool-contract.md.
 //!
-//! The pool itself lives in `codex_login::account_pool` and is process-wide. This file is the
-//! JSON-RPC face: it converts types, drives "add a ChatGPT account" sign-ins, and forwards pool
-//! events to clients as notifications. E-mail addresses and credentials never leave through here.
+//! There is one pool per provider group: `openai` (ChatGPT sign-ins and OpenAI API keys) and
+//! `claude` (Claude OAuth sign-ins and Claude API keys). The pools are process-wide
+//! (`codex_login::account_pool`). This file is the JSON-RPC face: it converts types, drives
+//! "add an account" sign-ins, and forwards pool events to clients as notifications. E-mail
+//! addresses and credentials never leave through here.
 
 use super::InocodeResult;
 use super::unknown_method;
@@ -24,11 +27,15 @@ use codex_app_server_protocol::InocodeAccountWindowKind;
 use codex_app_server_protocol::InocodeAccountsAddApiKeyResponse;
 use codex_app_server_protocol::InocodeAccountsListResponse;
 use codex_app_server_protocol::InocodeAccountsLoginCancelResponse;
+use codex_app_server_protocol::InocodeAccountsLoginCompleteParams;
+use codex_app_server_protocol::InocodeAccountsLoginCompleteResponse;
 use codex_app_server_protocol::InocodeAccountsLoginCompletedNotification;
 use codex_app_server_protocol::InocodeAccountsLoginStartParams;
 use codex_app_server_protocol::InocodeAccountsLoginStartResponse;
 use codex_app_server_protocol::InocodeAccountsPolicyReadResponse;
 use codex_app_server_protocol::InocodeAccountsPolicyWriteResponse;
+use codex_app_server_protocol::InocodeAccountsReauthParams;
+use codex_app_server_protocol::InocodeAccountsReauthResponse;
 use codex_app_server_protocol::InocodeAccountsRemoveResponse;
 use codex_app_server_protocol::InocodeAccountsRenameResponse;
 use codex_app_server_protocol::InocodeAccountsSetEnabledResponse;
@@ -37,6 +44,9 @@ use codex_app_server_protocol::InocodeAccountsSwitchedNotification;
 use codex_app_server_protocol::InocodeAccountsUpdatedNotification;
 use codex_app_server_protocol::InocodeAccountsUseResponse;
 use codex_app_server_protocol::InocodeApiKeyOrder;
+use codex_app_server_protocol::InocodeProvider;
+use codex_app_server_protocol::InocodeProviderWire;
+use codex_app_server_protocol::InocodeProvidersListResponse;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::ServerNotification;
 use codex_core::config::Config;
@@ -59,6 +69,7 @@ use codex_login::account_pool::SelectionStrategy;
 use codex_login::account_pool::SwitchReason;
 use codex_login::account_pool::UsageFetcher;
 use codex_login::account_pool::WindowKind;
+use codex_login::claude_oauth;
 use codex_login::complete_device_code_login;
 use codex_login::oauth_client_id;
 use codex_login::request_device_code;
@@ -67,15 +78,28 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 const USAGE_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const OPENAI: &str = "openai";
+const CLAUDE: &str = "claude";
+const CLAUDE_DIR: &str = "accounts-claude";
 
 enum PendingLogin {
     Browser(codex_login::ShutdownHandle),
     Device(CancellationToken),
+    /// Claude sign-in with a local listener.
+    ClaudeListener(Arc<AtomicBool>),
+    /// Claude sign-in waiting for the user to paste `code#state`.
+    ClaudeCode {
+        pending: claude_oauth::Pending,
+        alias: String,
+        expected: Option<String>,
+    },
 }
 
 struct Runtime {
@@ -91,66 +115,44 @@ fn runtime() -> Result<&'static Runtime, JSONRPCErrorError> {
         .ok_or_else(|| internal_error("the account pool is not running"))
 }
 
-fn pool() -> Result<Arc<AccountPool>, JSONRPCErrorError> {
-    account_pool::global().ok_or_else(|| internal_error("the account pool is not ready yet"))
+fn pool_of(group: &str) -> Result<Arc<AccountPool>, JSONRPCErrorError> {
+    account_pool::global_for(group)
+        .ok_or_else(|| internal_error("the account pool is not ready yet"))
 }
 
-/// Opens the pool for this app-server and starts forwarding its events. Call once at start-up.
-pub(crate) fn start(
-    outgoing: Arc<OutgoingMessageSender>,
-    auth_manager: Arc<AuthManager>,
-    config: &Config,
-) {
-    let Ok(handle) = tokio::runtime::Handle::try_current() else {
-        return;
-    };
-    if RUNTIME
-        .set(Runtime {
-            outgoing: Arc::clone(&outgoing),
-            logins: Mutex::new(HashMap::new()),
-        })
-        .is_err()
-    {
-        return;
+fn pool() -> Result<Arc<AccountPool>, JSONRPCErrorError> {
+    pool_of(OPENAI)
+}
+
+fn all_pools() -> Vec<Arc<AccountPool>> {
+    [OPENAI, CLAUDE]
+        .iter()
+        .filter_map(|group| account_pool::global_for(group))
+        .collect()
+}
+
+fn all_accounts() -> Vec<InocodeAccount> {
+    all_pools()
+        .iter()
+        .flat_map(|pool| pool.list())
+        .map(to_account)
+        .collect()
+}
+
+/// The pool that holds `id`.
+fn pool_with(id: &str) -> Result<Arc<AccountPool>, JSONRPCErrorError> {
+    all_pools()
+        .into_iter()
+        .find(|pool| pool.list().iter().any(|view| view.id == id))
+        .ok_or_else(|| invalid_request("unknown account"))
+}
+
+fn group_of(provider: Option<&str>) -> Result<&'static str, JSONRPCErrorError> {
+    match provider.unwrap_or(OPENAI) {
+        OPENAI => Ok(OPENAI),
+        CLAUDE => Ok(CLAUDE),
+        other => Err(invalid_params(format!("unknown provider `{other}`"))),
     }
-    let config_for_pool = pool_inputs(config);
-    handle.spawn(async move {
-        let pool = open_with(config_for_pool, auth_manager).await;
-        let mut events = pool.subscribe();
-        account_pool::install_global(Some(Arc::clone(&pool)));
-        pool.spawn_refresh_loop(USAGE_REFRESH_INTERVAL);
-        let forwarder = Arc::clone(&pool);
-        tokio::spawn(async move {
-            loop {
-                match events.recv().await {
-                    Ok(PoolEvent::Updated) => {
-                        outgoing
-                            .send_server_notification(ServerNotification::InocodeAccountsUpdated(
-                                InocodeAccountsUpdatedNotification {
-                                    accounts: forwarder.list().into_iter().map(to_account).collect(),
-                                },
-                            ))
-                            .await;
-                    }
-                    Ok(PoolEvent::Switched(event)) => {
-                        outgoing
-                            .send_server_notification(ServerNotification::InocodeAccountsSwitched(
-                                InocodeAccountsSwitchedNotification {
-                                    from_alias: event.from_alias,
-                                    to_alias: event.to_alias,
-                                    reason: to_reason(event.reason),
-                                    thread_id: event.thread_id,
-                                },
-                            ))
-                            .await;
-                    }
-                    Ok(PoolEvent::LoginCompleted { .. }) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                }
-            }
-        });
-    });
 }
 
 /// Everything the pool needs from the configuration.
@@ -187,6 +189,74 @@ pub async fn open_pool(config: &Config, auth_manager: Arc<AuthManager>) -> Arc<A
     open_with(pool_inputs(config), auth_manager).await
 }
 
+/// The Claude group's pool, without installing it process-wide.
+pub async fn open_claude_pool(config: &Config) -> Arc<AccountPool> {
+    AccountPool::open_group(pool_inputs(config).env, CLAUDE, CLAUDE_DIR).await
+}
+
+/// Opens the pools for this app-server and starts forwarding their events. Call once at start-up.
+pub(crate) fn start(
+    outgoing: Arc<OutgoingMessageSender>,
+    auth_manager: Arc<AuthManager>,
+    config: &Config,
+) {
+    let Ok(handle) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    if RUNTIME
+        .set(Runtime {
+            outgoing: Arc::clone(&outgoing),
+            logins: Mutex::new(HashMap::new()),
+        })
+        .is_err()
+    {
+        return;
+    }
+    let inputs = pool_inputs(config);
+    let claude_env = inputs.env.clone();
+    handle.spawn(async move {
+        let pool = open_with(inputs, auth_manager).await;
+        let claude = AccountPool::open_group(claude_env, CLAUDE, CLAUDE_DIR).await;
+        account_pool::install_global_for(OPENAI, Some(Arc::clone(&pool)));
+        account_pool::install_global_for(CLAUDE, Some(Arc::clone(&claude)));
+        pool.spawn_refresh_loop(USAGE_REFRESH_INTERVAL);
+        for source in [pool, claude] {
+            let mut events = source.subscribe();
+            let outgoing = Arc::clone(&outgoing);
+            tokio::spawn(async move {
+                loop {
+                    match events.recv().await {
+                        Ok(PoolEvent::Updated) => {
+                            outgoing
+                                .send_server_notification(ServerNotification::InocodeAccountsUpdated(
+                                    InocodeAccountsUpdatedNotification {
+                                        accounts: all_accounts(),
+                                    },
+                                ))
+                                .await;
+                        }
+                        Ok(PoolEvent::Switched(event)) => {
+                            outgoing
+                                .send_server_notification(ServerNotification::InocodeAccountsSwitched(
+                                    InocodeAccountsSwitchedNotification {
+                                        from_alias: event.from_alias,
+                                        to_alias: event.to_alias,
+                                        reason: to_reason(event.reason),
+                                        thread_id: event.thread_id,
+                                    },
+                                ))
+                                .await;
+                        }
+                        Ok(PoolEvent::LoginCompleted { .. }) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+        }
+    });
+}
+
 /// Reads one account's usage from the ChatGPT backend with that account's own credentials.
 fn usage_fetcher(
     base_url: String,
@@ -212,19 +282,23 @@ fn usage_fetcher(
 pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
     match request {
         ClientRequest::InocodeAccountsList { params, .. } => {
-            let pool = pool()?;
             if params.refresh.unwrap_or(false) {
-                pool.refresh_usage().await;
+                for pool in all_pools() {
+                    pool.refresh_usage().await;
+                }
+            }
+            if all_pools().is_empty() {
+                return Err(internal_error("the account pool is not ready yet"));
             }
             Ok(Some(
                 InocodeAccountsListResponse {
-                    accounts: pool.list().into_iter().map(to_account).collect(),
+                    accounts: all_accounts(),
                 }
                 .into(),
             ))
         }
         ClientRequest::InocodeAccountsAddApiKey { params, .. } => {
-            let view = pool()?
+            let view = pool_of(group_of(params.provider.as_deref())?)?
                 .add_api_key(&params.alias, &params.api_key, params.priority)
                 .await
                 .map_err(client_error)?;
@@ -236,35 +310,47 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
             ))
         }
         ClientRequest::InocodeAccountsRemove { params, .. } => {
-            pool()?.remove(&params.id).await.map_err(client_error)?;
+            pool_with(&params.id)?
+                .remove(&params.id)
+                .await
+                .map_err(client_error)?;
             Ok(Some(InocodeAccountsRemoveResponse {}.into()))
         }
         ClientRequest::InocodeAccountsRename { params, .. } => {
-            pool()?
+            pool_with(&params.id)?
                 .rename(&params.id, &params.alias)
                 .map_err(client_error)?;
             Ok(Some(InocodeAccountsRenameResponse {}.into()))
         }
         ClientRequest::InocodeAccountsSetPriority { params, .. } => {
-            pool()?
+            pool_with(&params.id)?
                 .set_priority(&params.id, params.priority)
                 .map_err(client_error)?;
             Ok(Some(InocodeAccountsSetPriorityResponse {}.into()))
         }
         ClientRequest::InocodeAccountsSetEnabled { params, .. } => {
-            pool()?
+            pool_with(&params.id)?
                 .set_enabled(&params.id, params.enabled)
                 .map_err(client_error)?;
             Ok(Some(InocodeAccountsSetEnabledResponse {}.into()))
         }
         ClientRequest::InocodeAccountsUse { params, .. } => {
-            pool()?
+            pool_with(&params.id)?
                 .use_account(&params.id, params.thread_id.as_deref())
                 .map_err(client_error)?;
             Ok(Some(InocodeAccountsUseResponse {}.into()))
         }
         ClientRequest::InocodeAccountsLoginStart { params, .. } => {
-            Ok(Some(login_start(params).await?.into()))
+            Ok(Some(login_start(params, None).await?.into()))
+        }
+        ClientRequest::InocodeAccountsReauth { params, .. } => {
+            Ok(Some(
+                InocodeAccountsReauthResponse::from(reauth(params).await?).into(),
+            ))
+        }
+        ClientRequest::InocodeAccountsLoginComplete { params, .. } => {
+            login_complete(params).await?;
+            Ok(Some(InocodeAccountsLoginCompleteResponse {}.into()))
         }
         ClientRequest::InocodeAccountsLoginCancel { params, .. } => {
             let pending = runtime()?
@@ -275,6 +361,8 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
             match pending {
                 Some(PendingLogin::Browser(handle)) => handle.shutdown(),
                 Some(PendingLogin::Device(token)) => token.cancel(),
+                Some(PendingLogin::ClaudeListener(cancel)) => cancel.store(true, Ordering::SeqCst),
+                Some(PendingLogin::ClaudeCode { .. }) => {}
                 None => return Err(invalid_request("unknown login id")),
             }
             if let Ok(pool) = pool() {
@@ -282,14 +370,16 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
             }
             Ok(Some(InocodeAccountsLoginCancelResponse {}.into()))
         }
-        ClientRequest::InocodeAccountsPolicyRead { .. } => Ok(Some(
+        ClientRequest::InocodeAccountsPolicyRead { params, .. } => Ok(Some(
             InocodeAccountsPolicyReadResponse {
-                policy: to_policy(pool()?.policy()),
+                policy: to_policy(pool_of(group_of(params.provider.as_deref())?)?.policy()),
             }
             .into(),
         )),
         ClientRequest::InocodeAccountsPolicyWrite { params, .. } => {
-            let saved = pool()?
+            // Each provider has its own policy; the other provider's is left alone.
+            let target = pool_of(group_of(params.provider.as_deref())?)?;
+            let saved = target
                 .set_policy(from_policy(params.policy)?)
                 .map_err(|err| invalid_params(err.to_string()))?;
             Ok(Some(
@@ -299,26 +389,99 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
                 .into(),
             ))
         }
+        ClientRequest::InocodeProvidersList { .. } => Ok(Some(
+            InocodeProvidersListResponse {
+                providers: providers(),
+            }
+            .into(),
+        )),
         other => Err(unknown_method(other.method_name())),
     }
+}
+
+fn providers() -> Vec<InocodeProvider> {
+    let count = |group: &str| {
+        account_pool::global_for(group)
+            .map_or(0, |pool| u32::try_from(pool.list().len()).unwrap_or(u32::MAX))
+    };
+    vec![
+        InocodeProvider {
+            id: OPENAI.to_string(),
+            name: "OpenAI".to_string(),
+            wire: InocodeProviderWire::Responses,
+            auth_kinds: vec![InocodeAccountKind::Chatgpt, InocodeAccountKind::ApiKey],
+            account_count: count(OPENAI),
+        },
+        InocodeProvider {
+            id: CLAUDE.to_string(),
+            name: "Claude".to_string(),
+            wire: InocodeProviderWire::Anthropic,
+            auth_kinds: vec![InocodeAccountKind::ClaudeOauth, InocodeAccountKind::ApiKey],
+            account_count: count(CLAUDE),
+        },
+    ]
 }
 
 fn client_error(err: std::io::Error) -> JSONRPCErrorError {
     invalid_request(err.to_string())
 }
 
-/// Adds a ChatGPT account without touching the current login: the sign-in writes into a
-/// pending directory that becomes the new entry when it succeeds.
+fn now_ms() -> i64 {
+    chrono::Utc::now().timestamp_millis()
+}
+
+/// Adds an account without touching the current login: the sign-in writes into a pending
+/// directory (ChatGPT) or is held in memory (Claude) until it succeeds.
+/// Signs in again to an existing account; the new sign-in must be the same account.
+async fn reauth(
+    params: InocodeAccountsReauthParams,
+) -> Result<InocodeAccountsLoginStartResponse, JSONRPCErrorError> {
+    let view = pool_with(&params.id)?
+        .list()
+        .into_iter()
+        .find(|view| view.id == params.id)
+        .ok_or_else(|| invalid_request("unknown account"))?;
+    let provider = match view.kind {
+        _ if view.is_default => {
+            return Err(invalid_request(
+                "the default login is re-authenticated with account/login/start",
+            ));
+        }
+        AccountKind::Chatgpt => OPENAI,
+        AccountKind::ClaudeOauth => CLAUDE,
+        AccountKind::ApiKey => {
+            return Err(invalid_request(
+                "an API key cannot be re-authenticated; remove it and add the new key",
+            ));
+        }
+    };
+    login_start(
+        InocodeAccountsLoginStartParams {
+            alias: view.alias,
+            provider: Some(provider.to_string()),
+            method: params.method,
+        },
+        Some(view.id),
+    )
+    .await
+}
+
 async fn login_start(
     params: InocodeAccountsLoginStartParams,
+    expected: Option<String>,
 ) -> Result<InocodeAccountsLoginStartResponse, JSONRPCErrorError> {
-    let pool = pool()?;
     let runtime = runtime()?;
     let alias = params.alias.trim().to_string();
     if alias.is_empty() {
         return Err(invalid_params("alias must not be empty"));
     }
     let login_id = uuid::Uuid::new_v4().to_string();
+
+    if group_of(params.provider.as_deref())? == CLAUDE {
+        return claude_login_start(runtime, login_id, alias, params.method, expected).await;
+    }
+
+    let pool = pool()?;
     let env = pool.env().clone();
     let opts = ServerOptions {
         open_browser: false,
@@ -353,13 +516,14 @@ async fn login_start(
                         Err("Login timed out".to_string())
                     }
                 };
-                finish(id, alias, result).await;
+                finish(id, alias, result, expected).await;
             });
             Ok(InocodeAccountsLoginStartResponse {
                 login_id,
                 auth_url: Some(auth_url),
                 verification_url: None,
                 user_code: None,
+                code_entry: false,
             })
         }
         InocodeAccountLoginMethod::DeviceCode => {
@@ -378,15 +542,127 @@ async fn login_start(
                         done.map_err(|err| err.to_string())
                     }
                 };
-                finish(id, alias, result).await;
+                finish(id, alias, result, expected).await;
             });
             Ok(InocodeAccountsLoginStartResponse {
                 login_id,
                 auth_url: None,
                 verification_url: Some(verification_url),
                 user_code: Some(user_code),
+                code_entry: false,
             })
         }
+        InocodeAccountLoginMethod::OauthCode => {
+            Err(invalid_params("oauthCode is only available for the claude provider"))
+        }
+    }
+}
+
+async fn claude_login_start(
+    runtime: &'static Runtime,
+    login_id: String,
+    alias: String,
+    method: Option<InocodeAccountLoginMethod>,
+    expected: Option<String>,
+) -> Result<InocodeAccountsLoginStartResponse, JSONRPCErrorError> {
+    let code_mode = match method.unwrap_or(InocodeAccountLoginMethod::Browser) {
+        InocodeAccountLoginMethod::Browser => false,
+        InocodeAccountLoginMethod::OauthCode => true,
+        InocodeAccountLoginMethod::DeviceCode => {
+            return Err(invalid_params("the claude provider has no device-code sign-in"));
+        }
+    };
+    let pending = claude_oauth::begin(code_mode);
+    let auth_url = pending.url.clone();
+    if code_mode {
+        register(
+            runtime,
+            &login_id,
+            PendingLogin::ClaudeCode {
+                pending,
+                alias,
+                expected,
+            },
+        );
+        return Ok(InocodeAccountsLoginStartResponse {
+            login_id,
+            auth_url: Some(auth_url),
+            verification_url: None,
+            user_code: None,
+            code_entry: true,
+        });
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    register(runtime, &login_id, PendingLogin::ClaudeListener(Arc::clone(&cancel)));
+    let id = login_id.clone();
+    tokio::spawn(async move {
+        let result = match claude_oauth::wait_for_callback(
+            pending.state.clone(),
+            LOGIN_TIMEOUT,
+            cancel,
+        )
+        .await
+        {
+            Ok(code) => claude_finish(&pending, &alias, &code, expected.as_deref()).await,
+            Err(err) => Err(err.to_string()),
+        };
+        finish_claude(id, result).await;
+    });
+    Ok(InocodeAccountsLoginStartResponse {
+        login_id,
+        auth_url: Some(auth_url),
+        verification_url: None,
+        user_code: None,
+        code_entry: false,
+    })
+}
+
+/// Exchanges the code and registers the sign-in. The error text never contains a credential.
+async fn claude_finish(
+    pending: &claude_oauth::Pending,
+    alias: &str,
+    code: &str,
+    expected: Option<&str>,
+) -> Result<String, String> {
+    let pool = pool_of(CLAUDE).map_err(|_| "the account pool is not ready yet".to_string())?;
+    let credentials = claude_oauth::exchange(
+        pending,
+        code,
+        &pool.env().auth_route_config,
+        now_ms(),
+    )
+    .await
+    .map_err(|err| err.to_string())?;
+    let profile = claude_oauth::fetch_profile(&pool.env().auth_route_config, &credentials.access).await;
+    let view = pool
+        .add_claude_oauth_expecting(alias, credentials, expected)
+        .await
+        .map_err(|err| err.to_string())?;
+    let _ = pool.set_identity(&view.id, profile.email, profile.name);
+    Ok(view.id)
+}
+
+async fn login_complete(params: InocodeAccountsLoginCompleteParams) -> Result<(), JSONRPCErrorError> {
+    let runtime = runtime()?;
+    let entry = runtime
+        .logins
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&params.login_id);
+    let Some(PendingLogin::ClaudeCode {
+        pending,
+        alias,
+        expected,
+    }) = entry
+    else {
+        return Err(invalid_request("this login is not waiting for a code"));
+    };
+    let result = claude_finish(&pending, &alias, &params.code, expected.as_deref()).await;
+    let failed = result.clone().err();
+    finish_claude(params.login_id, result).await;
+    match failed {
+        Some(message) => Err(invalid_request(message)),
+        None => Ok(()),
     }
 }
 
@@ -398,26 +674,18 @@ fn register(runtime: &Runtime, login_id: &str, pending: PendingLogin) {
         .insert(login_id.to_string(), pending);
 }
 
-async fn finish(login_id: String, alias: String, result: Result<(), String>) {
+async fn finish_claude(login_id: String, result: Result<String, String>) {
     let Ok(runtime) = runtime() else { return };
     runtime
         .logins
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(&login_id);
-    let Ok(pool) = pool() else { return };
-    let outcome = match result {
-        Ok(()) => pool
-            .finish_chatgpt_login(&login_id, &alias)
-            .await
-            .map(|view| view.id)
-            .map_err(|err| err.to_string()),
-        Err(message) => Err(message),
-    };
-    if outcome.is_err() {
-        pool.discard_pending_login(&login_id);
-    }
-    let (success, account_id, error) = match outcome {
+    notify_login(runtime, login_id, result).await;
+}
+
+async fn notify_login(runtime: &Runtime, login_id: String, result: Result<String, String>) {
+    let (success, account_id, error) = match result {
         Ok(id) => (true, Some(id), None),
         Err(message) => (false, None, Some(message)),
     };
@@ -434,6 +702,33 @@ async fn finish(login_id: String, alias: String, result: Result<(), String>) {
         .await;
 }
 
+async fn finish(
+    login_id: String,
+    alias: String,
+    result: Result<(), String>,
+    expected: Option<String>,
+) {
+    let Ok(runtime) = runtime() else { return };
+    runtime
+        .logins
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&login_id);
+    let Ok(pool) = pool() else { return };
+    let outcome = match result {
+        Ok(()) => pool
+            .finish_chatgpt_login_expecting(&login_id, &alias, expected.as_deref())
+            .await
+            .map(|view| view.id)
+            .map_err(|err| err.to_string()),
+        Err(message) => Err(message),
+    };
+    if outcome.is_err() {
+        pool.discard_pending_login(&login_id);
+    }
+    notify_login(runtime, login_id, outcome).await;
+}
+
 // ------------------------------------------------------------------ conversion
 
 fn to_account(view: AccountView) -> InocodeAccount {
@@ -442,8 +737,12 @@ fn to_account(view: AccountView) -> InocodeAccount {
         kind: match view.kind {
             AccountKind::Chatgpt => InocodeAccountKind::Chatgpt,
             AccountKind::ApiKey => InocodeAccountKind::ApiKey,
+            AccountKind::ClaudeOauth => InocodeAccountKind::ClaudeOauth,
         },
+        provider: view.provider,
         alias: view.alias,
+        email: view.email,
+        name: view.name,
         plan: view.plan,
         usage: view.usage.map(|usage| InocodeAccountUsage {
             five_hour: usage.five_hour.map(to_window),
@@ -552,10 +851,22 @@ mod tests {
             last_used_at: None,
             in_use: false,
             is_default: false,
+            provider: "openai".to_string(),
+            email: None,
+            name: None,
         };
         let json = serde_json::to_string(&to_account(view)).expect("json");
         assert!(!json.contains("sk-") && !json.contains('@'), "{json}");
         assert!(json.contains("\"kind\":\"apiKey\""));
+        assert!(json.contains("\"provider\":\"openai\""));
+        assert!(json.contains("\"email\":null") && json.contains("\"name\":null"));
+    }
+
+    #[test]
+    fn unknown_providers_are_rejected_and_known_ones_resolve() {
+        assert_eq!(group_of(None).expect("default"), OPENAI);
+        assert_eq!(group_of(Some("claude")).expect("claude"), CLAUDE);
+        assert!(group_of(Some("muse")).is_err());
     }
 
     #[tokio::test]
@@ -586,6 +897,7 @@ mod tests {
                 alias: "予備キー".to_string(),
                 api_key: "sk-test-FAKE-handler-extra".to_string(),
                 priority: Some(2),
+                provider: None,
             },
         })
         .await
@@ -634,7 +946,7 @@ mod tests {
 
         let policy = handle(ClientRequest::InocodeAccountsPolicyRead {
             request_id: id(5),
-            params: InocodeAccountsPolicyReadParams {},
+            params: InocodeAccountsPolicyReadParams { provider: None },
         })
         .await
         .expect("policy")

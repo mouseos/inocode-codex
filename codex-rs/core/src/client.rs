@@ -2093,13 +2093,46 @@ impl ResponsesHttpExecutor<'_> {
                 request.input = input;
             }
             inference_trace_attempt.record_started(&request);
-            let client = ApiResponsesClient::new(
-                transport,
-                client_setup.api_provider,
-                client_setup.api_auth,
-            )
-            .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
-            let stream_result = client.stream_request(request, options).await;
+            let stream_result = match self.client.state.provider.info().wire_api {
+                WireApi::Responses => {
+                    let client = ApiResponsesClient::new(
+                        transport,
+                        client_setup.api_provider,
+                        client_setup.api_auth,
+                    )
+                    .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
+                    client.stream_request(request, options).await
+                }
+                WireApi::AnthropicMessages => {
+                    // No key of its own: sign in through the pool's Claude group.
+                    let pooled = crate::claude_auth::pooled_auth(self.client.state.provider.info());
+                    let oauth = pooled.as_ref().is_some_and(|(_, oauth)| *oauth);
+                    let kind = codex_api::anthropic_wire_kind(
+                        &client_setup.api_provider.base_url,
+                        oauth,
+                    );
+                    codex_api::WireClient::new(
+                        transport,
+                        client_setup.api_provider,
+                        pooled.map_or(client_setup.api_auth, |(auth, _)| auth),
+                        kind,
+                    )
+                    .with_telemetry(Some(request_telemetry))
+                    .stream_request(request, options)
+                    .await
+                }
+                WireApi::ChatCompletions => {
+                    codex_api::WireClient::new(
+                        transport,
+                        client_setup.api_provider,
+                        client_setup.api_auth,
+                        codex_api::WireKind::ChatCompletions(Default::default()),
+                    )
+                    .with_telemetry(Some(request_telemetry))
+                    .stream_request(request, options)
+                    .await
+                }
+            };
 
             match stream_result {
                 Ok(stream) => {
@@ -2607,6 +2640,23 @@ impl ModelClientSession {
     ) -> Result<ResponseStream> {
         let wire_api = self.client.state.provider.info().wire_api;
         match wire_api {
+            WireApi::ChatCompletions | WireApi::AnthropicMessages => {
+                ResponsesHttpExecutor::new(&self.client)
+                    .stream_responses_http(
+                        &self.turn_state,
+                        /*expected_auth_owner*/ None,
+                        self.client.event_sender.as_ref(),
+                        prompt,
+                        model_info,
+                        session_telemetry,
+                        effort,
+                        summary,
+                        service_tier,
+                        responses_metadata,
+                        inference_trace,
+                    )
+                    .await
+            }
             WireApi::Responses => {
                 if self.client.responses_websocket_enabled() {
                     let request_trace = current_span_w3c_trace_context();

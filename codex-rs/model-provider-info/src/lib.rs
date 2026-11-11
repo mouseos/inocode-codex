@@ -118,12 +118,21 @@ pub enum WireApi {
     /// The Responses API exposed by OpenAI at `/v1/responses`.
     #[default]
     Responses,
+    /// OpenAI-compatible `chat/completions` (`wire_api = "chat_completions"`). Requests and
+    /// streams are translated by `codex-provider-adapters`.
+    #[serde(rename = "chat_completions")]
+    ChatCompletions,
+    /// The Claude Messages API (`wire_api = "anthropic_messages"`).
+    #[serde(rename = "anthropic_messages")]
+    AnthropicMessages,
 }
 
 impl fmt::Display for WireApi {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let value = match self {
             Self::Responses => "responses",
+            Self::ChatCompletions => "chat_completions",
+            Self::AnthropicMessages => "anthropic_messages",
         };
         f.write_str(value)
     }
@@ -137,8 +146,13 @@ impl<'de> Deserialize<'de> for WireApi {
         let value = String::deserialize(deserializer)?;
         match value.as_str() {
             "responses" => Ok(Self::Responses),
+            "chat_completions" => Ok(Self::ChatCompletions),
+            "anthropic_messages" => Ok(Self::AnthropicMessages),
             "chat" => Err(serde::de::Error::custom(CHAT_WIRE_API_REMOVED_ERROR)),
-            _ => Err(serde::de::Error::unknown_variant(&value, &["responses"])),
+            _ => Err(serde::de::Error::unknown_variant(
+                &value,
+                &["responses", "chat_completions", "anthropic_messages"],
+            )),
         }
     }
 }
