@@ -166,6 +166,8 @@ async fn handle_spawn_agent(
         .and_then(|snapshot| snapshot.reasoning_effort.clone())
         .unwrap_or(args.reasoning_effort.unwrap_or_default());
     let nickname = new_agent_nickname.clone();
+    let team_model = effective_model.clone();
+    let team_effort = effective_reasoning_effort.to_string();
     let receiver_thread_ids = new_thread_id.into_iter().collect();
     let receiver_agents = new_thread_id
         .map(|thread_id| CollabAgentRef {
@@ -203,6 +205,21 @@ async fn handle_spawn_agent(
     codex_inocode_ledger::inherit(&session.thread_id.to_string(), &new_thread_id.to_string());
     crate::inocode_team::watch_child(&session, new_thread_id);
     codex_inocode_team::note_spawned(&new_thread_id.to_string());
+    // The roster row (name, model, reasoning effort, parent) behind `inocode/team/status`.
+    codex_inocode_team::roster_for(&session.thread_id.to_string()).upsert(
+        codex_inocode_team::TeamAgent {
+            id: new_thread_id.to_string(),
+            name: nickname.clone().unwrap_or_else(|| new_thread_id.to_string()),
+            owned_paths: Vec::new(),
+            state: codex_inocode_team::AgentState::Running,
+            tokens: 0,
+            started_at: chrono::Utc::now().to_rfc3339(),
+            nickname: nickname.clone(),
+            model: Some(team_model),
+            reasoning_effort: Some(team_effort),
+            parent_id: Some(session.thread_id.to_string()),
+        },
+    );
     codex_inocode_protocol::link_thread(&new_thread_id.to_string(), &session.thread_id.to_string());
     let role_tag = role_name.unwrap_or(DEFAULT_ROLE_NAME);
     turn.session_telemetry.counter(
