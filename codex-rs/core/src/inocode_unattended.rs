@@ -14,6 +14,17 @@ pub(crate) use unattended_note;
 #[allow(dead_code)]
 pub(crate) const UNATTENDED_NOTE: &str = unattended_note!();
 
+/// True in a turn the host started by itself (a goal continuation): nobody is there to answer.
+/// A user-started turn is never unattended, whatever the approval policy says.
+pub(crate) fn is_unattended_turn(turn: &crate::session::turn_context::TurnContext) -> bool {
+    turn.turn_metadata_state.current_turn_trigger().as_deref() == Some("goal")
+}
+
+/// Records a question that was answered at once, with the note, instead of being put to the user.
+pub(crate) fn record_refused_question(thread_id: codex_protocol::ThreadId, kind: &'static str) {
+    drop(UserQuestionTimer::start(thread_id, kind));
+}
+
 /// Records one question put to the user, and how long it was waited on, when dropped (so the
 /// time covers the whole wait, whatever the answer).
 pub(crate) struct UserQuestionTimer {

@@ -1827,9 +1827,10 @@ pub(crate) async fn request_mcp_tool_user_approval(
 
     if *approval_policy == AskForApproval::Never {
         return ApprovalResolution {
-            decision: ReviewDecision::denied(
-                "MCP tool call requires approval, but approval policy is never",
-            ),
+            decision: ReviewDecision::denied(concat!(
+                "MCP tool call requires approval, but approval policy is never. ",
+                crate::inocode_unattended::unattended_note!()
+            )),
             source: ApprovalResolutionSource::User,
             cancellation_reason: None,
         };

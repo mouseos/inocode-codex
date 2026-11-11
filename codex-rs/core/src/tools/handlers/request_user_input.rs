@@ -75,6 +75,18 @@ impl RequestUserInputHandler {
             return Err(FunctionCallError::RespondToModel(message));
         }
 
+        // A goal continuation has no one to answer: the call would wait for ever. Answer at once.
+        if crate::inocode_unattended::is_unattended_turn(turn.as_ref()) {
+            crate::inocode_unattended::record_refused_question(
+                session.thread_id,
+                "request_user_input",
+            );
+            return Err(FunctionCallError::RespondToModel(format!(
+                "{REQUEST_USER_INPUT_TOOL_NAME} cannot be answered in this turn. {}",
+                crate::inocode_unattended::UNATTENDED_NOTE
+            )));
+        }
+
         let args: RequestUserInputToolArgs = parse_arguments(&arguments)?;
         let args = normalize_request_user_input_tool_args(args)
             .map_err(FunctionCallError::RespondToModel)?;

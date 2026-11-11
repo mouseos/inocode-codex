@@ -134,7 +134,11 @@ fn default_exec_approval_requirement_rejects_sandbox_prompt_when_granular_disabl
     assert_eq!(
         requirement,
         ExecApprovalRequirement::Forbidden {
-            reason: "approval policy disallowed sandbox approval prompt".to_string(),
+            reason: concat!(
+                "approval policy disallowed sandbox approval prompt. ",
+                crate::inocode_unattended::unattended_note!()
+            )
+            .to_string(),
         }
     );
 }

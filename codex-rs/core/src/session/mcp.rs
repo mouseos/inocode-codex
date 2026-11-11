@@ -760,6 +760,19 @@ impl Session {
             };
         }
 
+        // A goal continuation has no one to answer: decline at once.
+        if crate::inocode_unattended::is_unattended_turn(turn_context) {
+            crate::inocode_unattended::record_refused_question(self.thread_id, "elicitation");
+            return McpServerElicitationOutcome {
+                response: Some(ElicitationResponse {
+                    action: codex_rmcp_client::ElicitationAction::Decline,
+                    content: None,
+                    meta: None,
+                }),
+                sent: false,
+            };
+        }
+
         // This callback carries a request ID, not a reliable tool invocation owner.
         // Do not report its human wait as ordinary tool execution.
         if turn_context

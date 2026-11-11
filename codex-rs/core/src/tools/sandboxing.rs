@@ -220,7 +220,11 @@ pub(crate) fn default_exec_approval_requirement(
         )
     {
         ExecApprovalRequirement::Forbidden {
-            reason: "approval policy disallowed sandbox approval prompt".to_string(),
+            reason: concat!(
+                "approval policy disallowed sandbox approval prompt. ",
+                crate::inocode_unattended::unattended_note!()
+            )
+            .to_string(),
         }
     } else if needs_approval {
         ExecApprovalRequirement::NeedsApproval {
