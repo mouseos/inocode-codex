@@ -654,6 +654,7 @@ impl TurnRequestProcessor {
                 client_id: params.client_user_message_id,
             }
         };
+        let requested_collaboration_mode = params.collaboration_mode.as_ref().map(|mode| mode.mode);
         let cwd = resolve_request_cwd(params.cwd)?;
         let environment_override = self
             .build_environment_override(
@@ -736,6 +737,25 @@ impl TurnRequestProcessor {
                 return Err(error);
             }
         };
+
+        if !started
+            && let Some(requested) = requested_collaboration_mode
+            && thread.config_snapshot().await.collaboration_mode.mode != requested
+        {
+            // The message went into the turn that is still running, which keeps its own mode
+            // (a plan turn stays a plan turn). Say so, instead of letting the model answer in the
+            // old mode with no explanation.
+            self.outgoing
+                .send_server_notification(codex_app_server_protocol::ServerNotification::Warning(
+                    codex_app_server_protocol::WarningNotification {
+                        thread_id: Some(thread_id.to_string()),
+                        message: format!(
+                            "The previous turn is still running, so this message was added to it. The collaboration mode {requested:?} applies from the next turn; wait for the running turn to finish before switching modes."
+                        ),
+                    },
+                ))
+                .await;
+        }
 
         if turn_has_input && started {
             let config_snapshot = thread.config_snapshot().await;
