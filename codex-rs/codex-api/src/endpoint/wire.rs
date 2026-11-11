@@ -432,6 +432,7 @@ async fn pump(
     let mut stream = bytes.eventsource();
     let response_id = format!("resp_{}", uuid::Uuid::new_v4().simple());
     let mut assembler = Assembler::new(registry, response_id);
+    let mut streamed = StreamedInputs::default();
     loop {
         let events: Vec<AdapterEvent> = tokio::select! {
             biased;
@@ -454,7 +455,7 @@ async fn pump(
         };
         for event in events {
             for out in assembler.push(event) {
-                if !forward(&tx, out, &custom).await {
+                if !forward(&tx, out, &custom, &mut streamed).await {
                     return;
                 }
             }
@@ -524,12 +525,104 @@ fn search_call(
     }
 }
 
+/// Per call id of a freeform tool: the argument JSON so far and how much of its text went on.
+#[derive(Default)]
+struct StreamedInputs(std::collections::HashMap<String, (String, usize)>);
+
+/// The `input` string of an argument object that may still be incomplete: everything decoded
+/// so far, stopping before an unfinished escape.
+pub(crate) fn decode_input_prefix(raw: &str) -> String {
+    let mut out = String::new();
+    let key = "\"input\"";
+    let Some(at) = raw.find(key) else {
+        return out;
+    };
+    let mut chars = raw[at + key.len()..].chars().peekable();
+    while chars.peek().is_some_and(|c| c.is_whitespace()) {
+        chars.next();
+    }
+    if chars.next() != Some(':') {
+        return out;
+    }
+    while chars.peek().is_some_and(|c| c.is_whitespace()) {
+        chars.next();
+    }
+    if chars.next() != Some('"') {
+        return out;
+    }
+    fn hex4(it: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Option<u32> {
+        let mut v = 0u32;
+        for _ in 0..4 {
+            v = v * 16 + it.next()?.to_digit(16)?;
+        }
+        Some(v)
+    }
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => break,
+            '\\' => {
+                let Some(e) = chars.next() else { break };
+                match e {
+                    'n' => out.push('\n'),
+                    't' => out.push('\t'),
+                    'r' => out.push('\r'),
+                    'b' => out.push('\u{8}'),
+                    'f' => out.push('\u{c}'),
+                    'u' => {
+                        let Some(high) = hex4(&mut chars) else { break };
+                        if (0xD800..0xDC00).contains(&high) {
+                            if chars.next() != Some('\\') || chars.next() != Some('u') {
+                                break;
+                            }
+                            let Some(low) = hex4(&mut chars) else { break };
+                            let code = 0x10000 + ((high - 0xD800) << 10) + (low.wrapping_sub(0xDC00) & 0x3FF);
+                            if let Some(ch) = char::from_u32(code) {
+                                out.push(ch);
+                            }
+                        } else if let Some(ch) = char::from_u32(high) {
+                            out.push(ch);
+                        }
+                    }
+                    other => out.push(other),
+                }
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod decode_input_tests {
+    use super::decode_input_prefix;
+
+    #[test]
+    fn the_input_text_is_decoded_as_it_arrives() {
+        assert_eq!(decode_input_prefix(r#"{"inp"#), "");
+        assert_eq!(decode_input_prefix(r#"{"input": "*** Begin"#), "*** Begin");
+        assert_eq!(decode_input_prefix(r#"{"input":"a\nb\"c\\d"#), "a\nb\"c\\d");
+        // an unfinished escape waits for its rest
+        assert_eq!(decode_input_prefix(r#"{"input":"ab\"#), "ab");
+        assert_eq!(decode_input_prefix(r#"{"input":"ab\u30"#), "ab");
+        assert_eq!(decode_input_prefix(r#"{"input":"あx"#), "\u{3042}x");
+        // the closing quote ends the text
+        assert_eq!(decode_input_prefix(r#"{"input":"done"}"#), "done");
+        assert_eq!(decode_input_prefix(r#"{"input":"😀"}"#), "\u{1f600}");
+    }
+}
+
 /// `false` when the stream is over (terminal event sent or receiver gone).
 async fn forward(
     tx: &mpsc::Sender<Result<ResponseEvent, ApiError>>,
     out: Out,
     custom: &std::collections::HashSet<String>,
+    streamed: &mut StreamedInputs,
 ) -> bool {
+    if let Out::ItemAdded(codex_protocol::models::ResponseItem::FunctionCall { name, call_id, .. }) = &out
+        && custom.contains(name)
+    {
+        streamed.0.insert(call_id.clone(), (String::new(), 0));
+    }
     let (event, terminal) = match out {
         Out::Created => (Ok(ResponseEvent::Created { response_id: None }), false),
         Out::ItemAdded(item) => (Ok(ResponseEvent::OutputItemAdded(search_call(item, custom))), false),
@@ -539,14 +632,30 @@ async fn forward(
             item_id,
             call_id,
             delta,
-        } => (
-            Ok(ResponseEvent::ToolCallInputDelta {
-                item_id,
-                call_id: Some(call_id),
-                delta,
-            }),
-            false,
-        ),
+        } => {
+            // A freeform tool's text arrives inside a JSON object; only the text goes on.
+            let delta = match streamed.0.get_mut(&call_id) {
+                Some((raw, sent)) => {
+                    raw.push_str(&delta);
+                    let text = decode_input_prefix(raw);
+                    let fresh = text.get(*sent..).unwrap_or_default().to_string();
+                    *sent = text.len();
+                    if fresh.is_empty() {
+                        return true;
+                    }
+                    fresh
+                }
+                None => delta,
+            };
+            (
+                Ok(ResponseEvent::ToolCallInputDelta {
+                    item_id,
+                    call_id: Some(call_id),
+                    delta,
+                }),
+                false,
+            )
+        }
         Out::ReasoningSummaryDelta {
             delta,
             summary_index,
