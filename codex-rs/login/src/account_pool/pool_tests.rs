@@ -351,8 +351,8 @@ async fn the_claude_group_is_its_own_pool_with_failover_and_survives_a_restart()
         account_uuid: Some(format!("uuid-{n}")),
         plan: Some("max".to_string()),
     };
-    let one = pool.add_claude_oauth("クロード1", creds(1)).await.expect("add one");
-    let two = pool.add_claude_oauth("クロード2", creds(2)).await.expect("add two");
+    let one = pool.add_claude_oauth("Claude 1", creds(1)).await.expect("add one");
+    let two = pool.add_claude_oauth("Claude 2", creds(2)).await.expect("add two");
     assert_eq!(one.kind, AccountKind::ClaudeOauth);
     assert_eq!(one.provider, "claude");
     assert_eq!(pool.group(), "claude");
@@ -405,7 +405,7 @@ async fn re_authenticating_requires_the_same_account_and_keeps_its_settings() {
         account_uuid: Some(format!("uuid-{n}")),
         plan: None,
     };
-    let one = pool.add_claude_oauth("クロード", creds(1)).await.expect("add");
+    let one = pool.add_claude_oauth("Claude", creds(1)).await.expect("add");
     pool.set_priority(&one.id, 7).expect("priority");
 
     // Signing in as someone else is refused and changes nothing.
@@ -425,7 +425,7 @@ async fn re_authenticating_requires_the_same_account_and_keeps_its_settings() {
         .await
         .expect("the same account");
     assert_eq!(again.id, one.id);
-    assert_eq!(again.alias, "クロード");
+    assert_eq!(again.alias, "Claude");
     assert_eq!(again.priority, 7);
     assert_eq!(pool.list().len(), 1);
     let token = pool

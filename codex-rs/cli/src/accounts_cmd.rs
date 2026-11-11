@@ -55,8 +55,8 @@ pub enum AccountsAction {
 
 #[derive(Debug, Args)]
 pub struct AddArgs {
-    /// Name to show instead of an e-mail address.
-    pub alias: String,
+    /// Name to show for the account. Defaults to the provider's name (`ChatGPT`, `Claude`, ...).
+    pub alias: Option<String>,
 
     /// Add an API key read from stdin (e.g. `printenv OPENAI_API_KEY | inocode accounts add 予備 --with-api-key`).
     #[arg(long = "with-api-key")]
@@ -126,6 +126,18 @@ pub async fn run_accounts(command: AccountsCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn alias_or_default(args: &AddArgs) -> String {
+    if let Some(alias) = args.alias.as_ref().filter(|a| !a.trim().is_empty()) {
+        return alias.trim().to_string();
+    }
+    match (args.provider.as_str(), args.with_api_key) {
+        ("claude", true) => "Claude API key".to_string(),
+        ("claude", false) => "Claude".to_string(),
+        (_, true) => "OpenAI API key".to_string(),
+        _ => "ChatGPT".to_string(),
+    }
+}
+
 fn find<'a>(
     pools: &[&'a Arc<AccountPool>],
     account: &str,
@@ -148,7 +160,7 @@ fn find<'a>(
 async fn add_claude(pool: &Arc<AccountPool>, config: &Config, args: AddArgs) -> anyhow::Result<()> {
     if args.with_api_key {
         let key = crate::read_api_key_from_stdin();
-        let view = pool.add_api_key(&args.alias, &key, args.priority).await?;
+        let view = pool.add_api_key(&alias_or_default(&args), &key, args.priority).await?;
         println!("Added Claude API key {} ({})", view.alias, view.id);
         return Ok(());
     }
@@ -179,7 +191,7 @@ async fn add_claude(pool: &Arc<AccountPool>, config: &Config, args: AddArgs) -> 
     )
     .await?;
     let profile = codex_login::claude_oauth::fetch_profile(&config.auth_route_config(), &credentials.access).await;
-    let view = pool.add_claude_oauth(&args.alias, credentials).await?;
+    let view = pool.add_claude_oauth(&alias_or_default(&args), credentials).await?;
     pool.set_identity(&view.id, profile.email, profile.name)?;
     if let Some(priority) = args.priority {
         pool.set_priority(&view.id, priority)?;
@@ -191,7 +203,7 @@ async fn add_claude(pool: &Arc<AccountPool>, config: &Config, args: AddArgs) -> 
 async fn add(pool: &Arc<AccountPool>, config: &Config, args: AddArgs) -> anyhow::Result<()> {
     if args.with_api_key {
         let key = crate::read_api_key_from_stdin();
-        let view = pool.add_api_key(&args.alias, &key, args.priority).await?;
+        let view = pool.add_api_key(&alias_or_default(&args), &key, args.priority).await?;
         println!("Added API key {} ({})", view.alias, view.id);
         return Ok(());
     }
@@ -229,7 +241,7 @@ async fn add(pool: &Arc<AccountPool>, config: &Config, args: AddArgs) -> anyhow:
         pool.discard_pending_login(&login_id);
         anyhow::bail!("sign-in failed: {err}");
     }
-    match pool.finish_chatgpt_login(&login_id, &args.alias).await {
+    match pool.finish_chatgpt_login(&login_id, &alias_or_default(&args)).await {
         Ok(view) => {
             if let Some(priority) = args.priority {
                 pool.set_priority(&view.id, priority)?;
@@ -303,11 +315,16 @@ mod tests {
         let AccountsAction::Add(args) = add.action else {
             panic!("expected add");
         };
-        assert_eq!(args.alias, "予備キー");
+        assert_eq!(args.alias.as_deref(), Some("予備キー"));
         assert!(args.with_api_key);
         assert_eq!(args.priority, Some(3));
         let used = AccountsCommand::try_parse_from(["accounts", "use", "サブ"]).expect("use");
         assert!(matches!(used.action, AccountsAction::Use { .. }));
-        assert!(AccountsCommand::try_parse_from(["accounts", "add"]).is_err());
+        // The alias is optional: it defaults to the provider's name.
+        let bare = AccountsCommand::try_parse_from(["accounts", "add", "--provider", "claude"]).expect("bare add");
+        let AccountsAction::Add(bare) = bare.action else {
+            panic!("expected add");
+        };
+        assert_eq!(alias_or_default(&bare), "Claude");
     }
 }
