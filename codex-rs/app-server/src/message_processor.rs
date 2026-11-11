@@ -1261,6 +1261,7 @@ impl MessageProcessor {
             | ClientRequest::InocodeAccountsLoginCancel { .. }
             | ClientRequest::InocodeAccountsLoginComplete { .. }
             | ClientRequest::InocodeAccountsReauth { .. }
+            | ClientRequest::InocodeAccountsResetCreditConsume { .. }
             | ClientRequest::InocodeProvidersList { .. }
             | ClientRequest::InocodeAccountsPolicyRead { .. }
             | ClientRequest::InocodeAccountsPolicyWrite { .. }
