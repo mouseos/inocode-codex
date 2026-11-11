@@ -123,6 +123,10 @@ pub fn shell_command_of(args: &str) -> String {
 /// viewing are read-only; a shell tool is read-only when its command is.
 pub fn is_read_only_call(tool: &str, args: &str) -> bool {
     let name = tool.to_lowercase();
+    // Waiting on a running code-mode cell: the work happens elsewhere.
+    if name == "wait" {
+        return true;
+    }
     if name.contains("exec") || name.contains("shell") || name.contains("bash") || name.contains("terminal")
     {
         let command = shell_command_of(args);
@@ -232,6 +236,7 @@ mod tests {
         assert!(is_read_only_call("multi_agent_v1spawn_agent", "{}"));
         assert!(is_read_only_call("multi_agent_v1send_input", "{}"));
         assert!(!is_read_only_call("multi_agent_v1wait_agent", "{}"));
+        assert!(is_read_only_call("wait", "{\"cell_id\":\"3\"}"));
     }
 
     #[test]

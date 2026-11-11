@@ -239,6 +239,10 @@ impl StallDetector {
 
     fn check_repeat(&self) -> Option<Stall> {
         let tail = self.tail(self.config.repeat_n)?;
+        // Waiting again on a running code-mode cell is waiting, not repeating a failed attempt.
+        if tail[0].tool == "wait" {
+            return None;
+        }
         let key = tail[0].action_key();
         tail.iter()
             .all(|o| o.action_key() == key)
@@ -541,6 +545,21 @@ mod tests {
         let stall = fired.expect("no progress after 8 calls");
         assert_eq!(stall.trigger, Trigger::NoProgress);
         assert!(stall.signature.contains("0 read-only"));
+    }
+
+    #[test]
+    fn waiting_again_on_a_running_cell_is_not_a_repeated_action() {
+        let mut d = StallDetector::new(StallConfig::default());
+        for _ in 0..10 {
+            let obs = Observation {
+                tool: "wait".into(),
+                args: "{\"cell_id\":\"3\"}".into(),
+                observation: "script running".into(),
+                read_only: true,
+                ..Default::default()
+            };
+            assert_eq!(d.observe(obs), None);
+        }
     }
 
     #[test]

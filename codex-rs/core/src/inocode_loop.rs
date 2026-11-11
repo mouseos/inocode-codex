@@ -266,6 +266,12 @@ fn test_result_in_output(output: &str) -> Option<String> {
         .map(|line| truncate(line.trim(), 200))
 }
 
+/// Recording evidence is the product of a research turn: it counts as progress the way an edit
+/// does for a coding turn.
+fn is_evidence_record(tool: &str) -> bool {
+    tool.to_ascii_lowercase().contains("record_evidence")
+}
+
 fn is_edit_tool(tool: &str) -> bool {
     let tool = tool.to_ascii_lowercase();
     tool.contains("apply_patch") || tool.contains("edit") || tool.contains("write_file")
@@ -284,7 +290,7 @@ pub(crate) fn build_observation(
         args: truncate(args, 500),
         exit_code,
         error: (!success || nonzero_exit).then(|| truncate(output, 400)),
-        changed_files: success && !nonzero_exit && is_edit_tool(tool),
+        changed_files: success && !nonzero_exit && (is_edit_tool(tool) || is_evidence_record(tool)),
         test_result: test_result_in_output(output),
         observation: codex_inocode_advisor::normalize_error(output),
         read_only: codex_inocode_advisor::is_read_only_call(tool, args),
@@ -607,6 +613,17 @@ mod tests {
         let obs = build_observation("apply_patch", "{}", true, "Success");
         assert!(obs.changed_files);
         assert!(!obs.failed());
+    }
+
+    #[test]
+    fn recording_evidence_counts_as_progress_and_a_search_does_not() {
+        let evidence = build_observation("record_evidence", "{}", true, "recorded");
+        assert!(evidence.changed_files);
+        let failed = build_observation("record_evidence", "{}", false, "denied");
+        assert!(!failed.changed_files);
+        let search = build_observation("web_search", "{\"query\":\"x\"}", true, "results");
+        assert!(!search.changed_files);
+        assert!(search.read_only);
     }
 
     fn snapshot(limit_id: &str) -> codex_protocol::protocol::RateLimitSnapshot {
