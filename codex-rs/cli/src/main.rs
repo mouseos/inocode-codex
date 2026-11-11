@@ -1045,6 +1045,9 @@ fn stage_str(stage: Stage) -> &'static str {
 
 fn main() -> anyhow::Result<()> {
     codex_build_info::initialize!();
+    // InoCode: Windows uses the restricted-token sandbox unless a level is configured; with it
+    // disabled, workspace-write would be downgraded to read-only.
+    codex_core::windows_sandbox::use_restricted_token_by_default();
     let remote_control_disabled = codex_app_server::take_remote_control_disabled_env();
     arg0_dispatch_or_else(move |arg0_paths: Arg0DispatchPaths| async move {
         // Finish polling the large subcommand dispatcher before polling interactive TUI events.

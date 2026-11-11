@@ -116,6 +116,18 @@ pub(crate) fn windows_sandbox_level_for_legacy_checks(
     }
 }
 
+static INOCODE_DEFAULT_RESTRICTED_TOKEN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// InoCode: on Windows, select the restricted-token sandbox when no level is configured. Called
+/// once at startup by the `inocode` binary; library users and tests keep the upstream default
+/// (disabled). No effect on other platforms.
+pub fn use_restricted_token_by_default() {
+    if cfg!(windows) {
+        INOCODE_DEFAULT_RESTRICTED_TOKEN.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 pub trait WindowsSandboxLevelExt {
     fn from_config(config: &Config) -> WindowsSandboxLevel;
     fn from_features(features: &Features) -> WindowsSandboxLevel;
@@ -135,10 +147,13 @@ impl WindowsSandboxLevelExt for WindowsSandboxLevel {
         if features.enabled(Feature::WindowsSandboxElevated) {
             return WindowsSandboxLevel::Elevated;
         }
-        // InoCode: on Windows the restricted-token sandbox is the default when nothing selects a
-        // level. With the level disabled, workspace-write is downgraded to read-only (see
-        // `effective_sandbox_mode`), so no project folder could be written without setup.
-        if features.enabled(Feature::WindowsSandbox) || cfg!(windows) {
+        // InoCode: the binary opts in (`use_restricted_token_by_default`) so that, when nothing
+        // selects a level, Windows uses the restricted-token sandbox. With the level disabled,
+        // workspace-write is downgraded to read-only (see `effective_sandbox_mode`), so no
+        // project folder could be written without setup.
+        if features.enabled(Feature::WindowsSandbox)
+            || INOCODE_DEFAULT_RESTRICTED_TOKEN.load(std::sync::atomic::Ordering::Relaxed)
+        {
             WindowsSandboxLevel::RestrictedToken
         } else {
             WindowsSandboxLevel::Disabled

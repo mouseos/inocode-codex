@@ -1826,13 +1826,14 @@ async fn apply_patch_without_input_deltas_still_sends_the_whole_change_once() ->
 
     assert_eq!(updates.len(), 1);
     assert_eq!(updates[0].call_id, call_id);
+    // The path is the resolved one (absolute); only the content matters here.
     assert_eq!(
-        updates[0].changes.get(&std::path::PathBuf::from("whole.txt")),
-        Some(&codex_protocol::protocol::FileChange::Add {
+        updates[0].changes.values().collect::<Vec<_>>(),
+        vec![&codex_protocol::protocol::FileChange::Add {
             content: "hello
 world
 ".to_string(),
-        })
+        }]
     );
     assert_eq!(harness.read_file_text("whole.txt").await?, "hello
 world
