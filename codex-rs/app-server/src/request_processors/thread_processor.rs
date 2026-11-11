@@ -3625,6 +3625,10 @@ impl ThreadRequestProcessor {
     ) -> Result<Vec<Turn>, JSONRPCErrorError> {
         let mut cursor = None;
         let mut turns = Vec::new();
+        // InoCode: the full view of a huge thread must not exhaust memory; stop with a clear
+        // error once the pages held so far would exceed the load budget.
+        let budget = codex_rollout::load_budget::max_load_bytes();
+        let mut held_bytes = 0u64;
         loop {
             let page = self
                 .paginated_thread_turns_list_response(
@@ -3635,6 +3639,14 @@ impl ThreadRequestProcessor {
                     Some(TurnItemsView::Full),
                 )
                 .await?;
+            held_bytes = held_bytes.saturating_add(
+                serde_json::to_vec(&page.data).map_or(0, |bytes| bytes.len() as u64),
+            );
+            if let Err(err) = codex_rollout::load_budget::check_budget(held_bytes, budget) {
+                return Err(internal_error(format!(
+                    "failed to load full thread turns for {thread_id}: {err}"
+                )));
+            }
             turns.extend(page.data);
             let Some(next_cursor) = page.next_cursor else {
                 return Ok(turns);
