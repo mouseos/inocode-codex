@@ -47,6 +47,46 @@ pub fn declared_tools(tools: &Value) -> Vec<ToolDecl> {
                     }
                 }
             }
+            // A freeform (custom) tool has one text input; the Messages wire has only functions,
+            // so it is declared with a single `input` string and restored when called
+            // (`custom_tool_names`).
+            Some("custom") => {
+                if let Some(name) = tool.get("name").and_then(Value::as_str) {
+                    let hint = tool
+                        .get("format")
+                        .and_then(|f| f.get("definition"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let mut description = tool
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .replace(
+                            "This is a FREEFORM tool, so do not wrap the patch in JSON.",
+                            "Pass the whole patch text as the `input` string.",
+                        );
+                    if !hint.is_empty() {
+                        description.push_str("
+
+The input must follow this grammar:
+");
+                        description.push_str(hint);
+                    }
+                    out.push(ToolDecl {
+                        wire_name: name.to_string(),
+                        namespace: None,
+                        name: name.to_string(),
+                        description,
+                        parameters: serde_json::json!({
+                            "type": "object",
+                            "properties": {"input": {"type": "string",
+                                "description": "The tool's text input, exactly as it should be run."}},
+                            "required": ["input"]
+                        }),
+                        strict: false,
+                    });
+                }
+            }
             // The client-side search over deferred tools is offered as one function; the caller
             // turns a call to it back into a search call (`TOOL_SEARCH_NAME`).
             Some("tool_search") => out.push(ToolDecl {
@@ -68,6 +108,17 @@ pub fn declared_tools(tools: &Value) -> Vec<ToolDecl> {
         }
     }
     out
+}
+
+/// Names of the freeform tools in a Responses `tools` array.
+pub fn custom_tool_names(tools: &Value) -> std::collections::HashSet<String> {
+    tools
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|tool| tool.get("type").and_then(Value::as_str) == Some("custom"))
+        .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_string))
+        .collect()
 }
 
 /// The name under which the deferred-tool search is declared as a function.
@@ -172,5 +223,21 @@ mod tests {
         })]);
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].wire_name, "mcp__files__read");
+    }
+
+    #[test]
+    fn a_freeform_tool_is_declared_with_one_input_string() {
+        let tools = json!([{
+            "type": "custom", "name": "apply_patch",
+            "description": "Edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.",
+            "format": {"type": "grammar", "syntax": "lark", "definition": "start: /.+/"}
+        }]);
+        let decls = declared_tools(&tools);
+        assert_eq!(decls.len(), 1);
+        assert_eq!(decls[0].wire_name, "apply_patch");
+        assert_eq!(decls[0].parameters["required"][0], "input");
+        assert!(decls[0].description.contains("`input` string"));
+        assert!(decls[0].description.contains("start: /.+/"));
+        assert!(custom_tool_names(&tools).contains("apply_patch"));
     }
 }

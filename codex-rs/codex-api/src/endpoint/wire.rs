@@ -359,6 +359,7 @@ impl<T: HttpTransport> WireClient<T> {
             .and_then(|v| v.to_str().ok())
             .map(str::to_string);
         let registry = ToolRegistry::new(&tools);
+        let custom = codex_provider_adapters::tool_names::custom_tool_names(&tools_json);
         // Claude reports the subscription window usage in response headers.
         let limits = matches!(self.kind, WireKind::AnthropicMessages { .. })
             .then(|| anthropic_rate_limits(&response.headers))
@@ -368,7 +369,7 @@ impl<T: HttpTransport> WireClient<T> {
             if let Some(snapshot) = limits {
                 let _ = tx_event.send(Ok(ResponseEvent::RateLimits(snapshot))).await;
             }
-            pump(response.bytes, tx_event, idle_timeout, registry, parser).await;
+            pump(response.bytes, tx_event, idle_timeout, registry, parser, custom).await;
         });
         Ok(ResponseStream {
             routing_affinity: None,
@@ -426,6 +427,7 @@ async fn pump(
     idle_timeout: Duration,
     registry: ToolRegistry,
     mut parser: Parser,
+    custom: std::collections::HashSet<String>,
 ) {
     let mut stream = bytes.eventsource();
     let response_id = format!("resp_{}", uuid::Uuid::new_v4().simple());
@@ -452,7 +454,7 @@ async fn pump(
         };
         for event in events {
             for out in assembler.push(event) {
-                if !forward(&tx, out).await {
+                if !forward(&tx, out, &custom).await {
                     return;
                 }
             }
@@ -468,7 +470,10 @@ async fn pump(
 }
 
 /// A call to the function that stands for the deferred-tool search becomes a search call again.
-fn search_call(item: codex_protocol::models::ResponseItem) -> codex_protocol::models::ResponseItem {
+fn search_call(
+    item: codex_protocol::models::ResponseItem,
+    custom: &std::collections::HashSet<String>,
+) -> codex_protocol::models::ResponseItem {
     use codex_protocol::models::ResponseItem;
     match item {
         ResponseItem::FunctionCall {
@@ -490,16 +495,45 @@ fn search_call(item: codex_protocol::models::ResponseItem) -> codex_protocol::mo
                 internal_chat_message_metadata_passthrough: None,
             }
         }
+        // A call to the function that stands for a freeform tool carries its text in `input`.
+        ResponseItem::FunctionCall {
+            name,
+            namespace: None,
+            arguments,
+            call_id,
+            id,
+            status,
+            ..
+        } if custom.contains(&name) => {
+            let input = serde_json::from_str::<serde_json::Value>(&arguments)
+                .ok()
+                .and_then(|v| v.get("input").and_then(|i| i.as_str().map(str::to_string)))
+                .unwrap_or(arguments);
+            ResponseItem::CustomToolCall {
+                encrypted_content: None,
+                id,
+                status,
+                call_id,
+                name,
+                namespace: None,
+                input,
+                internal_chat_message_metadata_passthrough: None,
+            }
+        }
         other => other,
     }
 }
 
 /// `false` when the stream is over (terminal event sent or receiver gone).
-async fn forward(tx: &mpsc::Sender<Result<ResponseEvent, ApiError>>, out: Out) -> bool {
+async fn forward(
+    tx: &mpsc::Sender<Result<ResponseEvent, ApiError>>,
+    out: Out,
+    custom: &std::collections::HashSet<String>,
+) -> bool {
     let (event, terminal) = match out {
         Out::Created => (Ok(ResponseEvent::Created { response_id: None }), false),
-        Out::ItemAdded(item) => (Ok(ResponseEvent::OutputItemAdded(search_call(item))), false),
-        Out::ItemDone(item) => (Ok(ResponseEvent::OutputItemDone(search_call(item))), false),
+        Out::ItemAdded(item) => (Ok(ResponseEvent::OutputItemAdded(search_call(item, custom))), false),
+        Out::ItemDone(item) => (Ok(ResponseEvent::OutputItemDone(search_call(item, custom))), false),
         Out::TextDelta(delta) => (Ok(ResponseEvent::OutputTextDelta(delta)), false),
         Out::ToolArgsDelta {
             item_id,

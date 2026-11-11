@@ -52,7 +52,11 @@ fn a_catalog_entry_is_built_from_what_the_endpoint_says() {
     assert_eq!(info.input_modalities, vec![InputModality::Text]);
     assert_eq!(info.default_reasoning_level, Some(ReasoningEffort::Medium));
     assert_eq!(info.supported_reasoning_levels.len(), 5);
-    assert_eq!(info.apply_patch_tool_type, None, "function tools only");
+    assert_eq!(
+        info.apply_patch_tool_type,
+        Some(codex_protocol::openai_models::ApplyPatchToolType::Freeform),
+        "carried as a function with one input string"
+    );
     assert!(info.supports_search_tool);
     assert!(!info.supports_reasoning_summary_parameter);
 
@@ -133,5 +137,5 @@ async fn an_alias_or_unknown_name_still_gets_the_claude_catalog_entry() {
     let unknown = manager.get_model_info("claude-zzz-9", &config).await.model;
     assert_eq!(unknown.slug, "claude-zzz-9");
     assert!(unknown.supports_search_tool, "Claude defaults, not the fallback catalog");
-    assert_eq!(unknown.apply_patch_tool_type, None);
+    assert!(unknown.apply_patch_tool_type.is_some());
 }

@@ -19,6 +19,7 @@ use codex_models_manager::manager::ModelsManagerFuture;
 use codex_models_manager::manager::RefreshStrategy;
 use codex_models_manager::manager::StaticModelsManager;
 use codex_protocol::config_types::CollaborationModeMask;
+use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelVisibility;
@@ -107,8 +108,8 @@ fn effort(level: ReasoningEffort, description: &str) -> ReasoningEffortPreset {
     }
 }
 
-/// The model's catalog entry. Claude models take function tools only (no `apply_patch` freeform
-/// tool, no hosted web search; the deferred-tool search is carried as a function), accept the effort ladder, and do not take the Responses
+/// The model's catalog entry. Claude models take function tools only (`apply_patch` is carried as a
+/// function with one text input; no hosted web search; the deferred-tool search is carried as a function), accept the effort ladder, and do not take the Responses
 /// `reasoning.summary` parameter.
 pub(crate) fn model_info(remote: &RemoteModel, priority: i32) -> ModelInfo {
     static TEMPLATE: std::sync::OnceLock<ModelInfo> = std::sync::OnceLock::new();
@@ -136,7 +137,9 @@ pub(crate) fn model_info(remote: &RemoteModel, priority: i32) -> ModelInfo {
     info.supports_reasoning_summary_parameter = false;
     info.support_verbosity = false;
     info.default_verbosity = None;
-    info.apply_patch_tool_type = None;
+    // `apply_patch` is a freeform tool; the Messages wire carries it as a function with one
+    // `input` string (see provider-adapters `tool_names`), so edits show up as file changes.
+    info.apply_patch_tool_type = Some(ApplyPatchToolType::Freeform);
     // Third-party tools (MCP, apps) stay deferred behind the search function instead of being
     // declared on every request (hundreds of them are tens of thousands of tokens).
     info.supports_search_tool = true;
