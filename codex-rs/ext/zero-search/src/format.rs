@@ -88,7 +88,10 @@ pub(crate) fn format_web_results(
     if !failed.is_empty() {
         text.push_str(&format!("Engines that failed: {}\n", failed.join(", ")));
     }
-    (truncate_output(text), !items.is_empty())
+    // A search that no engine could run is a failure; a search that ran and found nothing is a
+    // result ("No results."), not an error.
+    let ran = !items.is_empty() || outcomes.iter().any(|outcome| outcome.ok);
+    (truncate_output(text), ran)
 }
 
 #[cfg(test)]

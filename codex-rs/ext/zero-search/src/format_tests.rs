@@ -91,6 +91,14 @@ fn all_engines_failing_reports_no_results() {
 }
 
 #[test]
+fn an_engine_that_ran_and_found_nothing_is_a_result_not_a_failure() {
+    let outcomes = vec![ok(WebEngine::Bing, Vec::new())];
+    let (text, ran) = format_web_results("site:example.invalid x", &outcomes, 5);
+    assert!(ran);
+    assert!(text.contains("No results."));
+}
+
+#[test]
 fn long_output_is_cut_on_a_character_boundary() {
     let text = "検".repeat(MAX_OUTPUT_BYTES);
     let cut = truncate_output(text);
