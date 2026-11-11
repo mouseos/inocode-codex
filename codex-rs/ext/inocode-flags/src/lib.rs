@@ -16,7 +16,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 /// All flag keys, in contract order.
-pub const FLAG_KEYS: [&str; 12] = [
+pub const FLAG_KEYS: [&str; 13] = [
     "metrics.enabled",
     "wait.event_driven",
     "knowledge.enabled",
@@ -29,6 +29,7 @@ pub const FLAG_KEYS: [&str; 12] = [
     "team.auto_select",
     "evidence.enabled",
     "read_message.enabled",
+    "model_enrichment.fetch",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +46,8 @@ pub struct InocodeFlags {
     pub team_auto_select: bool,
     pub evidence_enabled: bool,
     pub read_message_enabled: bool,
+    /// Read public benchmark and price sources for the model picker (off: cache only).
+    pub model_enrichment_fetch: bool,
 }
 
 impl Default for InocodeFlags {
@@ -62,6 +65,7 @@ impl Default for InocodeFlags {
             team_auto_select: true,
             evidence_enabled: true,
             read_message_enabled: true,
+            model_enrichment_fetch: true,
         }
     }
 }
@@ -138,6 +142,7 @@ impl InocodeFlags {
             "team.auto_select" => self.team_auto_select,
             "evidence.enabled" => self.evidence_enabled,
             "read_message.enabled" => self.read_message_enabled,
+            "model_enrichment.fetch" => self.model_enrichment_fetch,
             _ => return None,
         })
     }
@@ -157,6 +162,7 @@ impl InocodeFlags {
             "team.auto_select" => &mut self.team_auto_select,
             "evidence.enabled" => &mut self.evidence_enabled,
             "read_message.enabled" => &mut self.read_message_enabled,
+            "model_enrichment.fetch" => &mut self.model_enrichment_fetch,
             _ => return false,
         };
         *slot = value;
@@ -244,7 +250,7 @@ mod tests {
         let f = InocodeFlags::load_from(dir.path());
         assert_eq!(f, InocodeFlags::default());
         assert!(f.entries().iter().all(|(_, v)| *v));
-        assert_eq!(f.entries().len(), 11);
+        assert_eq!(f.entries().len(), 13);
     }
 
     #[test]

@@ -82,6 +82,7 @@ members = [
     "ext/inocode-compaction",
     "ext/inocode-metrics",
     "ext/inocode-stats",
+    "ext/inocode-model-catalog",
     "ext/inocode-protocol",
     "ext/inocode-team",
     "ext/inocode-tool-output",
@@ -269,6 +270,7 @@ codex-inocode-compaction = { path = "ext/inocode-compaction" }
 codex-inocode-metrics = { path = "ext/inocode-metrics" }
 codex-inocode-stats = { path = "ext/inocode-stats" }
 codex-inocode-protocol = { path = "ext/inocode-protocol" }
+codex-inocode-model-catalog = { path = "ext/inocode-model-catalog" }
 codex-inocode-team = { path = "ext/inocode-team" }
 codex-inocode-tool-output = { path = "ext/inocode-tool-output" }
 codex-external-agent-migration = { path = "external-agent-migration" }

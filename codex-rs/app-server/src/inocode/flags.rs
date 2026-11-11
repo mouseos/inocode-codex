@@ -57,7 +57,7 @@ mod tests {
     fn read_defaults_then_write_roundtrip() {
         let dir = tempfile::tempdir().expect("tempdir");
         let all = read(dir.path()).flags;
-        assert_eq!(all.len(), 11);
+        assert_eq!(all.len(), 13);
         assert!(all.values().all(|v| *v));
 
         write(dir.path(), "advisor.enabled", false).expect("write");

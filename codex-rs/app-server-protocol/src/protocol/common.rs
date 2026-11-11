@@ -870,6 +870,18 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeAccountsLoginCancelResponse,
     },
+    #[experimental("inocode/models/enrich")]
+    InocodeModelsEnrich => "inocode/models/enrich" {
+        params: v2::InocodeModelsEnrichParams,
+        serialization: None,
+        response: v2::InocodeModelsEnrichResponse,
+    },
+    #[experimental("inocode/models/priceOverride")]
+    InocodeModelsPriceOverride => "inocode/models/priceOverride" {
+        params: v2::InocodeModelsPriceOverrideParams,
+        serialization: None,
+        response: v2::InocodeModelsPriceOverrideResponse,
+    },
     #[experimental("inocode/accounts/policy/read")]
     InocodeAccountsPolicyRead => "inocode/accounts/policy/read" {
         params: v2::InocodeAccountsPolicyReadParams,

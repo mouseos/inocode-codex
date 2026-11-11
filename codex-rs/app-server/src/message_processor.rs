@@ -1267,6 +1267,8 @@ impl MessageProcessor {
             | ClientRequest::InocodeAccountsResetCreditConsume { .. }
             | ClientRequest::InocodeAccountsResetCreditHistory { .. }
             | ClientRequest::InocodeProvidersList { .. }
+            | ClientRequest::InocodeModelsEnrich { .. }
+            | ClientRequest::InocodeModelsPriceOverride { .. }
             | ClientRequest::InocodeAccountsPolicyRead { .. }
             | ClientRequest::InocodeAccountsPolicyWrite { .. }
             | ClientRequest::InocodeFlagsWrite { .. }) => crate::inocode::handle(request).await,

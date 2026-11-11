@@ -2236,6 +2236,7 @@ dependencies = [
  "codex-inocode-flags",
  "codex-inocode-knowledge",
  "codex-inocode-metrics",
+ "codex-inocode-model-catalog",
  "codex-inocode-protocol",
  "codex-inocode-stats",
  "codex-inocode-team",
@@ -4202,6 +4203,20 @@ dependencies = [
  "tempfile",
  "tokio",
 ]
+[[package]]
+name = "codex-inocode-model-catalog"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "pretty_assertions",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "wiremock",
+]
+
 
 [[package]]
 name = "codex-inocode-stats"

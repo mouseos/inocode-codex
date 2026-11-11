@@ -14,6 +14,7 @@ mod knowledge;
 mod messages;
 mod metrics;
 mod params;
+mod models;
 mod stats;
 mod team;
 mod tooloutput;
@@ -56,6 +57,7 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
         Some("compaction") => compaction::handle(request).await,
         Some("toolOutput" | "sessions") => tooloutput::handle(request).await,
         Some("metrics") => metrics::handle(request).await,
+        Some("models") => models::handle(request).await,
         Some("flags") => flags::handle(request).await,
         Some("guard") => guard::handle(request).await,
         Some("params") => params::handle(request).await,
