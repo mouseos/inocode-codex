@@ -2373,7 +2373,7 @@ async fn dangerous_command_forbidden_in_external_sandbox_when_policy_matches() {
             prefix_rule: None,
         },
         ExecApprovalRequirement::Forbidden {
-            reason: "approval required by policy, but AskForApproval is set to Never".to_string(),
+            reason: PROMPT_CONFLICT_REASON.to_string(),
         },
     )
     .await;

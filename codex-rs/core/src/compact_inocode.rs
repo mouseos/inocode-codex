@@ -361,13 +361,20 @@ pub(crate) fn retained_user_texts(items: &[codex_history::ResponseItemEnvelope])
 /// The ledger, presented again after a compaction at the same fixed place as the pinned rules.
 /// Messages the compacted history still holds are not repeated; a long message is presented as its
 /// beginning plus the path of the whole text (`compaction.ledger_preview_chars`).
+pub(crate) fn ledger_preview_chars() -> usize {
+    usize::try_from(codex_inocode_flags::int_param("compaction.ledger_preview_chars"))
+        .unwrap_or(usize::MAX)
+}
+
 pub(crate) fn ledger_item(
     thread_id: &str,
     retained: &[codex_history::ResponseItemEnvelope],
 ) -> Option<ResponseItem> {
-    let preview = usize::try_from(codex_inocode_flags::int_param("compaction.ledger_preview_chars"))
-        .unwrap_or(usize::MAX);
-    let rendered = codex_inocode_ledger::render(thread_id, &retained_user_texts(retained), preview)?;
+    let rendered = codex_inocode_ledger::render(
+        thread_id,
+        &retained_user_texts(retained),
+        ledger_preview_chars(),
+    )?;
     metric(
         thread_id,
         codex_inocode_metrics::MetricEvent::LedgerRepresented {

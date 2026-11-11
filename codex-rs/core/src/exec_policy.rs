@@ -53,12 +53,19 @@ mod model_policy;
 pub(crate) use inheritance::InheritedExecPolicy;
 pub(crate) use model_policy::AllowPrefixRules;
 
-const PROMPT_CONFLICT_REASON: &str =
-    "approval required by policy, but AskForApproval is set to Never";
-const REJECT_SANDBOX_APPROVAL_REASON: &str =
-    "approval required by policy, but AskForApproval::Granular.sandbox_approval is false";
-const REJECT_RULES_APPROVAL_REASON: &str =
-    "approval required by policy rule, but AskForApproval::Granular.rules is false";
+// Every refusal because the user cannot be asked also says what to do instead.
+const PROMPT_CONFLICT_REASON: &str = concat!(
+    "approval required by policy, but AskForApproval is set to Never. ",
+    crate::inocode_unattended::unattended_note!()
+);
+const REJECT_SANDBOX_APPROVAL_REASON: &str = concat!(
+    "approval required by policy, but AskForApproval::Granular.sandbox_approval is false. ",
+    crate::inocode_unattended::unattended_note!()
+);
+const REJECT_RULES_APPROVAL_REASON: &str = concat!(
+    "approval required by policy rule, but AskForApproval::Granular.rules is false. ",
+    crate::inocode_unattended::unattended_note!()
+);
 const RULES_DIR_NAME: &str = "rules";
 const RULE_EXTENSION: &str = "rules";
 const DEFAULT_POLICY_FILE: &str = "default.rules";

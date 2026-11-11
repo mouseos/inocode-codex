@@ -3420,6 +3420,7 @@ impl Session {
             parsed_cmd,
         });
         let _user_wait = self.start_user_wait_timing(turn_context, user_wait_owner.as_deref());
+        let _inocode_question = crate::inocode_unattended::UserQuestionTimer::start(self.thread_id, "approval");
         self.send_event(turn_context, event).await;
         rx_approve.await.unwrap_or(ReviewDecision::Abort)
     }
@@ -3469,6 +3470,7 @@ impl Session {
             grant_root,
         });
         let _user_wait = self.start_user_wait_timing(turn_context, user_wait_owner.as_deref());
+        let _inocode_question = crate::inocode_unattended::UserQuestionTimer::start(self.thread_id, "approval");
         self.send_event(turn_context, event).await;
         rx_approve.await.unwrap_or(ReviewDecision::Abort)
     }
@@ -3628,6 +3630,7 @@ impl Session {
             cwd: Some(cwd.clone().into()),
         });
         let _user_wait = self.start_user_wait_timing(turn_context, user_wait_owner.as_deref());
+        let _inocode_question = crate::inocode_unattended::UserQuestionTimer::start(self.thread_id, "permissions");
         self.send_event(turn_context.as_ref(), event).await;
         tokio::select! {
             biased;
@@ -3684,6 +3687,7 @@ impl Session {
             .turn_metadata_state
             .mark_user_input_requested_during_turn();
         let _user_wait = self.start_user_wait_timing(turn_context, user_wait_owner.as_deref());
+        let _inocode_question = crate::inocode_unattended::UserQuestionTimer::start(self.thread_id, "request_user_input");
         self.send_event(turn_context, event).await;
         rx_response.await.ok()
     }

@@ -120,13 +120,20 @@ async fn handle_spawn_agent(
         #[allow(deprecated)]
         let cwd = turn.cwd.as_path().to_path_buf();
         let contracts = codex_inocode_team::contract_instruction(&cwd);
-        if contracts.is_empty() {
-            message
-        } else {
-            format!("{message}
+        // The user's own words (permissions and prohibitions among them), verbatim: the child
+        // cannot ask the user, and a summary by the parent would be its reading, not theirs.
+        let user_words = codex_inocode_ledger::render(&session.thread_id.to_string(), &[], crate::compact_inocode::ledger_preview_chars())
+            .map(|rendered| rendered.text)
+            .unwrap_or_default();
+        let mut message = message;
+        for extra in [contracts, user_words] {
+            if !extra.is_empty() {
+                message = format!("{message}
 
-{contracts}")
+{extra}");
+            }
         }
+        message
     };
     let team_task_name = args.task_name.clone();
     let spawn_text = message.clone();
@@ -212,6 +219,8 @@ async fn handle_spawn_agent(
         },
     );
     // The child's state follows its own status changes, not only `wait_agent` polls.
+    // The child (and its own children) inherit the user's words, for their own compactions too.
+    codex_inocode_ledger::inherit(&session.thread_id.to_string(), &new_thread_id.to_string());
     crate::inocode_team::watch_child(&session, new_thread_id);
     // From here on the host records the files this child changes and the commands it runs.
     codex_inocode_team::note_spawned(&new_thread_id.to_string());

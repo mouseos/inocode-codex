@@ -166,6 +166,22 @@ pub fn render_at(
     })
 }
 
+/// Copies the ledger of `from` (a parent) into the ledger of `to` (a child it spawned), verbatim,
+/// so the user's own words reach sub-agents and their sub-agents. Returns how many entries.
+pub fn inherit_at(home: &Path, from: &str, to: &str) -> usize {
+    let mut n = 0;
+    for e in entries_at(home, from) {
+        if record_at(home, to, &e.text).is_some() {
+            n += 1;
+        }
+    }
+    n
+}
+
+pub fn inherit(from: &str, to: &str) -> usize {
+    inherit_at(&inocode_home(), from, to)
+}
+
 pub fn render(thread_id: &str, retained: &[String], preview_chars: usize) -> Option<Rendered> {
     render_at(&inocode_home(), thread_id, retained, preview_chars)
 }
@@ -206,6 +222,17 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path).unwrap(), log);
         // The ledger file itself keeps the whole text too.
         assert_eq!(entries_at(d.path(), "t")[1].text, log);
+    }
+
+    #[test]
+    fn a_child_inherits_the_parents_words_verbatim() {
+        let d = tempfile::tempdir().unwrap();
+        record_at(d.path(), "parent", "Tests with the real model are allowed. Never touch ~/.codex.");
+        assert_eq!(inherit_at(d.path(), "parent", "child"), 1);
+        assert_eq!(inherit_at(d.path(), "child", "grandchild"), 1);
+        let r = render_at(d.path(), "grandchild", &[], 2000).unwrap();
+        assert!(r.text.contains("Never touch ~/.codex."));
+        assert_eq!(inherit_at(d.path(), "nobody", "x"), 0);
     }
 
     #[test]

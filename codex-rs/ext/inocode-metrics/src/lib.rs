@@ -37,6 +37,9 @@ pub enum MetricEvent {
     LedgerRepresented { full: u64, marked: u64 },
     /// Old tool outputs were offloaded to files before a compaction.
     ObservationsOffloaded { count: u64, bytes: u64 },
+    /// The agent asked the user something and waited (`question_kind`: `request_user_input`, `approval`,
+    /// `permissions`). `wait_ms` is the time from the question to its answer.
+    UserQuestion { question_kind: String, wait_ms: u64 },
 }
 
 /// A stored line: event plus thread and timestamp.
@@ -69,6 +72,15 @@ pub struct MetricCounters {
     pub observations_offloaded: u64,
     #[serde(default)]
     pub observation_bytes_offloaded: u64,
+    /// Questions put to the user (input requests, approvals, permission requests).
+    #[serde(default)]
+    pub user_questions: u64,
+    /// Total time the agent waited for the user's answers.
+    #[serde(default)]
+    pub user_question_wait_ms: u64,
+    /// Questions by kind (the reason for the stop).
+    #[serde(default)]
+    pub user_questions_by_kind: std::collections::BTreeMap<String, u64>,
 }
 
 impl MetricCounters {
@@ -91,6 +103,17 @@ impl MetricCounters {
             MetricEvent::ObservationsOffloaded { count, bytes } => {
                 self.observations_offloaded += count;
                 self.observation_bytes_offloaded += bytes;
+            }
+            MetricEvent::UserQuestion {
+                question_kind,
+                wait_ms,
+            } => {
+                self.user_questions += 1;
+                self.user_question_wait_ms += wait_ms;
+                *self
+                    .user_questions_by_kind
+                    .entry(question_kind.clone())
+                    .or_insert(0) += 1;
             }
         }
     }
@@ -371,5 +394,21 @@ mod tests {
             MetricsStore::at(dir.path()).summary(0),
             MetricsSummary::default()
         );
+    }
+
+    #[test]
+    fn user_questions_are_stored_and_counted() {
+        let event = MetricEvent::UserQuestion {
+            question_kind: "approval".into(),
+            wait_ms: 1500,
+        };
+        let line = serde_json::to_string(&event).unwrap();
+        assert!(line.contains(r#""kind":"user_question""#) && line.contains(r#""question_kind":"approval""#));
+        assert_eq!(serde_json::from_str::<MetricEvent>(&line).unwrap(), event);
+        let mut counters = MetricCounters::default();
+        counters.apply(&event);
+        counters.apply(&event);
+        assert_eq!((counters.user_questions, counters.user_question_wait_ms), (2, 3000));
+        assert_eq!(counters.user_questions_by_kind["approval"], 2);
     }
 }
