@@ -248,9 +248,31 @@ impl<'de> Deserialize<'de> for FileSystemPermissions {
     }
 }
 
-#[derive(Debug, Clone, Default, Eq, Hash, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[derive(Debug, Clone, Default, Eq, Hash, PartialEq, Serialize, JsonSchema, TS)]
 pub struct NetworkPermissions {
     pub enabled: Option<bool>,
+}
+
+/// A model that means "network on" often writes `true` instead of `{"enabled": true}`. The
+/// request is clear either way, so both forms are read (a mistake of form is not a refusal).
+impl<'de> Deserialize<'de> for NetworkPermissions {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Form {
+            Flag(bool),
+            Full { enabled: Option<bool> },
+        }
+        Ok(match Form::deserialize(deserializer)? {
+            Form::Flag(enabled) => Self {
+                enabled: Some(enabled),
+            },
+            Form::Full { enabled } => Self { enabled },
+        })
+    }
 }
 
 impl NetworkPermissions {
@@ -4820,5 +4842,30 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn network_permissions_accept_a_bare_boolean_as_well_as_the_object() {
+        use crate::request_permissions::RequestPermissionProfile;
+        let flag: RequestPermissionProfile =
+            serde_json::from_str(r#"{"network": true}"#).expect("a bare boolean");
+        assert_eq!(
+            flag.network,
+            Some(NetworkPermissions {
+                enabled: Some(true)
+            })
+        );
+        let object: RequestPermissionProfile =
+            serde_json::from_str(r#"{"network": {"enabled": false}}"#).expect("the object form");
+        assert_eq!(
+            object.network,
+            Some(NetworkPermissions {
+                enabled: Some(false)
+            })
+        );
+        let none: RequestPermissionProfile = serde_json::from_str("{}").expect("absent");
+        assert_eq!(none.network, None);
+        let extra = serde_json::from_str::<RequestPermissionProfile>(r#"{"network": 5}"#);
+        assert!(extra.is_err(), "other shapes are still refused");
     }
 }
