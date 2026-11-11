@@ -924,6 +924,7 @@ impl ToolRegistry {
 
         let log_payload = tool_log_payload(&invocation.payload, &invocation.source);
 
+        let tool_started = std::time::Instant::now();
         let result = otel
             .log_tool_result_with_tags(
                 &tool_name,
@@ -952,19 +953,35 @@ impl ToolRegistry {
             });
         }
         emit_metric_for_tool_read(&invocation, success);
-        if crate::inocode_loop::advisor_enabled() {
-            let output_text = match &result {
-                Ok(result) => result.result.log_output(),
-                Err(err) => err.to_string(),
-            };
-            crate::inocode_loop::observe_tool_result(
-                &invocation.session,
-                &invocation.turn,
-                flat_tool_name(&invocation.tool_name).as_ref(),
-                invocation.payload.log_payload().as_ref(),
-                success,
-                &output_text,
-            );
+        {
+            let advisor = crate::inocode_loop::advisor_enabled();
+            let facts = codex_inocode_flags::load().peer_messaging_enabled;
+            if advisor || facts {
+                let output_text = match &result {
+                    Ok(result) => result.result.log_output(),
+                    Err(err) => err.to_string(),
+                };
+                if facts {
+                    crate::inocode_loop::record_facts(
+                        &invocation.session,
+                        flat_tool_name(&invocation.tool_name).as_ref(),
+                        invocation.payload.log_payload().as_ref(),
+                        success,
+                        &output_text,
+                        tool_started.elapsed().as_secs_f64(),
+                    );
+                }
+                if advisor {
+                    crate::inocode_loop::observe_tool_result(
+                        &invocation.session,
+                        &invocation.turn,
+                        flat_tool_name(&invocation.tool_name).as_ref(),
+                        invocation.payload.log_payload().as_ref(),
+                        success,
+                        &output_text,
+                    );
+                }
+            }
         }
         let post_tool_use_payload = if success {
             result

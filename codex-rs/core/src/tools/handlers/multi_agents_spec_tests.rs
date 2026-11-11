@@ -414,3 +414,29 @@ fn list_agents_tool_status_schema_includes_interrupted() {
         ])
     );
 }
+
+#[test]
+fn spawn_message_describes_how_to_write_the_task_without_requiring_it() {
+    let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = create_spawn_agent_tool_v2(
+        SpawnAgentToolOptions {
+            usage_hint_text: None,
+            ..Default::default()
+        },
+        /*description_override*/ None,
+    ) else {
+        panic!("spawn_agent should be a function tool");
+    };
+    let properties = parameters.properties.as_ref().expect("object params");
+    let message = properties
+        .get("message")
+        .and_then(|schema| schema.description.as_deref())
+        .expect("message description");
+    assert!(message.contains("stands on its own"));
+    assert!(message.contains("the goal"));
+    assert!(message.contains("how to tell it is done"));
+    // A suggestion only: `message` stays the one required free-text field.
+    assert_eq!(
+        parameters.required.as_deref(),
+        Some(["task_name".to_string(), "message".to_string()].as_slice())
+    );
+}

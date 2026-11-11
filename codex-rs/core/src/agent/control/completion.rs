@@ -106,6 +106,13 @@ impl LocalAgentControl {
         let Some(message) = message else {
             return;
         };
+        // What the host saw the child do, next to what the child says it did.
+        let message = match codex_inocode_team::take_report(&outcome.thread_id.to_string()) {
+            Some(facts) if codex_inocode_flags::load().peer_messaging_enabled => {
+                format!("{message}\n\n{facts}")
+            }
+            _ => message,
+        };
         crate::inocode_loop::log_agent_message(
             parent_thread_id,
             child_agent_path.as_str(),

@@ -89,6 +89,11 @@ pub const PARAMS: &[ParamSpec] = &[
         default_number: 0.0,
         default_text: "none",
         options: &["none", "all"],
+    // Usage readings cover the whole account, other devices included. Fraction of the steps with the
+    // lowest quota per token that the fit uses (the direction is known, the value is not).
+    float("stats.lower_quantile", 0.5),
+    // A step where this machine sent fewer tokens than this, yet usage rose, is counted as used elsewhere.
+    int("stats.elsewhere_min_tokens", 1000),
     },
 ];
 

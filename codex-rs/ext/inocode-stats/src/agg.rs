@@ -39,6 +39,46 @@ pub struct Weights {
 struct Step {
     idxs: Vec<usize>,
     delta: f64,
+    /// Tokens of this account's own requests in the step.
+    tokens: u64,
+}
+
+/// Settings of the fit. Usage readings belong to the whole account, so a step also holds what
+/// other devices used (it can only add to a step, never take away). The values are settings
+/// with no evidence behind the defaults; only the direction of the effect is known.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FitOptions {
+    /// Samples needed before a fit is trusted.
+    pub min_samples: usize,
+    /// Fraction (0..=1) of the steps, the ones with the lowest quota per token, that the fit
+    /// uses. 1.0 uses all of them.
+    pub lower_quantile: f64,
+    /// A step in which this account sent fewer tokens than this, yet usage rose, is taken as
+    /// used elsewhere and is not attributed to any request.
+    pub elsewhere_min_tokens: u64,
+}
+
+impl Default for FitOptions {
+    fn default() -> Self {
+        Self {
+            min_samples: 8,
+            lower_quantile: 0.5,
+            elsewhere_min_tokens: 1000,
+        }
+    }
+}
+
+fn is_elsewhere(step: &Step, opts: &FitOptions) -> bool {
+    step.tokens < opts.elsewhere_min_tokens
+}
+
+/// Quota used in steps that the account's own tokens cannot explain.
+fn elsewhere_total(steps: &[Step], opts: &FitOptions) -> f64 {
+    steps
+        .iter()
+        .filter(|s| is_elsewhere(s, opts))
+        .map(|s| s.delta)
+        .sum()
 }
 
 #[derive(Clone, Copy)]
@@ -98,9 +138,12 @@ fn steps(records: &[RequestRecord], w: Window) -> Vec<Step> {
             }
             acc.push(i);
             if s.used_percent > b.used_percent + 1e-9 {
+                let idxs = std::mem::take(&mut acc);
+                let tokens = idxs.iter().map(|&k| records[k].total_tokens()).sum();
                 out.push(Step {
-                    idxs: std::mem::take(&mut acc),
+                    idxs,
                     delta: s.used_percent - b.used_percent,
+                    tokens,
                 });
                 base = Some(s);
             }
@@ -110,9 +153,10 @@ fn steps(records: &[RequestRecord], w: Window) -> Vec<Step> {
 }
 
 /// Per-record share of the consumption: each step is divided over its records by token count.
-fn attribute(records: &[RequestRecord], steps: &[Step]) -> Vec<f64> {
+/// Steps used elsewhere are not attributed to any request.
+fn attribute(records: &[RequestRecord], steps: &[Step], opts: &FitOptions) -> Vec<f64> {
     let mut share = vec![0.0; records.len()];
-    for step in steps {
+    for step in steps.iter().filter(|s| !is_elsewhere(s, opts)) {
         let total: f64 = step
             .idxs
             .iter()
@@ -209,11 +253,11 @@ struct WindowFit {
     per_million: Option<f64>,
 }
 
-fn window_fit(records: &[RequestRecord], steps: &[Step], model: &str, min: usize) -> WindowFit {
+fn window_fit(records: &[RequestRecord], steps: &[Step], model: &str, opts: &FitOptions) -> WindowFit {
+    let min = opts.min_samples;
     let mut samples: Vec<Sample> = Vec::new();
-    let (mut sum_delta, mut sum_tokens) = (0.0, 0.0);
     for s in steps {
-        if !s.idxs.iter().all(|&i| records[i].model == model) {
+        if is_elsewhere(s, opts) || !s.idxs.iter().all(|&i| records[i].model == model) {
             continue;
         }
         let mut x = [0.0; 3];
@@ -222,8 +266,6 @@ fn window_fit(records: &[RequestRecord], steps: &[Step], model: &str, min: usize
             x[1] += records[i].cached_input as f64 / 1e6;
             x[2] += records[i].output as f64 / 1e6;
         }
-        sum_delta += s.delta;
-        sum_tokens += x[0] + x[1] + x[2];
         samples.push((x, s.delta));
     }
     let n = samples.len();
@@ -234,6 +276,17 @@ fn window_fit(records: &[RequestRecord], steps: &[Step], model: &str, min: usize
             per_million: None,
         };
     }
+    // Other devices only add to a step: the steps with the least quota per token are the least
+    // contaminated. Keep that lower fraction (at least three steps).
+    let rate = |x: &[f64; 3], d: f64| {
+        let tokens = x[0] + x[1] + x[2];
+        if tokens > 0.0 { d / tokens } else { f64::INFINITY }
+    };
+    samples.sort_by(|a, b| rate(&a.0, a.1).total_cmp(&rate(&b.0, b.1)));
+    let keep_n = ((opts.lower_quantile.clamp(0.0, 1.0) * n as f64).ceil() as usize).clamp(n.min(3), n);
+    samples.truncate(keep_n);
+    let sum_delta: f64 = samples.iter().map(|(_, d)| d).sum();
+    let sum_tokens: f64 = samples.iter().map(|(x, _)| x[0] + x[1] + x[2]).sum();
     let w = fit(&samples);
     let usable = w.iter().any(|v| *v > 0.0);
     WindowFit {
@@ -279,6 +332,16 @@ pub struct ModelStats {
     pub speed_samples: u64,
 }
 
+/// Result of [`summarize`]. The quota figures come from readings of the whole account, so they
+/// include what other devices used: an upper bound for this machine.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Summary {
+    pub models: Vec<ModelStats>,
+    /// Quota that rose while this machine sent (almost) nothing: used elsewhere.
+    pub used_elsewhere_five_hour: f64,
+    pub used_elsewhere_weekly: f64,
+}
+
 /// Output tokens divided by generation seconds, summed over the measured records.
 fn avg_speed<'a>(it: impl Iterator<Item = &'a RequestRecord>) -> (Option<f64>, u64) {
     let (mut out, mut secs, mut n) = (0.0, 0.0, 0u64);
@@ -292,12 +355,12 @@ fn avg_speed<'a>(it: impl Iterator<Item = &'a RequestRecord>) -> (Option<f64>, u
     ((secs > 0.0).then(|| out / secs), n)
 }
 
-pub fn summarize(all: &[RequestRecord], q: &Query, min_samples: usize) -> Vec<ModelStats> {
+pub fn summarize(all: &[RequestRecord], q: &Query, opts: &FitOptions) -> Summary {
     let records: Vec<RequestRecord> = all.iter().filter(|r| keep(r, q)).cloned().collect();
     let five_steps = steps(&records, Window::FiveHour);
     let week_steps = steps(&records, Window::Weekly);
-    let five_share = attribute(&records, &five_steps);
-    let week_share = attribute(&records, &week_steps);
+    let five_share = attribute(&records, &five_steps, opts);
+    let week_share = attribute(&records, &week_steps, opts);
 
     let mut by_model: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for (i, r) in records.iter().enumerate() {
@@ -308,8 +371,8 @@ pub fn summarize(all: &[RequestRecord], q: &Query, min_samples: usize) -> Vec<Mo
     let mut out = Vec::new();
     for (model, idxs) in by_model {
         let rows = || idxs.iter().map(|&i| &records[i]);
-        let five = window_fit(&records, &five_steps, model, min_samples);
-        let week = window_fit(&records, &week_steps, model, min_samples);
+        let five = window_fit(&records, &five_steps, model, opts);
+        let week = window_fit(&records, &week_steps, model, opts);
         let (avg, speed_samples) = avg_speed(rows());
         let mut providers: HashMap<&str, usize> = HashMap::new();
         for r in rows() {
@@ -341,7 +404,11 @@ pub fn summarize(all: &[RequestRecord], q: &Query, min_samples: usize) -> Vec<Mo
             speed_samples,
         });
     }
-    out
+    Summary {
+        models: out,
+        used_elsewhere_five_hour: elsewhere_total(&five_steps, opts),
+        used_elsewhere_weekly: elsewhere_total(&week_steps, opts),
+    }
 }
 
 fn local(ts_ms: u64) -> Option<chrono::DateTime<chrono::Local>> {
@@ -445,10 +512,10 @@ pub struct DailyRow {
     pub models: Vec<DailyModel>,
 }
 
-pub fn daily(all: &[RequestRecord], q: &Query) -> Vec<DailyRow> {
+pub fn daily(all: &[RequestRecord], q: &Query, opts: &FitOptions) -> Vec<DailyRow> {
     let records: Vec<RequestRecord> = all.iter().filter(|r| keep(r, q)).cloned().collect();
-    let five_share = attribute(&records, &steps(&records, Window::FiveHour));
-    let week_share = attribute(&records, &steps(&records, Window::Weekly));
+    let five_share = attribute(&records, &steps(&records, Window::FiveHour), opts);
+    let week_share = attribute(&records, &steps(&records, Window::Weekly), opts);
     let mut by_day: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (i, r) in records.iter().enumerate() {
         if q.model.as_deref().is_none_or(|m| r.model == m)
@@ -500,6 +567,8 @@ pub struct EstimateResult {
     pub seconds: Option<f64>,
     /// No fitted rate for this model yet.
     pub insufficient: bool,
+    /// The rates include what other devices used on the same account: an upper estimate.
+    pub upper_bound: bool,
 }
 
 pub fn estimate(
@@ -509,13 +578,13 @@ pub fn estimate(
     uncached_input: u64,
     cached_input: u64,
     output: u64,
-    min_samples: usize,
+    opts: &FitOptions,
 ) -> EstimateResult {
     let q = Query {
         model: Some(model.to_string()),
         ..q.clone()
     };
-    let row = summarize(all, &q, min_samples).into_iter().next();
+    let row = summarize(all, &q, opts).models.into_iter().next();
     let cost = |w: Option<Weights>| {
         w.map(|w| {
             (uncached_input as f64 * w.uncached_input
@@ -536,12 +605,20 @@ pub fn estimate(
         five_hour_percent: five,
         weekly_percent: week,
         seconds,
+        upper_bound: true,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn opts(min_samples: usize) -> FitOptions {
+        FitOptions {
+            min_samples,
+            ..FitOptions::default()
+        }
+    }
 
     fn rec(
         ts_ms: u64,
@@ -592,7 +669,7 @@ mod tests {
 
     #[test]
     fn fit_recovers_weights() {
-        let rows = summarize(&history(), &Query::default(), 5);
+        let rows = summarize(&history(), &Query::default(), &opts(5)).models;
         let m = &rows[0];
         let w = m.five_hour_weights.expect("weights");
         assert!((w.uncached_input - 2.0).abs() < 0.05, "{w:?}");
@@ -606,16 +683,16 @@ mod tests {
 
     #[test]
     fn too_few_samples_is_insufficient() {
-        let rows = summarize(&history()[..3], &Query::default(), 8);
+        let rows = summarize(&history()[..3], &Query::default(), &opts(8)).models;
         assert!(rows[0].insufficient);
         assert!(rows[0].five_hour_weights.is_none());
-        let e = estimate(&history()[..3], &Query::default(), "m", 1, 1, 1, 8);
+        let e = estimate(&history()[..3], &Query::default(), "m", 1, 1, 1, &opts(8));
         assert!(e.insufficient && e.five_hour_percent.is_none());
     }
 
     #[test]
     fn estimate_uses_the_fitted_weights() {
-        let e = estimate(&history(), &Query::default(), "m", 1_000_000, 0, 100_000, 5);
+        let e = estimate(&history(), &Query::default(), "m", 1_000_000, 0, 100_000, &opts(5));
         let five = e.five_hour_percent.expect("five");
         assert!((five - 3.0).abs() < 0.2, "{five}");
         assert!(e.seconds.expect("seconds") > 0.0);
@@ -633,7 +710,7 @@ mod tests {
         }
         // ...but a step is pure when only one model's records fall in it; here every second
         // record's step also holds the previous record of the other model.
-        let out = summarize(&rows, &Query::default(), 1);
+        let out = summarize(&rows, &Query::default(), &opts(1)).models;
         let total: f64 = out.iter().map(|m| m.five_hour_percent).sum();
         let last = rows.last().unwrap().five_hour.unwrap().used_percent;
         let first = rows[0].five_hour.unwrap().used_percent;
@@ -654,7 +731,7 @@ mod tests {
             rows.push(a);
             rows.push(c);
         }
-        let out = summarize(&rows, &Query::default(), 1);
+        let out = summarize(&rows, &Query::default(), &opts(1)).models;
         let used = |m: &str| out.iter().find(|r| r.model == m).unwrap().five_hour_percent;
         assert!((used("gpt") - 9.0).abs() < 1e-9, "{}", used("gpt"));
         assert!((used("claude-x") - 9.0).abs() < 1e-9, "{}", used("claude-x"));
@@ -663,7 +740,7 @@ mod tests {
         for r in &mut same_provider {
             r.provider = "openai".into();
         }
-        let out = summarize(&same_provider, &Query::default(), 1);
+        let out = summarize(&same_provider, &Query::default(), &opts(1)).models;
         assert!((out.iter().map(|m| m.five_hour_percent).sum::<f64>() - 18.0).abs() < 1e-9);
     }
 
@@ -679,7 +756,7 @@ mod tests {
         a.account = None;
         b.account = None;
         c.account = None;
-        let out = summarize(&[a, b, c], &Query::default(), 1);
+        let out = summarize(&[a, b, c], &Query::default(), &opts(1)).models;
         assert!((out[0].five_hour_percent - 2.0).abs() < 1e-9);
     }
 
@@ -692,9 +769,68 @@ mod tests {
         assert_eq!(h[0].hours.len(), 24);
         assert_eq!(h[0].weekdays.len(), 7);
         assert_eq!(h.iter().map(|s| s.hours.iter().map(|r| r.requests).sum::<u64>()).sum::<u64>(), 20);
-        let d = daily(&rows, &Query::default());
+        let d = daily(&rows, &Query::default(), &opts(1));
         assert!(!d.is_empty());
         assert_eq!(d.iter().map(|r| r.requests).sum::<u64>(), 20);
         assert_eq!(d.iter().map(|r| r.models.len()).max(), Some(2));
+    }
+
+    #[test]
+    fn a_step_with_almost_no_own_tokens_is_used_elsewhere() {
+        // Percent rises 10 -> 15 while this machine sent 50 tokens: another device used it.
+        let a = rec(1, "m", 100_000, 0, 5_000, 10.0, 1.0);
+        let mut b = rec(2, "m", 40, 0, 10, 15.0, 1.0);
+        b.five_hour = Some(LimitSample {
+            used_percent: 15.0,
+            resets_at: Some(1_000_000),
+        });
+        let c = rec(3, "m", 100_000, 0, 5_000, 16.0, 1.0);
+        let summary = summarize(&[a, b, c], &Query::default(), &opts(1));
+        assert!((summary.used_elsewhere_five_hour - 5.0).abs() < 1e-9);
+        // The last step (15 -> 16) is the machine's own; the elsewhere step is not attributed.
+        assert!((summary.models[0].five_hour_percent - 1.0).abs() < 1e-9);
+        // Turning the rule off (threshold 0) attributes everything to the machine.
+        let all = summarize(
+            &[rec(1, "m", 100_000, 0, 5_000, 10.0, 1.0), {
+                let mut b = rec(2, "m", 40, 0, 10, 15.0, 1.0);
+                b.five_hour = Some(LimitSample { used_percent: 15.0, resets_at: Some(1_000_000) });
+                b
+            }],
+            &Query::default(),
+            &FitOptions { min_samples: 1, elsewhere_min_tokens: 0, ..FitOptions::default() },
+        );
+        assert!((all.models[0].five_hour_percent - 5.0).abs() < 1e-9);
+        assert_eq!(all.used_elsewhere_five_hour, 0.0);
+    }
+
+    #[test]
+    fn the_lower_quantile_ignores_steps_inflated_by_other_devices() {
+        // Truth: 2 %/M uncached input. Every other step also carries 3 extra percent from elsewhere.
+        let mut rows = Vec::new();
+        let mut five = 0.0;
+        for i in 0..24u64 {
+            let u = 1_000_000 + (i % 5) * 100_000;
+            five += u as f64 * 2.0 / 1e6 + if i % 2 == 0 { 3.0 } else { 0.0 };
+            rows.push(rec(1_000 + i, "m", u, 0, 0, five, five / 4.0));
+        }
+        let weight = |q: f64| {
+            let s = summarize(
+                &rows,
+                &Query::default(),
+                &FitOptions { min_samples: 5, lower_quantile: q, elsewhere_min_tokens: 0 },
+            );
+            s.models[0].five_hour_weights.expect("weights").uncached_input
+        };
+        let all_steps = weight(1.0);
+        let lower = weight(0.5);
+        assert!(all_steps > 2.5, "{all_steps}");
+        assert!((lower - 2.0).abs() < (all_steps - 2.0).abs(), "{lower} vs {all_steps}");
+        assert!((lower - 2.0).abs() < 0.1, "{lower}");
+    }
+
+    #[test]
+    fn estimates_say_they_are_an_upper_bound() {
+        let e = estimate(&history(), &Query::default(), "m", 1_000_000, 0, 0, &opts(5));
+        assert!(e.upper_bound);
     }
 }

@@ -10,10 +10,12 @@ mod seed;
 
 pub use agg::DailyRow;
 pub use agg::EstimateResult;
+pub use agg::FitOptions;
 pub use agg::HourlyRow;
 pub use agg::DailyModel;
 pub use agg::HourlySeries;
 pub use agg::ModelStats;
+pub use agg::Summary;
 pub use agg::Query;
 pub use agg::Weights;
 pub use agg::daily;
@@ -30,6 +32,16 @@ pub use seed::SeedReport;
 pub use seed::default_sessions_dir;
 pub use seed::seed_from_codex;
 pub use seed::seed_with_progress;
+
+/// The fit settings from the `stats.*` parameters, read at the point of use.
+pub fn fit_options() -> FitOptions {
+    FitOptions {
+        min_samples: min_samples(),
+        lower_quantile: codex_inocode_flags::float_param("stats.lower_quantile").clamp(0.0, 1.0),
+        elsewhere_min_tokens: u64::try_from(codex_inocode_flags::int_param("stats.elsewhere_min_tokens"))
+            .unwrap_or(0),
+    }
+}
 
 /// Samples needed before a per-model fit is trusted (`stats.min_samples`).
 pub fn min_samples() -> usize {

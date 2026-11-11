@@ -283,6 +283,37 @@ pub(crate) fn build_observation(
 /// Feeds one finished tool call to the stall detector; on a stall, records it and starts a
 /// background consultation whose answer arrives in the main agent's next turn input.
 pub(crate) fn observe_tool_result(
+        observation: codex_inocode_advisor::normalize_error(output),
+        read_only: codex_inocode_advisor::is_read_only_call(tool, args),
+    }
+}
+
+/// Records what the host saw a spawned child do, for the facts block of its result: the files
+/// changed through edit tools and the commands run through shell tools with their exit codes.
+pub(crate) fn record_facts(
+    session: &Session,
+    tool: &str,
+    args: &str,
+    success: bool,
+    output: &str,
+    secs: f64,
+) {
+    if !InocodeFlags::load().peer_messaging_enabled {
+        return;
+    }
+    let thread = session.thread_id.to_string();
+    if success && is_edit_tool(tool) {
+        codex_inocode_team::record_edit(&thread, codex_inocode_team::edited_paths(args));
+        return;
+    }
+    let name = tool.to_ascii_lowercase();
+    if name.contains("exec") || name.contains("shell") || name.contains("bash") || name.contains("terminal") {
+        codex_inocode_team::record_command(
+            &thread,
+            &codex_inocode_advisor::shell_command_of(args),
+            exit_code_in_output(output),
+            secs,
+        );
     session: &Arc<Session>,
     turn: &Arc<TurnContext>,
     tool: &str,

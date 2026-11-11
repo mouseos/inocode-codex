@@ -1568,6 +1568,12 @@ pub struct InocodeStatsWeekdayRow {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct InocodeStatsSpeedSeries {
+    /// Always true: the account's usage readings include what other devices used, so every
+    /// quota figure here is an upper estimate for this machine.
+    pub quota_is_upper_bound: bool,
+    /// Quota that rose while this machine sent (almost) nothing: used elsewhere. Not attributed
+    /// to any model.
+    pub used_elsewhere: InocodeStatsQuota,
     pub model: String,
     pub provider: String,
     /// 24 rows.
@@ -1696,6 +1702,8 @@ pub struct InocodeStatsSeedProgressNotification {
 #[ts(rename_all = "camelCase", export_to = "v2/")]
 pub enum InocodeMessageRole {
     User,
+    /// Always true: the rates include what other devices used on the same account.
+    pub upper_bound: bool,
     Assistant,
     Tool,
     /// A message from another agent (`#<turn>.@<n>`).

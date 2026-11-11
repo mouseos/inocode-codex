@@ -52,7 +52,8 @@ pub enum Decision {
 #[serde(rename_all = "camelCase")]
 pub struct Estimate {
     pub speedup: f64,
-    /// Rough token cost relative to one agent (each extra agent re-reads context).
+    /// Rough token cost relative to one agent (each extra agent re-reads context). Not measured:
+    /// a fixed formula kept for the contract; the recommendation text does not quote it.
     pub cost_multiplier: f64,
     pub decision: Decision,
     pub reason: String,
@@ -104,6 +105,13 @@ fn estimate_inner(tasks: &[Task], cfg: &EstimateConfig) -> Estimate {
     if tasks.len() < 2 {
         return Estimate::single("fewer than two independent tasks");
     }
+    // Splitting is recommended only when the request itself shows the pieces are independent:
+    // every piece names the files it writes. A bullet list alone is as often a sequence of steps.
+    if tasks.iter().any(|t| t.write_paths.is_empty()) {
+        return Estimate::single(
+            "independence not established: not every list item names the files it writes",
+        );
+    }
     if any_overlap(tasks) {
         return Estimate::single("write sets overlap between tasks; splitting would conflict");
     }
@@ -149,8 +157,8 @@ fn estimate_inner(tasks: &[Task], cfg: &EstimateConfig) -> Estimate {
 pub fn recommendation_text(e: &Estimate) -> String {
     match e.decision {
         Decision::Multi => format!(
-            "Team estimate: splitting into multiple agents is recommended ({}; cost ~{:.1}x). Define the shared contract first, give each agent a disjoint set of files to write, then integrate. You decide whether to call spawn_agent.",
-            e.reason, e.cost_multiplier
+            "Team estimate: splitting into multiple agents is recommended ({}). Define the shared contract first, give each agent a disjoint set of files to write, then integrate. You decide whether to call spawn_agent.",
+            e.reason
         ),
         Decision::Single => format!(
             "Team estimate: proceed as a single agent ({}). You decide whether to call spawn_agent.",
@@ -179,6 +187,16 @@ mod tests {
         );
         assert_eq!(e.decision, Decision::Multi);
         assert!((e.speedup - 1200.0 / 720.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn tasks_without_write_paths_are_not_known_to_be_independent() {
+        let mut a = t("a", "src/a", 600.0);
+        let b = t("b", "src/b", 600.0);
+        a.write_paths.clear();
+        let e = estimate(&[a, b], &EstimateConfig::default());
+        assert_eq!(e.decision, Decision::Single);
+        assert!(e.reason.contains("independence not established"));
     }
 
     #[test]

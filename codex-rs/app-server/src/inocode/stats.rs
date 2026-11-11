@@ -98,13 +98,15 @@ pub(crate) fn summary_in(
 ) -> InocodeStatsSummaryResponse {
     let q = query(params.days, &params.model, &params.provider);
     let records = store.read_since(q.since_ms);
-    let models = codex_inocode_stats::summarize(&records, &q, codex_inocode_stats::min_samples())
-        .into_iter()
-        .map(model_row)
-        .collect();
+    let summary = codex_inocode_stats::summarize(&records, &q, &codex_inocode_stats::fit_options());
     InocodeStatsSummaryResponse {
         days: params.days,
-        models,
+        models: summary.models.into_iter().map(model_row).collect(),
+        quota_is_upper_bound: true,
+        used_elsewhere: InocodeStatsQuota {
+            primary_percent: Some(summary.used_elsewhere_five_hour),
+            secondary_percent: Some(summary.used_elsewhere_weekly),
+        },
     }
 }
 
@@ -150,7 +152,7 @@ pub(crate) fn daily_in(
     params: &InocodeStatsDailyParams,
 ) -> InocodeStatsDailyResponse {
     let q = query(params.days, &None, &None);
-    let days = codex_inocode_stats::daily(&store.read_since(q.since_ms), &q)
+    let days = codex_inocode_stats::daily(&store.read_since(q.since_ms), &q, &codex_inocode_stats::fit_options())
         .into_iter()
         .map(|r| InocodeStatsDailyRow {
             date: r.date,
@@ -190,7 +192,7 @@ pub(crate) fn estimate_in(
         nonneg(params.tokens.uncached_input),
         nonneg(params.tokens.cached_input),
         nonneg(params.tokens.output),
-        codex_inocode_stats::min_samples(),
+        &codex_inocode_stats::fit_options(),
     );
     let ok = !e.insufficient;
     InocodeStatsEstimateResponse {
@@ -200,6 +202,7 @@ pub(crate) fn estimate_in(
         secondary_percent: e.weekly_percent.filter(|_| ok),
         seconds: e.seconds.filter(|_| ok),
         insufficient: e.insufficient,
+        upper_bound: true,
     }
 }
 

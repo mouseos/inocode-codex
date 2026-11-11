@@ -10,6 +10,7 @@
 //! implementation). The answer is fed back to the main agent as hypotheses.
 
 mod events;
+mod readonly;
 
 pub use events::AdvisorEvent;
 pub use events::AdvisorEventKind;
@@ -18,6 +19,9 @@ pub use events::page_events;
 pub use events::read_events;
 pub use events::record_global;
 pub use events::subscribe;
+pub use readonly::command_is_read_only;
+pub use readonly::is_read_only_call;
+pub use readonly::shell_command_of;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -60,6 +64,11 @@ pub struct Observation {
     pub changed_files: bool,
     /// Normalized test outcome (e.g. "12 passed 0 failed"), if the call ran tests.
     pub test_result: Option<String>,
+    /// Fingerprint of the output (see [`normalize_error`]): two calls repeat each other only
+    /// when they also saw the same thing.
+    pub observation: String,
+    /// The call only looked at things (read, list, search); research is not a stall.
+    pub read_only: bool,
 }
 
 impl Observation {
@@ -87,8 +96,9 @@ impl Observation {
         Some(sig)
     }
 
+    /// Same action and same observation: what makes a repetition a stall.
     fn action_key(&self) -> String {
-        format!("{}\u{1}{}", self.tool, self.args)
+        format!("{}\u{1}{}\u{1}{}", self.tool, self.args, self.observation)
     }
 }
 
@@ -155,6 +165,8 @@ pub struct StallDetector {
     config: StallConfig,
     history: VecDeque<Observation>,
     turns_without_progress: usize,
+    /// Read-only calls since the last progress; they are not counted as "without progress".
+    read_only_since_progress: usize,
     last_test_result: Option<String>,
 }
 
@@ -164,6 +176,7 @@ impl StallDetector {
             config,
             history: VecDeque::new(),
             turns_without_progress: 0,
+            read_only_since_progress: 0,
             last_test_result: None,
         }
     }
@@ -178,6 +191,9 @@ impl StallDetector {
         }
         if obs.changed_files || test_changed {
             self.turns_without_progress = 0;
+            self.read_only_since_progress = 0;
+        } else if obs.read_only {
+            self.read_only_since_progress += 1;
         } else {
             self.turns_without_progress += 1;
         }
@@ -201,6 +217,7 @@ impl StallDetector {
         if stall.is_some() {
             self.history.clear();
             self.turns_without_progress = 0;
+            self.read_only_since_progress = 0;
         }
         stall
     }
@@ -257,8 +274,8 @@ impl StallDetector {
             .then(|| Stall {
                 trigger: Trigger::NoProgress,
                 signature: format!(
-                    "{} tool calls without a file change or test-result change",
-                    self.turns_without_progress
+                    "{} tool calls without a file change or test-result change ({} read-only calls not counted)",
+                    self.turns_without_progress, self.read_only_since_progress
                 ),
             })
     }
@@ -463,5 +480,93 @@ mod tests {
         assert!(seen.contains("E0432 unresolved import"));
         assert!(out.starts_with("[advisor] Stall detected (same_failure"));
         assert!(out.contains("Maybe the crate is not a dependency."));
+    }
+
+    fn polled(output: &str) -> Observation {
+        Observation {
+            tool: "shell".into(),
+            args: "terminal_status".into(),
+            observation: normalize_error(output),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn polling_with_a_changing_output_is_not_a_repeat() {
+        let mut d = StallDetector::new(StallConfig::default());
+        for out in ["running 10 s", "running 20 s", "step two done", "step three"] {
+            assert_eq!(d.observe(polled(out)), None);
+        }
+    }
+
+    #[test]
+    fn the_same_action_with_the_same_output_is_a_stall() {
+        let mut d = StallDetector::new(StallConfig::default());
+        assert_eq!(d.observe(polled("no change")), None);
+        assert_eq!(d.observe(polled("no change")), None);
+        let stall = d.observe(polled("no change")).expect("stall");
+        assert_eq!(stall.trigger, Trigger::RepeatedAction);
+        // Digits do not make two outputs different: "waited 3 s" and "waited 7 s" are one.
+        let mut d = StallDetector::new(StallConfig::default());
+        d.observe(polled("waited 3 s"));
+        d.observe(polled("waited 7 s"));
+        assert!(d.observe(polled("waited 9 s")).is_some());
+    }
+
+    #[test]
+    fn a_long_read_only_investigation_is_not_no_progress() {
+        let mut d = StallDetector::new(StallConfig::default());
+        for i in 0..40 {
+            let obs = Observation {
+                tool: "read_file".into(),
+                args: format!("{{\"path\":\"f{i}.rs\"}}"),
+                observation: format!("content of file {i} {}", "x".repeat(i)),
+                read_only: true,
+                ..Default::default()
+            };
+            assert_eq!(d.observe(obs), None, "call {i}");
+        }
+        // Eight calls that run something without changing anything still do.
+        let mut d = StallDetector::new(StallConfig::default());
+        let mut fired = None;
+        for i in 0..8 {
+            let obs = Observation {
+                tool: "shell".into(),
+                args: format!("cargo build -p crate{i}"),
+                observation: format!("built crate{i} {}", "y".repeat(i)),
+                ..Default::default()
+            };
+            fired = d.observe(obs);
+        }
+        let stall = fired.expect("no progress after 8 calls");
+        assert_eq!(stall.trigger, Trigger::NoProgress);
+        assert!(stall.signature.contains("0 read-only"));
+    }
+
+    #[test]
+    fn read_only_calls_do_not_reset_the_count() {
+        let mut d = StallDetector::new(StallConfig {
+            no_progress_turns: 3,
+            ..StallConfig::default()
+        });
+        let run = |i: usize| Observation {
+            tool: "shell".into(),
+            args: format!("run {i}"),
+            observation: format!("out {i}{}", "z".repeat(i)),
+            ..Default::default()
+        };
+        let look = |i: usize| Observation {
+            tool: "read_file".into(),
+            args: format!("{i}"),
+            observation: format!("file {i}{}", "w".repeat(i)),
+            read_only: true,
+            ..Default::default()
+        };
+        assert_eq!(d.observe(run(1)), None);
+        assert_eq!(d.observe(look(1)), None);
+        assert_eq!(d.observe(run(2)), None);
+        assert_eq!(d.observe(look(2)), None);
+        let stall = d.observe(run(3)).expect("third counted call");
+        assert!(stall.signature.contains("2 read-only"));
     }
 }

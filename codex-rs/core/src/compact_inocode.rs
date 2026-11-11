@@ -337,7 +337,9 @@ pub(crate) async fn turn_extras(
             &estimate_config(),
         ) {
             codex_inocode_team::roster_for(&sess.thread_id.to_string()).set_estimate(estimate);
-            items.push(user_text_item(rec));
+            if let Some(rec) = rec {
+                items.push(user_text_item(rec));
+            }
         }
     }
     let previous = sess.previous_turn_settings().await;

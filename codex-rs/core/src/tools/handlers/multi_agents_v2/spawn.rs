@@ -213,6 +213,8 @@ async fn handle_spawn_agent(
             .get_agent_path()
             .map(|path| path.to_string())
             .as_deref()
+    // From here on the host records the files this child changes and the commands it runs.
+    codex_inocode_team::note_spawned(&new_thread_id.to_string());
             .unwrap_or("/root"),
         &task_name,
         "spawn",

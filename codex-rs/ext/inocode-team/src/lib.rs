@@ -4,6 +4,7 @@
 mod auto_select;
 mod contract;
 mod estimate;
+mod facts;
 mod owned_paths;
 mod roster;
 
@@ -14,6 +15,11 @@ pub use contract::contract_instruction;
 pub use contract::read_contracts;
 pub use owned_paths::owned_paths_from_instruction;
 pub use estimate::Decision;
+pub use facts::edited_paths;
+pub use facts::note_spawned;
+pub use facts::record_command;
+pub use facts::record_edit;
+pub use facts::take_report;
 pub use estimate::Estimate;
 pub use estimate::EstimateConfig;
 pub use estimate::Task;
