@@ -6,4 +6,4 @@ import type { InocodeKnowledgeKind } from "./InocodeKnowledgeKind";
 import type { InocodeKnowledgeScope } from "./InocodeKnowledgeScope";
 import type { InocodeKnowledgeStatus } from "./InocodeKnowledgeStatus";
 
-export type InocodeKnowledgeSummary = { id: string, kind: InocodeKnowledgeKind, title: string, summary: string, scope: InocodeKnowledgeScope, status: InocodeKnowledgeStatus, confidence: InocodeKnowledgeConfidence, updatedAt: string, };
+export type InocodeKnowledgeSummary = { id: string, kind: InocodeKnowledgeKind, title: string, summary: string, scope: InocodeKnowledgeScope, status: InocodeKnowledgeStatus, confidence: InocodeKnowledgeConfidence, updatedAt: string, createdBy?: string | null, };

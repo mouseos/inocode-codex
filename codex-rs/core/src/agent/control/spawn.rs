@@ -70,6 +70,13 @@ pub(super) fn agent_nickname_candidates(config: &Config, role_name: Option<&str>
     {
         return candidates;
     }
+    if let Some(candidates) = config
+        .agent_nickname_candidates
+        .as_ref()
+        .filter(|candidates| !candidates.is_empty())
+    {
+        return candidates.clone();
+    }
 
     default_agent_nickname_list()
         .into_iter()

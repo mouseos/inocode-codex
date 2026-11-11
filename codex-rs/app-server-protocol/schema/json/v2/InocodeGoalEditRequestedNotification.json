@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ThreadGoalStatus": {
+      "enum": [
+        "active",
+        "paused",
+        "blocked",
+        "usageLimited",
+        "budgetLimited",
+        "complete"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "currentObjective": {
+      "type": "string"
+    },
+    "newObjective": {
+      "type": "string"
+    },
+    "reason": {
+      "description": "The model's own reason (its claim, not a fact).",
+      "type": "string"
+    },
+    "requestId": {
+      "type": "string"
+    },
+    "requestedAt": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "status": {
+      "$ref": "#/definitions/ThreadGoalStatus"
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "timeUsedSeconds": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "tokenBudget": {
+      "format": "int64",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "tokensUsed": {
+      "format": "int64",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "currentObjective",
+    "newObjective",
+    "reason",
+    "requestId",
+    "requestedAt",
+    "status",
+    "threadId",
+    "timeUsedSeconds",
+    "tokensUsed"
+  ],
+  "title": "InocodeGoalEditRequestedNotification",
+  "type": "object"
+}

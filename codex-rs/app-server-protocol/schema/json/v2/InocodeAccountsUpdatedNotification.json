@@ -16,6 +16,13 @@
             "null"
           ]
         },
+        "email": {
+          "description": "The account's e-mail address, from the sign-in (ChatGPT: ID token; Claude: profile). `null` when unknown. Local only; shown on the account screen.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "id": {
           "type": "string"
         },
@@ -38,6 +45,13 @@
             "null"
           ]
         },
+        "name": {
+          "description": "The owner's display name; `null` when unknown.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "plan": {
           "description": "Plan name for ChatGPT accounts (for example `plus`, `pro`); `null` for API keys.",
           "type": [
@@ -49,6 +63,10 @@
           "description": "Larger is used earlier.",
           "format": "int32",
           "type": "integer"
+        },
+        "provider": {
+          "description": "Provider group the entry belongs to: `openai` or `claude`.",
+          "type": "string"
         },
         "state": {
           "$ref": "#/definitions/InocodeAccountState"
@@ -72,17 +90,164 @@
         "isDefault",
         "kind",
         "priority",
+        "provider",
         "state"
       ],
       "type": "object"
     },
     "InocodeAccountKind": {
       "description": "Which kind of credential an entry holds. Other providers plug in here later.",
-      "enum": [
-        "chatgpt",
-        "apiKey"
+      "oneOf": [
+        {
+          "enum": [
+            "chatgpt",
+            "apiKey"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A Claude (Pro/Max) OAuth sign-in.",
+          "enum": [
+            "claudeOauth"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "InocodeAccountResetCredit": {
+      "description": "`eligible` and the fields after it are present when `status` is `ok`, and also when it is `error` with `stale: true` (the last good value). Otherwise they are absent.",
+      "properties": {
+        "atLimit": {
+          "description": "The account is at a usage limit right now.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "cooldownUntil": {
+          "description": "Unix seconds; no reset can be spent before this.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "eligible": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "endsAt": {
+          "description": "Unix seconds; the soonest end among grants with resets left.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "grants": {
+          "items": {
+            "$ref": "#/definitions/InocodeAccountResetGrant"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Why, for `none`, `unavailable` and `error`: a short word such as `block_missing`, `block_null`, `block_unreadable`, `grant_query_refused`, `http_404`, `http_403`, `auth_refused`, `rate_limited`, `request_failed`, `timeout`, `token_unavailable`, `api_key`, `not_read`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resetsLeft": {
+          "description": "Resets left across the grants that are not paused.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "resetsTotal": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stale": {
+          "description": "The fields below are the last good value, kept because the latest read failed.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/InocodeResetCreditStatus"
+        },
+        "usableNow": {
+          "description": "A reset can be spent right now.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "status"
       ],
-      "type": "string"
+      "type": "object"
+    },
+    "InocodeAccountResetGrant": {
+      "properties": {
+        "clears": {
+          "description": "The windows the grant clears: `five_hour`, `seven_day`, `seven_day_overage_included`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "endsAt": {
+          "description": "Unix seconds; `null` when the grant does not expire.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "resetsLeft": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "resetsTotal": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "usableNow": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "clears",
+        "id",
+        "label",
+        "paused",
+        "resetsLeft",
+        "resetsTotal",
+        "usableNow"
+      ],
+      "type": "object"
     },
     "InocodeAccountState": {
       "enum": [
@@ -104,6 +269,14 @@
             }
           ]
         },
+        "resetCredit": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/InocodeAccountResetCredit"
+            }
+          ],
+          "description": "The banked usage-limit resets. Never `null`: `status` says whether they could be read."
+        },
         "updatedAt": {
           "description": "Unix seconds of the last refresh; `null` when never fetched.",
           "format": "int64",
@@ -123,6 +296,9 @@
           ]
         }
       },
+      "required": [
+        "resetCredit"
+      ],
       "type": "object"
     },
     "InocodeAccountUsageWindow": {
@@ -152,6 +328,38 @@
         "usedPercent"
       ],
       "type": "object"
+    },
+    "InocodeResetCreditStatus": {
+      "oneOf": [
+        {
+          "description": "Read. Zero resets is still `ok` (`resetsLeft: 0`).",
+          "enum": [
+            "ok"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The account is outside the reset-credit scheme (API keys).",
+          "enum": [
+            "none"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The endpoint does not offer it for this account or plan.",
+          "enum": [
+            "unavailable"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The read failed. The fields below are the last good value when `stale` is true.",
+          "enum": [
+            "error"
+          ],
+          "type": "string"
+        }
+      ]
     }
   },
   "description": "The account list changed (added, removed, usage refreshed, state changed...).",

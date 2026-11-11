@@ -75,6 +75,13 @@
           "description": "Maximum nesting depth for V1 agent threads. Ignored by V2.",
           "format": "int32",
           "type": "integer"
+        },
+        "nickname_candidates": {
+          "description": "Candidate nicknames for spawned agents, across all roles. A role's own `nickname_candidates` take precedence; when neither is set the bundled list is used.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "type": "object"

@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "InocodeGuardResult": {
+      "enum": [
+        "blocked",
+        "warned"
+      ],
+      "type": "string"
+    },
+    "InocodeKnowledgeScope": {
+      "enum": [
+        "project",
+        "global"
+      ],
+      "type": "string"
+    },
+    "InocodeRuleSeverity": {
+      "enum": [
+        "block",
+        "warn"
+      ],
+      "type": "string"
+    }
+  },
+  "description": "Same shape as `InocodeGuardEvent`; sent when a guard rule fires.",
+  "properties": {
+    "reason": {
+      "type": "string"
+    },
+    "result": {
+      "$ref": "#/definitions/InocodeGuardResult"
+    },
+    "ruleId": {
+      "type": "string"
+    },
+    "ruleTitle": {
+      "type": "string"
+    },
+    "scope": {
+      "$ref": "#/definitions/InocodeKnowledgeScope"
+    },
+    "severity": {
+      "$ref": "#/definitions/InocodeRuleSeverity"
+    },
+    "target": {
+      "type": "string"
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "tool": {
+      "type": "string"
+    },
+    "toolUseId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tsMs": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "turnId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "reason",
+    "result",
+    "ruleId",
+    "ruleTitle",
+    "scope",
+    "severity",
+    "target",
+    "threadId",
+    "tool",
+    "tsMs"
+  ],
+  "title": "InocodeGuardFiredNotification",
+  "type": "object"
+}

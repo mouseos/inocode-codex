@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "InocodeGoalEvidenceItem": {
+      "properties": {
+        "detail": {
+          "description": "The path, the command line, or the observed text.",
+          "type": "string"
+        },
+        "exitCode": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "`file`, `command`, `output` or `other`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "detail",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "InocodeGoalHostFact": {
+      "description": "A fact the host observed during the goal (not the model's words).",
+      "properties": {
+        "detail": {
+          "description": "The command line, or the paths a patch touched, verbatim from the call's arguments.",
+          "type": "string"
+        },
+        "exitCode": {
+          "description": "Null means unknown: the host's outcome carries no exit code today.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "`command`, `file_change`, `mcp` or `other`.",
+          "type": "string"
+        },
+        "outcome": {
+          "description": "`completed`, `failed`, `blocked`, `aborted` or `unknown`.",
+          "type": "string"
+        },
+        "success": {
+          "description": "The tool output's own success marker; null when unknown.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "tool": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "detail",
+        "kind",
+        "outcome",
+        "tool"
+      ],
+      "type": "object"
+    },
+    "InocodeGoalRequirementReport": {
+      "properties": {
+        "claim": {
+          "description": "The model's own claim about it.",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/definitions/InocodeGoalEvidenceItem"
+          },
+          "type": "array"
+        },
+        "requirement": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim",
+        "evidence",
+        "requirement"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "goalId": {
+      "type": "string"
+    },
+    "hostFacts": {
+      "description": "What the host observed while the goal was active, apart from the model's claims.",
+      "items": {
+        "$ref": "#/definitions/InocodeGoalHostFact"
+      },
+      "type": "array"
+    },
+    "objective": {
+      "type": "string"
+    },
+    "recordedAt": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "requirements": {
+      "description": "The model's per-requirement claims, as it gave them.",
+      "items": {
+        "$ref": "#/definitions/InocodeGoalRequirementReport"
+      },
+      "type": "array"
+    },
+    "threadId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "goalId",
+    "hostFacts",
+    "objective",
+    "recordedAt",
+    "requirements",
+    "threadId"
+  ],
+  "title": "InocodeGoalCompletionEvidenceNotification",
+  "type": "object"
+}

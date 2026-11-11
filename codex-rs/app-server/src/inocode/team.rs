@@ -30,6 +30,10 @@ pub(crate) fn to_response(status: TeamStatus) -> InocodeTeamStatusResponse {
                 },
                 tokens: i64::try_from(a.tokens).unwrap_or(i64::MAX),
                 started_at: a.started_at,
+                nickname: a.nickname,
+                model: a.model,
+                reasoning_effort: a.reasoning_effort,
+                parent_id: a.parent_id,
             })
             .collect(),
         estimate: InocodeTeamEstimate {
@@ -53,6 +57,17 @@ pub(crate) fn to_response(status: TeamStatus) -> InocodeTeamStatusResponse {
                     .collect()
             }),
         },
+        messages: status
+            .messages
+            .into_iter()
+            .map(|m| codex_app_server_protocol::InocodeTeamMessageEdge {
+                from_id: m.from_id,
+                to_id: m.to_id,
+                count: i64::try_from(m.count).unwrap_or(i64::MAX),
+                last_ts_ms: i64::try_from(m.last_ts_ms).unwrap_or(i64::MAX),
+                last_delivery: m.last_delivery,
+            })
+            .collect(),
     }
 }
 
@@ -74,6 +89,7 @@ pub(crate) fn spawn_notifier(outgoing: std::sync::Arc<crate::outgoing_message::O
                                     thread_id,
                                     agents: status.agents,
                                     estimate: status.estimate,
+                                    messages: status.messages,
                                 },
                             ),
                         )
@@ -89,7 +105,7 @@ pub(crate) fn spawn_notifier(outgoing: std::sync::Arc<crate::outgoing_message::O
 pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
     match request {
         ClientRequest::InocodeTeamStatus { params, .. } => {
-            let status = codex_inocode_team::roster_for(&params.thread_id).status();
+            let status = codex_inocode_team::status_tree(&params.thread_id);
             Ok(Some(to_response(status).into()))
         }
         other => Err(unknown_method(other.method_name())),
@@ -111,6 +127,10 @@ mod tests {
             state: AgentState::Blocked,
             tokens: 7,
             started_at: "2026-11-11T00:00:00Z".into(),
+            nickname: Some("Euclid".into()),
+            model: Some("m".into()),
+            reasoning_effort: Some("high".into()),
+            parent_id: None,
         });
         let r = to_response(roster.status());
         assert_eq!(r.agents[0].state, InocodeTeamAgentState::Blocked);

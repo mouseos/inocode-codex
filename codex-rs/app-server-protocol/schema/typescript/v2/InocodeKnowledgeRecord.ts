@@ -13,4 +13,9 @@ import type { InocodeRuleSeverity } from "./InocodeRuleSeverity";
  * A full knowledge record (front-matter plus body). Kind-specific fields are
  * present only for that kind.
  */
-export type InocodeKnowledgeRecord = { id: string, kind: InocodeKnowledgeKind, title: string, scope: InocodeKnowledgeScope, status: InocodeKnowledgeStatus, source?: string, confidence: InocodeKnowledgeConfidence, createdAt: string, updatedAt: string, createdBy: string, supersedes?: string, severity?: InocodeRuleSeverity, match?: InocodeRuleMatch, reason?: string, enforcedBy?: InocodeRuleEnforcedBy, fromFailure?: string, signature?: string, symptom?: string, rootCause?: string, doNot?: string, whatWorked?: string, evidence?: Array<string>, body: string, };
+export type InocodeKnowledgeRecord = { id: string, kind: InocodeKnowledgeKind, title: string, scope: InocodeKnowledgeScope, status: InocodeKnowledgeStatus, source?: string, confidence: InocodeKnowledgeConfidence, createdAt: string, updatedAt: string, createdBy: string, supersedes?: string, severity?: InocodeRuleSeverity, match?: InocodeRuleMatch, reason?: string, enforcedBy?: InocodeRuleEnforcedBy, fromFailure?: string,
+/**
+ * Narrows a rule to these paths (globs, absolute or relative): it applies only when the
+ * session cwd or the operation's path matches. Empty/absent = the whole scope.
+ */
+appliesTo?: Array<string>, signature?: string, symptom?: string, rootCause?: string, doNot?: string, whatWorked?: string, evidence?: Array<string>, body: string, };

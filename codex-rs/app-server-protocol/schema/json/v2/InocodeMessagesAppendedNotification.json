@@ -1,0 +1,164 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "InocodeMessage": {
+      "properties": {
+        "delivery": {
+          "description": "`send_message`, `followup_task`, `spawn`, `final`.",
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "fromThread": {
+          "default": null,
+          "description": "Threads of the sender and the receiver, when known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "default": null,
+          "description": "Id of the message as an item of the receiver's history (`#<turn>.@<n>`, readable with `inocode/messages/resolve` on `toThread`). Null when it is not in the history yet.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parsed": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InocodeParsedMessage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Present when the text is a valid telegraphic message."
+        },
+        "replyThread": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "replyTo": {
+          "default": null,
+          "description": "The message this one answers (`#<turn>.<item>` or `#<turn>.@<n>`) in the history of `replyThread`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "description": "One line for a list: the telegraphic `summary`/`q`/`a`/... value, else the first line.",
+          "type": "string"
+        },
+        "text": {
+          "description": "Verbatim text.",
+          "type": "string"
+        },
+        "threadId": {
+          "description": "Root thread of the conversation this message belongs to.",
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "toThread": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tsMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "delivery",
+        "from",
+        "summary",
+        "text",
+        "threadId",
+        "to",
+        "tsMs"
+      ],
+      "type": "object"
+    },
+    "InocodeMessageConfidence": {
+      "enum": [
+        "high",
+        "med",
+        "low"
+      ],
+      "type": "string"
+    },
+    "InocodeMessageField": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "value"
+      ],
+      "type": "object"
+    },
+    "InocodeMessageKind": {
+      "enum": [
+        "ASK",
+        "ANSWER",
+        "BLOCKED",
+        "RESULT",
+        "HANDOFF"
+      ],
+      "type": "string"
+    },
+    "InocodeParsedMessage": {
+      "properties": {
+        "conf": {
+          "$ref": "#/definitions/InocodeMessageConfidence"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/definitions/InocodeMessageField"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/definitions/InocodeMessageKind"
+        }
+      },
+      "required": [
+        "conf",
+        "fields",
+        "kind"
+      ],
+      "type": "object"
+    }
+  },
+  "properties": {
+    "message": {
+      "$ref": "#/definitions/InocodeMessage"
+    },
+    "threadId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "message",
+    "threadId"
+  ],
+  "title": "InocodeMessagesAppendedNotification",
+  "type": "object"
+}

@@ -787,6 +787,10 @@ pub struct AgentsToml {
     /// Defaults to true.
     pub interrupt_message: Option<bool>,
 
+    /// Candidate nicknames for spawned agents, across all roles. A role's own
+    /// `nickname_candidates` take precedence; when neither is set the bundled list is used.
+    pub nickname_candidates: Option<Vec<String>>,
+
     /// User-defined role declarations keyed by role name.
     ///
     /// Example:

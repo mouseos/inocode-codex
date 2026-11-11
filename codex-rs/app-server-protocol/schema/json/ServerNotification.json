@@ -2664,19 +2664,1112 @@
       ],
       "type": "object"
     },
+    "InocodeAccount": {
+      "description": "One pool entry. There is deliberately no e-mail address: identify by `alias` and `plan`.",
+      "properties": {
+        "alias": {
+          "description": "User-chosen name.",
+          "type": "string"
+        },
+        "cooldownUntil": {
+          "description": "Unix seconds; set while `state` is `cooldown`.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "email": {
+          "description": "The account's e-mail address, from the sign-in (ChatGPT: ID token; Claude: profile). `null` when unknown. Local only; shown on the account screen.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "inUse": {
+          "description": "True for the entry used by the next request.",
+          "type": "boolean"
+        },
+        "isDefault": {
+          "description": "True for the legacy `auth.json` login shown as the default account.",
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/definitions/InocodeAccountKind"
+        },
+        "lastUsedAt": {
+          "description": "Unix seconds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "The owner's display name; `null` when unknown.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "plan": {
+          "description": "Plan name for ChatGPT accounts (for example `plus`, `pro`); `null` for API keys.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "priority": {
+          "description": "Larger is used earlier.",
+          "format": "int32",
+          "type": "integer"
+        },
+        "provider": {
+          "description": "Provider group the entry belongs to: `openai` or `claude`.",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/definitions/InocodeAccountState"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InocodeAccountUsage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`null` for API keys (no usage concept) or before the first fetch."
+        }
+      },
+      "required": [
+        "alias",
+        "id",
+        "inUse",
+        "isDefault",
+        "kind",
+        "priority",
+        "provider",
+        "state"
+      ],
+      "type": "object"
+    },
+    "InocodeAccountKind": {
+      "description": "Which kind of credential an entry holds. Other providers plug in here later.",
+      "oneOf": [
+        {
+          "enum": [
+            "chatgpt",
+            "apiKey"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "A Claude (Pro/Max) OAuth sign-in.",
+          "enum": [
+            "claudeOauth"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "InocodeAccountResetCredit": {
+      "description": "`eligible` and the fields after it are present when `status` is `ok`, and also when it is `error` with `stale: true` (the last good value). Otherwise they are absent.",
+      "properties": {
+        "atLimit": {
+          "description": "The account is at a usage limit right now.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "cooldownUntil": {
+          "description": "Unix seconds; no reset can be spent before this.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "eligible": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "endsAt": {
+          "description": "Unix seconds; the soonest end among grants with resets left.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "grants": {
+          "items": {
+            "$ref": "#/definitions/InocodeAccountResetGrant"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Why, for `none`, `unavailable` and `error`: a short word such as `block_missing`, `block_null`, `block_unreadable`, `grant_query_refused`, `http_404`, `http_403`, `auth_refused`, `rate_limited`, `request_failed`, `timeout`, `token_unavailable`, `api_key`, `not_read`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "resetsLeft": {
+          "description": "Resets left across the grants that are not paused.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "resetsTotal": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "stale": {
+          "description": "The fields below are the last good value, kept because the latest read failed.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/InocodeResetCreditStatus"
+        },
+        "usableNow": {
+          "description": "A reset can be spent right now.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "type": "object"
+    },
+    "InocodeAccountResetGrant": {
+      "properties": {
+        "clears": {
+          "description": "The windows the grant clears: `five_hour`, `seven_day`, `seven_day_overage_included`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "endsAt": {
+          "description": "Unix seconds; `null` when the grant does not expire.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "resetsLeft": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "resetsTotal": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "usableNow": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "clears",
+        "id",
+        "label",
+        "paused",
+        "resetsLeft",
+        "resetsTotal",
+        "usableNow"
+      ],
+      "type": "object"
+    },
+    "InocodeAccountState": {
+      "enum": [
+        "active",
+        "cooldown",
+        "disabled"
+      ],
+      "type": "string"
+    },
+    "InocodeAccountSwitchReason": {
+      "enum": [
+        "threshold",
+        "limitReached",
+        "manual"
+      ],
+      "type": "string"
+    },
+    "InocodeAccountUsage": {
+      "properties": {
+        "fiveHour": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InocodeAccountUsageWindow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resetCredit": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/InocodeAccountResetCredit"
+            }
+          ],
+          "description": "The banked usage-limit resets. Never `null`: `status` says whether they could be read."
+        },
+        "updatedAt": {
+          "description": "Unix seconds of the last refresh; `null` when never fetched.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "weekly": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InocodeAccountUsageWindow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "resetCredit"
+      ],
+      "type": "object"
+    },
+    "InocodeAccountUsageWindow": {
+      "properties": {
+        "resetsAt": {
+          "description": "Unix seconds.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "usedPercent": {
+          "description": "0-100.",
+          "format": "double",
+          "type": "number"
+        },
+        "windowMinutes": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "usedPercent"
+      ],
+      "type": "object"
+    },
+    "InocodeAccountsLoginCompletedNotification": {
+      "properties": {
+        "accountId": {
+          "description": "The new entry's id on success.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "loginId": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "loginId",
+        "success"
+      ],
+      "type": "object"
+    },
+    "InocodeAccountsSwitchedNotification": {
+      "properties": {
+        "fromAlias": {
+          "description": "Alias of the account used before; `null` when none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "$ref": "#/definitions/InocodeAccountSwitchReason"
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toAlias": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "toAlias"
+      ],
+      "type": "object"
+    },
+    "InocodeAccountsUpdatedNotification": {
+      "description": "The account list changed (added, removed, usage refreshed, state changed...).",
+      "properties": {
+        "accounts": {
+          "items": {
+            "$ref": "#/definitions/InocodeAccount"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "accounts"
+      ],
+      "type": "object"
+    },
+    "InocodeAdvisorEventKind": {
+      "enum": [
+        "stall",
+        "advice",
+        "error"
+      ],
+      "type": "string"
+    },
+    "InocodeAdvisorEventNotification": {
+      "description": "Notification: one stall / advice / error event (same fields as [`InocodeAdvisorEvent`]).",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/InocodeAdvisorEventKind"
+        },
+        "model": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recentActions": {
+          "default": null,
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "signature": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "trigger": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InocodeAdvisorTrigger"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tsMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "threadId",
+        "tsMs"
+      ],
+      "type": "object"
+    },
+    "InocodeAdvisorTrigger": {
+      "enum": [
+        "same_failure",
+        "repeated_action",
+        "alternation",
+        "no_progress"
+      ],
+      "type": "string"
+    },
+    "InocodeCompactionEventKind": {
+      "enum": [
+        "completed",
+        "failed",
+        "breakerTripped"
+      ],
+      "type": "string"
+    },
+    "InocodeCompactionEventNotification": {
+      "properties": {
+        "auto": {
+          "type": "boolean"
+        },
+        "consecutiveFailures": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/definitions/InocodeCompactionEventKind"
+        },
+        "pinnedRuleIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "reattachedFiles": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "auto",
+        "consecutiveFailures",
+        "kind",
+        "pinnedRuleIds",
+        "reason",
+        "reattachedFiles",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "InocodeGoalCompletionEvidenceNotification": {
+      "properties": {
+        "goalId": {
+          "type": "string"
+        },
+        "hostFacts": {
+          "description": "What the host observed while the goal was active, apart from the model's claims.",
+          "items": {
+            "$ref": "#/definitions/InocodeGoalHostFact"
+          },
+          "type": "array"
+        },
+        "objective": {
+          "type": "string"
+        },
+        "recordedAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "requirements": {
+          "description": "The model's per-requirement claims, as it gave them.",
+          "items": {
+            "$ref": "#/definitions/InocodeGoalRequirementReport"
+          },
+          "type": "array"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "goalId",
+        "hostFacts",
+        "objective",
+        "recordedAt",
+        "requirements",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "InocodeGoalEditRequestedNotification": {
+      "properties": {
+        "currentObjective": {
+          "type": "string"
+        },
+        "newObjective": {
+          "type": "string"
+        },
+        "reason": {
+          "description": "The model's own reason (its claim, not a fact).",
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "requestedAt": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/definitions/ThreadGoalStatus"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "timeUsedSeconds": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "tokenBudget": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "tokensUsed": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "currentObjective",
+        "newObjective",
+        "reason",
+        "requestId",
+        "requestedAt",
+        "status",
+        "threadId",
+        "timeUsedSeconds",
+        "tokensUsed"
+      ],
+      "type": "object"
+    },
+    "InocodeGoalEvidenceItem": {
+      "properties": {
+        "detail": {
+          "description": "The path, the command line, or the observed text.",
+          "type": "string"
+        },
+        "exitCode": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "`file`, `command`, `output` or `other`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "detail",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "InocodeGoalHostFact": {
+      "description": "A fact the host observed during the goal (not the model's words).",
+      "properties": {
+        "detail": {
+          "description": "The command line, or the paths a patch touched, verbatim from the call's arguments.",
+          "type": "string"
+        },
+        "exitCode": {
+          "description": "Null means unknown: the host's outcome carries no exit code today.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "`command`, `file_change`, `mcp` or `other`.",
+          "type": "string"
+        },
+        "outcome": {
+          "description": "`completed`, `failed`, `blocked`, `aborted` or `unknown`.",
+          "type": "string"
+        },
+        "success": {
+          "description": "The tool output's own success marker; null when unknown.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "tool": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "detail",
+        "kind",
+        "outcome",
+        "tool"
+      ],
+      "type": "object"
+    },
+    "InocodeGoalRequirementReport": {
+      "properties": {
+        "claim": {
+          "description": "The model's own claim about it.",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/definitions/InocodeGoalEvidenceItem"
+          },
+          "type": "array"
+        },
+        "requirement": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim",
+        "evidence",
+        "requirement"
+      ],
+      "type": "object"
+    },
+    "InocodeGuardFiredNotification": {
+      "description": "Same shape as `InocodeGuardEvent`; sent when a guard rule fires.",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "result": {
+          "$ref": "#/definitions/InocodeGuardResult"
+        },
+        "ruleId": {
+          "type": "string"
+        },
+        "ruleTitle": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/definitions/InocodeKnowledgeScope"
+        },
+        "severity": {
+          "$ref": "#/definitions/InocodeRuleSeverity"
+        },
+        "target": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "toolUseId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tsMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "turnId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "reason",
+        "result",
+        "ruleId",
+        "ruleTitle",
+        "scope",
+        "severity",
+        "target",
+        "threadId",
+        "tool",
+        "tsMs"
+      ],
+      "type": "object"
+    },
+    "InocodeGuardResult": {
+      "enum": [
+        "blocked",
+        "warned"
+      ],
+      "type": "string"
+    },
+    "InocodeKnowledgeKind": {
+      "enum": [
+        "rule",
+        "failure_case",
+        "issue",
+        "decision",
+        "fact",
+        "contract",
+        "procedure"
+      ],
+      "type": "string"
+    },
+    "InocodeKnowledgeRecordedNotification": {
+      "description": "A knowledge record (such as a failure case) was recorded automatically.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/definitions/InocodeKnowledgeKind"
+        },
+        "scope": {
+          "$ref": "#/definitions/InocodeKnowledgeScope"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "scope",
+        "title"
+      ],
+      "type": "object"
+    },
+    "InocodeKnowledgeScope": {
+      "enum": [
+        "project",
+        "global"
+      ],
+      "type": "string"
+    },
+    "InocodeMessage": {
+      "properties": {
+        "delivery": {
+          "description": "`send_message`, `followup_task`, `spawn`, `final`.",
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "fromThread": {
+          "default": null,
+          "description": "Threads of the sender and the receiver, when known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "default": null,
+          "description": "Id of the message as an item of the receiver's history (`#<turn>.@<n>`, readable with `inocode/messages/resolve` on `toThread`). Null when it is not in the history yet.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "parsed": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InocodeParsedMessage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Present when the text is a valid telegraphic message."
+        },
+        "replyThread": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "replyTo": {
+          "default": null,
+          "description": "The message this one answers (`#<turn>.<item>` or `#<turn>.@<n>`) in the history of `replyThread`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "summary": {
+          "description": "One line for a list: the telegraphic `summary`/`q`/`a`/... value, else the first line.",
+          "type": "string"
+        },
+        "text": {
+          "description": "Verbatim text.",
+          "type": "string"
+        },
+        "threadId": {
+          "description": "Root thread of the conversation this message belongs to.",
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "toThread": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tsMs": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "delivery",
+        "from",
+        "summary",
+        "text",
+        "threadId",
+        "to",
+        "tsMs"
+      ],
+      "type": "object"
+    },
+    "InocodeMessageConfidence": {
+      "enum": [
+        "high",
+        "med",
+        "low"
+      ],
+      "type": "string"
+    },
+    "InocodeMessageField": {
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "value"
+      ],
+      "type": "object"
+    },
+    "InocodeMessageKind": {
+      "enum": [
+        "ASK",
+        "ANSWER",
+        "BLOCKED",
+        "RESULT",
+        "HANDOFF"
+      ],
+      "type": "string"
+    },
+    "InocodeMessagesAppendedNotification": {
+      "properties": {
+        "message": {
+          "$ref": "#/definitions/InocodeMessage"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "InocodeParsedMessage": {
+      "properties": {
+        "conf": {
+          "$ref": "#/definitions/InocodeMessageConfidence"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/definitions/InocodeMessageField"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/definitions/InocodeMessageKind"
+        }
+      },
+      "required": [
+        "conf",
+        "fields",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "InocodeResetCreditStatus": {
+      "oneOf": [
+        {
+          "description": "Read. Zero resets is still `ok` (`resetsLeft: 0`).",
+          "enum": [
+            "ok"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The account is outside the reset-credit scheme (API keys).",
+          "enum": [
+            "none"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The endpoint does not offer it for this account or plan.",
+          "enum": [
+            "unavailable"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The read failed. The fields below are the last good value when `stale` is true.",
+          "enum": [
+            "error"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "InocodeRuleSeverity": {
+      "enum": [
+        "block",
+        "warn"
+      ],
+      "type": "string"
+    },
+    "InocodeStatsSeedProgressNotification": {
+      "properties": {
+        "done": {
+          "type": "boolean"
+        },
+        "filesDone": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "filesTotal": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "jobId": {
+          "type": "string"
+        },
+        "samplesAdded": {
+          "format": "int64",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "done",
+        "filesDone",
+        "filesTotal",
+        "jobId",
+        "samplesAdded"
+      ],
+      "type": "object"
+    },
     "InocodeTeamAgent": {
       "properties": {
         "id": {
           "type": "string"
         },
+        "model": {
+          "default": null,
+          "description": "Model the agent runs on (same as `Thread.model`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "name": {
           "type": "string"
+        },
+        "nickname": {
+          "default": null,
+          "description": "The agent's nickname (same as `Thread.agentNickname`).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "ownedPaths": {
           "items": {
             "type": "string"
           },
           "type": "array"
+        },
+        "parentId": {
+          "default": null,
+          "description": "Thread id of the agent that spawned this one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reasoningEffort": {
+          "default": null,
+          "description": "Reasoning effort of the agent (same as `Thread.reasoningEffort`).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "startedAt": {
           "type": "string"
@@ -2730,6 +3823,17 @@
         "speedup": {
           "format": "double",
           "type": "number"
+        },
+        "tasks": {
+          "default": null,
+          "description": "The work items the estimate was built from.",
+          "items": {
+            "$ref": "#/definitions/InocodeTeamTask"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
         }
       },
       "required": [
@@ -2737,6 +3841,66 @@
         "decision",
         "reason",
         "speedup"
+      ],
+      "type": "object"
+    },
+    "InocodeTeamMessageEdge": {
+      "description": "Messages from one thread to another, counted. `fromId` / `toId` are thread ids; absent when the host did not know them.",
+      "properties": {
+        "count": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "fromId": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastDelivery": {
+          "description": "`send_message` or `followup_task`.",
+          "type": "string"
+        },
+        "lastTsMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "toId": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "count",
+        "lastDelivery",
+        "lastTsMs"
+      ],
+      "type": "object"
+    },
+    "InocodeTeamTask": {
+      "properties": {
+        "estSeconds": {
+          "format": "double",
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        },
+        "writePaths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "estSeconds",
+        "name",
+        "writePaths"
       ],
       "type": "object"
     },
@@ -2751,6 +3915,13 @@
         },
         "estimate": {
           "$ref": "#/definitions/InocodeTeamEstimate"
+        },
+        "messages": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/InocodeTeamMessageEdge"
+          },
+          "type": "array"
         },
         "threadId": {
           "type": "string"
@@ -7700,6 +8871,206 @@
         "params"
       ],
       "title": "Inocode/team/updatedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "inocode/guard/fired"
+          ],
+          "title": "Inocode/guard/firedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/InocodeGuardFiredNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Inocode/guard/firedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "inocode/goal/editRequested"
+          ],
+          "title": "Inocode/goal/editRequestedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/InocodeGoalEditRequestedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Inocode/goal/editRequestedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "inocode/knowledge/recorded"
+          ],
+          "title": "Inocode/knowledge/recordedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/InocodeKnowledgeRecordedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Inocode/knowledge/recordedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "inocode/advisor/event"
+          ],
+          "title": "Inocode/advisor/eventNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/InocodeAdvisorEventNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Inocode/advisor/eventNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "inocode/messages/appended"
+          ],
+          "title": "Inocode/messages/appendedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/InocodeMessagesAppendedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Inocode/messages/appendedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "inocode/compaction/event"
+          ],
+          "title": "Inocode/compaction/eventNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/InocodeCompactionEventNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Inocode/compaction/eventNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "inocode/stats/seedProgress"
+          ],
+          "title": "Inocode/stats/seedProgressNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/InocodeStatsSeedProgressNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Inocode/stats/seedProgressNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "inocode/accounts/updated"
+          ],
+          "title": "Inocode/accounts/updatedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/InocodeAccountsUpdatedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Inocode/accounts/updatedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "inocode/accounts/switched"
+          ],
+          "title": "Inocode/accounts/switchedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/InocodeAccountsSwitchedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Inocode/accounts/switchedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "inocode/accounts/loginCompleted"
+          ],
+          "title": "Inocode/accounts/loginCompletedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/InocodeAccountsLoginCompletedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Inocode/accounts/loginCompletedNotification",
       "type": "object"
     },
     {

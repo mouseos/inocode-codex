@@ -31,4 +31,6 @@ pub use roster::TeamRoster;
 pub use roster::add_thread_tokens;
 pub use roster::roster_for;
 pub use roster::subscribe;
+pub use roster::TeamMessageEdge;
 pub use roster::TeamStatus;
+pub use roster::status_tree;

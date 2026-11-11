@@ -202,10 +202,19 @@ async fn handle_spawn_agent(
             state: codex_inocode_team::AgentState::Running,
             tokens: 0,
             started_at: chrono::Utc::now().to_rfc3339(),
+            nickname: nickname.clone(),
+            model: Some(agent_snapshot.model.clone()),
+            reasoning_effort: agent_snapshot
+                .reasoning_effort
+                .as_ref()
+                .map(ToString::to_string),
+            parent_id: Some(session.thread_id.to_string()),
         },
     );
     // The child's state follows its own status changes, not only `wait_agent` polls.
     crate::inocode_team::watch_child(&session, new_thread_id);
+    // From here on the host records the files this child changes and the commands it runs.
+    codex_inocode_team::note_spawned(&new_thread_id.to_string());
     codex_inocode_protocol::link_thread(&new_thread_id.to_string(), &session.thread_id.to_string());
     crate::inocode_loop::log_agent_message(
         session.thread_id,
@@ -213,8 +222,6 @@ async fn handle_spawn_agent(
             .get_agent_path()
             .map(|path| path.to_string())
             .as_deref()
-    // From here on the host records the files this child changes and the commands it runs.
-    codex_inocode_team::note_spawned(&new_thread_id.to_string());
             .unwrap_or("/root"),
         &task_name,
         "spawn",

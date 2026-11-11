@@ -107,6 +107,11 @@
         "model": {
           "type": "string"
         },
+        "modelProvider": {
+          "default": "",
+          "description": "The provider this model belongs to (`openai`, `claude`, ...): the id to send as `modelProvider` with this `model` in `thread/start` and `turn/start`.",
+          "type": "string"
+        },
         "modelSpecialty": {
           "default": null,
           "type": [

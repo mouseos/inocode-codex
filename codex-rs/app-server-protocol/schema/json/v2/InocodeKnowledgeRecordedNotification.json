@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "InocodeKnowledgeKind": {
+      "enum": [
+        "rule",
+        "failure_case",
+        "issue",
+        "decision",
+        "fact",
+        "contract",
+        "procedure"
+      ],
+      "type": "string"
+    },
+    "InocodeKnowledgeScope": {
+      "enum": [
+        "project",
+        "global"
+      ],
+      "type": "string"
+    }
+  },
+  "description": "A knowledge record (such as a failure case) was recorded automatically.",
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/definitions/InocodeKnowledgeKind"
+    },
+    "scope": {
+      "$ref": "#/definitions/InocodeKnowledgeScope"
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "scope",
+    "title"
+  ],
+  "title": "InocodeKnowledgeRecordedNotification",
+  "type": "object"
+}

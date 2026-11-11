@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "InocodeCompactionEventKind": {
+      "enum": [
+        "completed",
+        "failed",
+        "breakerTripped"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "auto": {
+      "type": "boolean"
+    },
+    "consecutiveFailures": {
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": "integer"
+    },
+    "kind": {
+      "$ref": "#/definitions/InocodeCompactionEventKind"
+    },
+    "pinnedRuleIds": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "reattachedFiles": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "threadId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "auto",
+    "consecutiveFailures",
+    "kind",
+    "pinnedRuleIds",
+    "reason",
+    "reattachedFiles",
+    "threadId"
+  ],
+  "title": "InocodeCompactionEventNotification",
+  "type": "object"
+}

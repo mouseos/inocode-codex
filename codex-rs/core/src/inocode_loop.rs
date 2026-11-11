@@ -170,6 +170,12 @@ pub(crate) fn log_agent_message_with(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
+    codex_inocode_team::roster_for(&thread_id.to_string()).record_message(
+        meta.from_thread.as_deref(),
+        meta.to_thread.as_deref(),
+        delivery,
+        ts_ms,
+    );
     codex_inocode_protocol::log_message_global(
         &thread_id.to_string(),
         &codex_inocode_protocol::LoggedMessage {
@@ -277,12 +283,6 @@ pub(crate) fn build_observation(
         error: (!success || nonzero_exit).then(|| truncate(output, 400)),
         changed_files: success && !nonzero_exit && is_edit_tool(tool),
         test_result: test_result_in_output(output),
-    }
-}
-
-/// Feeds one finished tool call to the stall detector; on a stall, records it and starts a
-/// background consultation whose answer arrives in the main agent's next turn input.
-pub(crate) fn observe_tool_result(
         observation: codex_inocode_advisor::normalize_error(output),
         read_only: codex_inocode_advisor::is_read_only_call(tool, args),
     }
@@ -314,6 +314,12 @@ pub(crate) fn record_facts(
             exit_code_in_output(output),
             secs,
         );
+    }
+}
+
+/// Feeds one finished tool call to the stall detector; on a stall, records it and starts a
+/// background consultation whose answer arrives in the main agent's next turn input.
+pub(crate) fn observe_tool_result(
     session: &Arc<Session>,
     turn: &Arc<TurnContext>,
     tool: &str,

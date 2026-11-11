@@ -10,7 +10,12 @@ import type { ModelUpgradeInfo } from "./ModelUpgradeInfo";
 import type { MultiAgentVersion } from "./MultiAgentVersion";
 import type { ReasoningEffortOption } from "./ReasoningEffortOption";
 
-export type Model = { id: string, model: string, upgrade: string | null, upgradeInfo: ModelUpgradeInfo | null, availabilityNux: ModelAvailabilityNux | null, displayName: string, description: string, modelSpecialty: string | null, hidden: boolean, supportedReasoningEfforts: Array<ReasoningEffortOption>, defaultReasoningEffort: ReasoningEffort, inputModalities: Array<InputModality>,
+export type Model = { id: string, model: string,
+/**
+ * The provider this model belongs to (`openai`, `claude`, ...): the id to send as
+ * `modelProvider` with this `model` in `thread/start` and `turn/start`.
+ */
+modelProvider: string, upgrade: string | null, upgradeInfo: ModelUpgradeInfo | null, availabilityNux: ModelAvailabilityNux | null, displayName: string, description: string, modelSpecialty: string | null, hidden: boolean, supportedReasoningEfforts: Array<ReasoningEffortOption>, defaultReasoningEffort: ReasoningEffort, inputModalities: Array<InputModality>,
 /**
  * @deprecated Always false; models no longer support personality selection.
  */

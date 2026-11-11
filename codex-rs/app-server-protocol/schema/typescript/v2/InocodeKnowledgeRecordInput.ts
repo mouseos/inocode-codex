@@ -13,4 +13,9 @@ import type { InocodeRuleSeverity } from "./InocodeRuleSeverity";
  * A record to write. Omitted fields get defaults (`id` is assigned, status
  * `unverified`, timestamps now).
  */
-export type InocodeKnowledgeRecordInput = { id?: string, kind: InocodeKnowledgeKind, title: string, scope?: InocodeKnowledgeScope, status?: InocodeKnowledgeStatus, source?: string, confidence?: InocodeKnowledgeConfidence, createdBy?: string, supersedes?: string, severity?: InocodeRuleSeverity, match?: InocodeRuleMatch, reason?: string, enforcedBy?: InocodeRuleEnforcedBy, fromFailure?: string, signature?: string, symptom?: string, rootCause?: string, doNot?: string, whatWorked?: string, evidence?: Array<string>, body: string, };
+export type InocodeKnowledgeRecordInput = { id?: string, kind: InocodeKnowledgeKind, title: string, scope?: InocodeKnowledgeScope, status?: InocodeKnowledgeStatus, source?: string, confidence?: InocodeKnowledgeConfidence, createdBy?: string, supersedes?: string, severity?: InocodeRuleSeverity, match?: InocodeRuleMatch, reason?: string, enforcedBy?: InocodeRuleEnforcedBy, fromFailure?: string,
+/**
+ * Narrows a rule to these paths (globs, absolute or relative): it applies only when the
+ * session cwd or the operation's path matches. Empty/absent = the whole scope.
+ */
+appliesTo?: Array<string>, signature?: string, symptom?: string, rootCause?: string, doNot?: string, whatWorked?: string, evidence?: Array<string>, body: string, };

@@ -6,14 +6,46 @@
         "id": {
           "type": "string"
         },
+        "model": {
+          "default": null,
+          "description": "Model the agent runs on (same as `Thread.model`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "name": {
           "type": "string"
+        },
+        "nickname": {
+          "default": null,
+          "description": "The agent's nickname (same as `Thread.agentNickname`).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "ownedPaths": {
           "items": {
             "type": "string"
           },
           "type": "array"
+        },
+        "parentId": {
+          "default": null,
+          "description": "Thread id of the agent that spawned this one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reasoningEffort": {
+          "default": null,
+          "description": "Reasoning effort of the agent (same as `Thread.reasoningEffort`).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "startedAt": {
           "type": "string"
@@ -67,6 +99,17 @@
         "speedup": {
           "format": "double",
           "type": "number"
+        },
+        "tasks": {
+          "default": null,
+          "description": "The work items the estimate was built from.",
+          "items": {
+            "$ref": "#/definitions/InocodeTeamTask"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
         }
       },
       "required": [
@@ -74,6 +117,66 @@
         "decision",
         "reason",
         "speedup"
+      ],
+      "type": "object"
+    },
+    "InocodeTeamMessageEdge": {
+      "description": "Messages from one thread to another, counted. `fromId` / `toId` are thread ids; absent when the host did not know them.",
+      "properties": {
+        "count": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "fromId": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lastDelivery": {
+          "description": "`send_message` or `followup_task`.",
+          "type": "string"
+        },
+        "lastTsMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "toId": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "count",
+        "lastDelivery",
+        "lastTsMs"
+      ],
+      "type": "object"
+    },
+    "InocodeTeamTask": {
+      "properties": {
+        "estSeconds": {
+          "format": "double",
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        },
+        "writePaths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "estSeconds",
+        "name",
+        "writePaths"
       ],
       "type": "object"
     }
@@ -88,6 +191,13 @@
     },
     "estimate": {
       "$ref": "#/definitions/InocodeTeamEstimate"
+    },
+    "messages": {
+      "default": [],
+      "items": {
+        "$ref": "#/definitions/InocodeTeamMessageEdge"
+      },
+      "type": "array"
     },
     "threadId": {
       "type": "string"

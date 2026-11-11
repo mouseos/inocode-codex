@@ -10,9 +10,22 @@ import type { InocodeAccountUsage } from "./InocodeAccountUsage";
  */
 export type InocodeAccount = { id: string, kind: InocodeAccountKind,
 /**
+ * Provider group the entry belongs to: `openai` or `claude`.
+ */
+provider: string,
+/**
  * User-chosen name.
  */
 alias: string,
+/**
+ * The account's e-mail address, from the sign-in (ChatGPT: ID token; Claude: profile).
+ * `null` when unknown. Local only; shown on the account screen.
+ */
+email: string | null,
+/**
+ * The owner's display name; `null` when unknown.
+ */
+name: string | null,
 /**
  * Plan name for ChatGPT accounts (for example `plus`, `pro`); `null` for API keys.
  */

@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "InocodeAdvisorEventKind": {
+      "enum": [
+        "stall",
+        "advice",
+        "error"
+      ],
+      "type": "string"
+    },
+    "InocodeAdvisorTrigger": {
+      "enum": [
+        "same_failure",
+        "repeated_action",
+        "alternation",
+        "no_progress"
+      ],
+      "type": "string"
+    }
+  },
+  "description": "Notification: one stall / advice / error event (same fields as [`InocodeAdvisorEvent`]).",
+  "properties": {
+    "kind": {
+      "$ref": "#/definitions/InocodeAdvisorEventKind"
+    },
+    "model": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "recentActions": {
+      "default": null,
+      "items": {
+        "type": "string"
+      },
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "signature": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "text": {
+      "default": null,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "trigger": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/InocodeAdvisorTrigger"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "tsMs": {
+      "format": "int64",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "kind",
+    "threadId",
+    "tsMs"
+  ],
+  "title": "InocodeAdvisorEventNotification",
+  "type": "object"
+}

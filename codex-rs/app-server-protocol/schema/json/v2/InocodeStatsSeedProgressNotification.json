@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "done": {
+      "type": "boolean"
+    },
+    "filesDone": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "filesTotal": {
+      "format": "int64",
+      "type": "integer"
+    },
+    "jobId": {
+      "type": "string"
+    },
+    "samplesAdded": {
+      "format": "int64",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "done",
+    "filesDone",
+    "filesTotal",
+    "jobId",
+    "samplesAdded"
+  ],
+  "title": "InocodeStatsSeedProgressNotification",
+  "type": "object"
+}

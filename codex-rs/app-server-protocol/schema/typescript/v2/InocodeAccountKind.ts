@@ -5,4 +5,4 @@
 /**
  * Which kind of credential an entry holds. Other providers plug in here later.
  */
-export type InocodeAccountKind = "chatgpt" | "apiKey";
+export type InocodeAccountKind = "chatgpt" | "apiKey" | "claudeOauth";
