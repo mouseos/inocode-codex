@@ -53,7 +53,7 @@ fn a_catalog_entry_is_built_from_what_the_endpoint_says() {
     assert_eq!(info.default_reasoning_level, Some(ReasoningEffort::Medium));
     assert_eq!(info.supported_reasoning_levels.len(), 5);
     assert_eq!(info.apply_patch_tool_type, None, "function tools only");
-    assert!(!info.supports_search_tool);
+    assert!(info.supports_search_tool);
     assert!(!info.supports_reasoning_summary_parameter);
 
     let bare = RemoteModel {

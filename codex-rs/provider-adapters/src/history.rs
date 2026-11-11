@@ -22,6 +22,22 @@ use codex_protocol::models::ReasoningItemContent;
 use codex_protocol::models::ReasoningItemReasoningSummary;
 use codex_protocol::models::ResponseItem;
 
+/// What the model is told a search loaded: the names it can now call, with their descriptions.
+fn loaded_summary(tools: &[serde_json::Value]) -> String {
+    let mut lines = Vec::new();
+    for decl in crate::tool_names::loaded_tools(tools) {
+        let description: String = decl.description.chars().take(160).collect();
+        lines.push(format!("- {}: {}", decl.wire_name, description));
+    }
+    if lines.is_empty() {
+        "No matching tools.".to_string()
+    } else {
+        format!("These tools are now available to call:
+{}", lines.join("
+"))
+    }
+}
+
 pub fn turns_from_items(items: &[ResponseItem]) -> Vec<Turn> {
     let mut turns = Vec::new();
     let mut assistant: Vec<AssistantPart> = Vec::new();
@@ -114,6 +130,29 @@ pub fn turns_from_items(items: &[ResponseItem]) -> Vec<Turn> {
                 name: name.clone(),
                 arguments: serde_json::json!({ "input": input }).to_string(),
             })),
+            ResponseItem::ToolSearchCall {
+                call_id: Some(call_id),
+                arguments,
+                ..
+            } => assistant.push(AssistantPart::Call(ToolCall {
+                id: call_id.clone(),
+                namespace: None,
+                name: crate::tool_names::TOOL_SEARCH_NAME.to_string(),
+                arguments: arguments.to_string(),
+            })),
+            ResponseItem::ToolSearchOutput {
+                call_id: Some(call_id),
+                tools,
+                ..
+            } => {
+                flush(&mut turns, &mut assistant);
+                turns.push(Turn::ToolResult(ToolResult {
+                    call_id: call_id.clone(),
+                    name: Some(crate::tool_names::TOOL_SEARCH_NAME.to_string()),
+                    content: vec![Part::Text(loaded_summary(tools))],
+                    is_error: false,
+                }));
+            }
             ResponseItem::FunctionCallOutput {
                 call_id,
                 name,
@@ -254,5 +293,42 @@ mod tests {
         };
         assert!(matches!(&parts[0],
             AssistantPart::Thinking(t) if t.signature.as_deref() == Some("sig-1")));
+    }
+
+    #[test]
+    fn a_tool_search_round_trips_as_a_call_and_a_result_that_names_the_loaded_tools() {
+        let items = vec![
+            ResponseItem::ToolSearchCall {
+                encrypted_content: None,
+                id: None,
+                call_id: Some("c1".into()),
+                status: None,
+                execution: "client".into(),
+                arguments: serde_json::json!({"query": "files"}),
+                internal_chat_message_metadata_passthrough: None,
+            },
+            ResponseItem::ToolSearchOutput {
+                id: None,
+                call_id: Some("c1".into()),
+                status: "completed".into(),
+                execution: "client".into(),
+                tools: vec![serde_json::json!({
+                    "type": "namespace", "name": "mcp__files__", "description": "",
+                    "tools": [{"type": "function", "name": "read", "description": "Read a file",
+                               "strict": false, "parameters": {"type": "object", "properties": {}}}]
+                })],
+                internal_chat_message_metadata_passthrough: None,
+            },
+        ];
+        let turns = turns_from_items(&items);
+        assert_eq!(turns.len(), 2);
+        let Turn::Assistant(parts) = &turns[0] else { panic!("assistant turn") };
+        let AssistantPart::Call(call) = &parts[0] else { panic!("call") };
+        assert_eq!(call.name, "tool_search");
+        assert_eq!(call.arguments, "{\"query\":\"files\"}");
+        let Turn::ToolResult(result) = &turns[1] else { panic!("result") };
+        assert_eq!(result.call_id, "c1");
+        let Part::Text(text) = &result.content[0] else { panic!("text") };
+        assert!(text.contains("mcp__files__read"));
     }
 }

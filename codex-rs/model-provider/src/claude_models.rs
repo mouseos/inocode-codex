@@ -108,7 +108,7 @@ fn effort(level: ReasoningEffort, description: &str) -> ReasoningEffortPreset {
 }
 
 /// The model's catalog entry. Claude models take function tools only (no `apply_patch` freeform
-/// tool, no hosted web search), accept the effort ladder, and do not take the Responses
+/// tool, no hosted web search; the deferred-tool search is carried as a function), accept the effort ladder, and do not take the Responses
 /// `reasoning.summary` parameter.
 pub(crate) fn model_info(remote: &RemoteModel, priority: i32) -> ModelInfo {
     static TEMPLATE: std::sync::OnceLock<ModelInfo> = std::sync::OnceLock::new();
@@ -137,7 +137,9 @@ pub(crate) fn model_info(remote: &RemoteModel, priority: i32) -> ModelInfo {
     info.support_verbosity = false;
     info.default_verbosity = None;
     info.apply_patch_tool_type = None;
-    info.supports_search_tool = false;
+    // Third-party tools (MCP, apps) stay deferred behind the search function instead of being
+    // declared on every request (hundreds of them are tens of thousands of tokens).
+    info.supports_search_tool = true;
     info.context_window = remote.max_input_tokens.or(info.context_window);
     info.max_context_window = info.context_window;
     info.input_modalities = if remote.image_input == Some(false) {

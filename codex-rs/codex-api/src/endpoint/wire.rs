@@ -253,7 +253,24 @@ impl<T: HttpTransport> WireClient<T> {
             Some(tools) => serde_json::from_str(tools.as_raw_value().get()).unwrap_or(Value::Null),
             None => Value::Null,
         };
-        let tools = declared_tools(&tools_json);
+        let mut tools = declared_tools(&tools_json);
+        // Tools a deferred-tool search loaded earlier in this thread are declared again.
+        let loaded: Vec<Value> = request
+            .input
+            .iter()
+            .filter_map(|item| match item {
+                codex_protocol::models::ResponseItem::ToolSearchOutput { tools, .. } => {
+                    Some(tools.clone())
+                }
+                _ => None,
+            })
+            .flatten()
+            .collect();
+        for decl in codex_provider_adapters::tool_names::loaded_tools(&loaded) {
+            if !tools.iter().any(|t| t.wire_name == decl.wire_name) {
+                tools.push(decl);
+            }
+        }
         let turns = turns_from_items(&request.input);
         let effort = request
             .reasoning
@@ -450,12 +467,39 @@ async fn pump(
     }
 }
 
+/// A call to the function that stands for the deferred-tool search becomes a search call again.
+fn search_call(item: codex_protocol::models::ResponseItem) -> codex_protocol::models::ResponseItem {
+    use codex_protocol::models::ResponseItem;
+    match item {
+        ResponseItem::FunctionCall {
+            name,
+            namespace: None,
+            arguments,
+            call_id,
+            id,
+            ..
+        } if name == codex_provider_adapters::tool_names::TOOL_SEARCH_NAME => {
+            ResponseItem::ToolSearchCall {
+                encrypted_content: None,
+                id,
+                call_id: Some(call_id),
+                status: None,
+                execution: "client".to_string(),
+                arguments: serde_json::from_str(&arguments)
+                    .unwrap_or_else(|_| serde_json::json!({})),
+                internal_chat_message_metadata_passthrough: None,
+            }
+        }
+        other => other,
+    }
+}
+
 /// `false` when the stream is over (terminal event sent or receiver gone).
 async fn forward(tx: &mpsc::Sender<Result<ResponseEvent, ApiError>>, out: Out) -> bool {
     let (event, terminal) = match out {
         Out::Created => (Ok(ResponseEvent::Created { response_id: None }), false),
-        Out::ItemAdded(item) => (Ok(ResponseEvent::OutputItemAdded(item)), false),
-        Out::ItemDone(item) => (Ok(ResponseEvent::OutputItemDone(item)), false),
+        Out::ItemAdded(item) => (Ok(ResponseEvent::OutputItemAdded(search_call(item))), false),
+        Out::ItemDone(item) => (Ok(ResponseEvent::OutputItemDone(search_call(item))), false),
         Out::TextDelta(delta) => (Ok(ResponseEvent::OutputTextDelta(delta)), false),
         Out::ToolArgsDelta {
             item_id,

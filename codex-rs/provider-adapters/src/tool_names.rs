@@ -47,10 +47,36 @@ pub fn declared_tools(tools: &Value) -> Vec<ToolDecl> {
                     }
                 }
             }
+            // The client-side search over deferred tools is offered as one function; the caller
+            // turns a call to it back into a search call (`TOOL_SEARCH_NAME`).
+            Some("tool_search") => out.push(ToolDecl {
+                wire_name: TOOL_SEARCH_NAME.to_string(),
+                namespace: None,
+                name: TOOL_SEARCH_NAME.to_string(),
+                description: tool
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                parameters: tool
+                    .get("parameters")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({"type": "object", "properties": {}})),
+                strict: false,
+            }),
             _ => {}
         }
     }
     out
+}
+
+/// The name under which the deferred-tool search is declared as a function.
+pub const TOOL_SEARCH_NAME: &str = "tool_search";
+
+/// The tools a search has loaded so far, as function declarations. Anthropic has no server-side
+/// loading, so every later request declares them again.
+pub fn loaded_tools(outputs: &[Value]) -> Vec<ToolDecl> {
+    declared_tools(&Value::Array(outputs.to_vec()))
 }
 
 fn function_decl(tool: &Value, namespace: Option<&str>) -> Option<ToolDecl> {
@@ -126,5 +152,25 @@ mod tests {
         assert_eq!(registry.resolve("shell"), Some((None, "shell".to_string())));
         assert_eq!(registry.resolve("undeclared"), None);
         assert_eq!(wire_name(Some("a"), "b"), "a__b");
+    }
+
+    #[test]
+    fn the_deferred_tool_search_is_a_function_and_loaded_tools_are_declared() {
+        let tools = json!([
+            {"type": "tool_search", "execution": "client", "description": "Find tools",
+             "parameters": {"type": "object", "properties": {"query": {"type": "string"}}}}
+        ]);
+        let decls = declared_tools(&tools);
+        assert_eq!(decls.len(), 1);
+        assert_eq!(decls[0].wire_name, TOOL_SEARCH_NAME);
+        assert_eq!(decls[0].parameters["properties"]["query"]["type"], "string");
+
+        let loaded = loaded_tools(&[json!({
+            "type": "namespace", "name": "mcp__files__", "description": "",
+            "tools": [{"type": "function", "name": "read", "description": "r", "strict": false,
+                       "parameters": {"type": "object", "properties": {}}}]
+        })]);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].wire_name, "mcp__files__read");
     }
 }
