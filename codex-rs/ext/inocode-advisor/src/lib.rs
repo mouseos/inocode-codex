@@ -69,7 +69,14 @@ pub struct Observation {
     pub observation: String,
     /// The call only looked at things (read, list, search); research is not a stall.
     pub read_only: bool,
+    /// When the call finished (milliseconds since the Unix epoch), if known. Failures with the
+    /// same signature finishing almost together came from one batch of parallel calls.
+    pub at_ms: Option<u64>,
 }
+
+/// Failures with the same signature finishing within this many milliseconds of each other are
+/// one failure: the model had not seen the first error when it made the others.
+const SAME_BATCH_MS: u64 = 1000;
 
 impl Observation {
     pub fn failed(&self) -> bool {
@@ -182,6 +189,18 @@ impl StallDetector {
     }
 
     pub fn observe(&mut self, obs: Observation) -> Option<Stall> {
+        // A call of the same failing kind that finishes together with the previous failure was
+        // made in the same parallel batch: count the batch once, not each call.
+        if let (Some(now), Some(last)) = (obs.at_ms, self.history.back_mut())
+            && let Some(before) = last.at_ms
+            && now.saturating_sub(before) <= SAME_BATCH_MS
+            && obs.failed()
+            && last.failed()
+            && obs.failure_signature() == last.failure_signature()
+        {
+            last.at_ms = Some(now);
+            return None;
+        }
         let test_changed = obs
             .test_result
             .as_ref()
@@ -575,6 +594,42 @@ mod tests {
             };
             assert_eq!(d.observe(obs), None);
         }
+    }
+
+    #[test]
+    fn a_parallel_batch_of_the_same_failure_counts_once() {
+        let failing = |args: &str, at_ms: u64| Observation {
+            tool: "spawn_agent".into(),
+            args: args.into(),
+            error: Some("invalid type: map, expected a string at line 1 column 12".into()),
+            at_ms: Some(at_ms),
+            ..Default::default()
+        };
+        // Three calls from one batch, a few milliseconds apart: one failure.
+        let mut d = StallDetector::new(StallConfig::default());
+        assert_eq!(d.observe(failing("a", 10_000)), None);
+        assert_eq!(d.observe(failing("b", 10_004)), None);
+        assert_eq!(d.observe(failing("c", 10_009)), None);
+        // The model retries after seeing the error, and fails again, twice more: now it is a
+        // stall, three failures in a row counted by batch.
+        assert_eq!(d.observe(failing("d", 14_000)), None);
+        let stall = d.observe(failing("e", 18_000)).expect("third failed attempt");
+        assert_eq!(stall.trigger, Trigger::SameFailure);
+    }
+
+    #[test]
+    fn failures_without_a_time_are_counted_one_by_one() {
+        let mut d = StallDetector::new(StallConfig::default());
+        let mut fired = None;
+        for i in 0..3 {
+            fired = d.observe(Observation {
+                tool: "spawn_agent".into(),
+                args: format!("{i}"),
+                error: Some("boom".into()),
+                ..Default::default()
+            });
+        }
+        assert_eq!(fired.map(|s| s.trigger), Some(Trigger::SameFailure));
     }
 
     #[test]

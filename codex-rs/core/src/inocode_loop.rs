@@ -294,6 +294,10 @@ pub(crate) fn build_observation(
         test_result: test_result_in_output(output),
         observation: codex_inocode_advisor::normalize_error(output),
         read_only: codex_inocode_advisor::is_read_only_call(tool, args),
+        at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
     }
 }
 
