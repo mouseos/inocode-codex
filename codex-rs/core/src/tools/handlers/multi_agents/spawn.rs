@@ -197,6 +197,13 @@ async fn handle_spawn_agent(
         .await;
     let (spawned_agent, _) = result?;
     let new_thread_id = spawned_agent.thread_id;
+    // The same host-side records as the v2 spawn: the child inherits the user's words, its
+    // status follows into the roster, and from here the host records the files it changes and
+    // the commands it runs (the facts block of its result).
+    codex_inocode_ledger::inherit(&session.thread_id.to_string(), &new_thread_id.to_string());
+    crate::inocode_team::watch_child(&session, new_thread_id);
+    codex_inocode_team::note_spawned(&new_thread_id.to_string());
+    codex_inocode_protocol::link_thread(&new_thread_id.to_string(), &session.thread_id.to_string());
     let role_tag = role_name.unwrap_or(DEFAULT_ROLE_NAME);
     turn.session_telemetry.counter(
         "codex.multi_agent.spawn",
