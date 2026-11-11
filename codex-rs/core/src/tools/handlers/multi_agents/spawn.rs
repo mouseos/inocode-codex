@@ -70,6 +70,8 @@ async fn handle_spawn_agent(
         .filter(|role| !role.is_empty());
     let input_items = parse_collab_input(args.message, args.items)?;
     let prompt = render_input_preview(&input_items);
+    // Files the instruction assigns on an `owned paths:`-style line (the roster's owned paths).
+    let owned_paths = codex_inocode_team::owned_paths_from_instruction(&prompt);
     let session_source = turn.session_source.clone();
     let child_depth = next_thread_spawn_depth(&session_source);
     let max_depth = turn.config.agent_max_depth;
@@ -210,7 +212,7 @@ async fn handle_spawn_agent(
         codex_inocode_team::TeamAgent {
             id: new_thread_id.to_string(),
             name: nickname.clone().unwrap_or_else(|| new_thread_id.to_string()),
-            owned_paths: Vec::new(),
+            owned_paths,
             state: codex_inocode_team::AgentState::Running,
             tokens: 0,
             started_at: chrono::Utc::now().to_rfc3339(),
