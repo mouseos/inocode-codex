@@ -170,12 +170,15 @@ pub(crate) fn log_agent_message_with(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
-    codex_inocode_team::roster_for(&thread_id.to_string()).record_message(
-        meta.from_thread.as_deref(),
-        meta.to_thread.as_deref(),
-        delivery,
-        ts_ms,
-    );
+    // Only messages whose ends the tool knew (not the spawn instruction, which is `parentId`).
+    if meta.from_thread.is_some() || meta.to_thread.is_some() {
+        codex_inocode_team::roster_for(&thread_id.to_string()).record_message(
+            meta.from_thread.as_deref(),
+            meta.to_thread.as_deref(),
+            delivery,
+            ts_ms,
+        );
+    }
     codex_inocode_protocol::log_message_global(
         &thread_id.to_string(),
         &codex_inocode_protocol::LoggedMessage {
