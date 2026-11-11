@@ -36,6 +36,23 @@ fn list_item(line: &str) -> Option<&str> {
     None
 }
 
+/// A list item that is a knowledge record, e.g. `[rule-0005] ...` from the pinned prohibition
+/// list: standing rules ride along with the request but are not work the user asked for.
+fn is_knowledge_item(item: &str) -> bool {
+    let Some(inner) = item.strip_prefix('[').and_then(|rest| rest.split_once(']')).map(|(id, _)| id)
+    else {
+        return false;
+    };
+    inner
+        .rsplit_once('-')
+        .is_some_and(|(kind, number)| {
+            !kind.is_empty()
+                && kind.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+                && !number.is_empty()
+                && number.chars().all(|c| c.is_ascii_digit())
+        })
+}
+
 /// Files named in one list item: path-shaped words (they contain `/` or `\\`, or end in a short
 /// alphabetic extension such as `.rs`), without quotes, backticks or brackets around them.
 fn paths_in_item(item: &str) -> Vec<String> {
@@ -75,7 +92,7 @@ pub fn detect_tasks_with_secs(user_text: &str, est_seconds: f64) -> Vec<Task> {
     user_text
         .lines()
         .filter_map(list_item)
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() && !is_knowledge_item(s))
         .map(|s| Task {
             name: s.chars().take(60).collect(),
             write_paths: paths_in_item(s),
@@ -146,6 +163,23 @@ mod tests {
         let (e, rec) = recommend_for_input(text, &EstimateConfig::default()).unwrap();
         assert_eq!(e.decision, Decision::Single);
         assert!(rec.is_none());
+    }
+
+    #[test]
+    fn pinned_rules_are_not_tasks() {
+        let text = "禁止事項(常に守る):
+- [rule-0005] プロセスを名前で止めない (理由: x)
+- [rule-0007] consume を呼ばない
+
+Tesla V100 を調べて";
+        assert!(recommend_for_input(text, &EstimateConfig::default()).is_none());
+        assert!(detect_tasks(text).is_empty());
+        let mixed = format!("{text}
+- add the API in core/src/api.rs
+- write the CLI in cli/src/main.rs");
+        let (e, _) = recommend_for_input(&mixed, &EstimateConfig::default()).unwrap();
+        assert_eq!(e.tasks.len(), 2);
+        assert_eq!(e.tasks[0].write_paths, vec!["core/src/api.rs"]);
     }
 
     #[test]
