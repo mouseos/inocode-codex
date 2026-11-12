@@ -259,12 +259,20 @@ fn record(store: &Store, args: RecordArgs, created_by: &str) -> Result<serde_jso
         })
         .map_err(|e| format!("could not record the claim: {e}"))?;
     Ok(json!({
+        // The card in the chat (kind, what was done, state, where it is on the screen).
+        "kind": "evidence",
+        "op": "create",
+        "id": claim.id,
+        "title": args.claim.chars().take(120).collect::<String>(),
+        "status": "registered",
+        "requiresApproval": false,
+        "target": { "tab": "evidence", "sub": "claims", "ref": claim.id },
         "claimId": claim.id,
         "quoteId": span.id,
         "sourceId": source.id,
         "sourceUrl": source.origin,
         "retrievedAt": source.retrieved_at,
-        "status": claim.status,
+        "claimStatus": claim.status,
     }))
 }
 
@@ -378,7 +386,15 @@ impl ToolExecutor<ToolInvocation> for RecordEvidenceHandler {
             let (arguments, thread_id) = arguments(invocation, RECORD_EVIDENCE_TOOL_NAME)?;
             let args: RecordArgs = parse_arguments(&arguments)?;
             let created_by = format!("model:{thread_id}");
-            record(&store(), args, &created_by).map(out).map_err(model_error)
+            // A refusal is a result too (status denied, with the reason), so the card can show it
+            // and the model can fix the call.
+            Ok(out(match record(&store(), args, &created_by) {
+                Ok(done) => done,
+                Err(reason) => json!({
+                    "kind": "evidence", "op": "create", "status": "denied",
+                    "requiresApproval": false, "reason": reason,
+                }),
+            }))
         })
     }
 }
@@ -470,7 +486,10 @@ mod tests {
         };
         let page = "Widget X costs 1,200 yen (tax included) as of 2026-11-11.";
         let first = record(&store, rec("Widget X is 1,200 yen", "Widget X costs 1,200 yen", Some(page)), "model:t").unwrap();
-        assert_eq!(first["status"], "reported");
+        assert_eq!(first["status"], "registered");
+        assert_eq!(first["claimStatus"], "reported");
+        assert_eq!(first["kind"], "evidence");
+        assert_eq!(first["target"]["tab"], "evidence");
         // The same page again is the same source.
         let second = record(&store, rec("Widget X tax included", "tax included", Some(page)), "model:t").unwrap();
         assert_eq!(first["sourceId"], second["sourceId"]);

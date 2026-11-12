@@ -50,6 +50,12 @@ pub struct GuardEvent {
     /// 同じスレッドで、同じ規則・同じ対象が、すでに発動していた(止められたあとの再実行など)。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub repeat: bool,
+    /// 禁止事項の出どころ(止まったカード用)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<crate::guard::GuardOrigin>,
+    /// 画面で選べる緩和の範囲。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub available_scopes: Vec<String>,
 }
 
 /// 規則ごとの発動の集計(測定用)。`repeat` は、同じ操作の再発動の回数。
@@ -140,6 +146,8 @@ pub fn record_guard_hits(verdict: &GuardVerdict, t: &GuardTarget) -> Vec<GuardEv
                     set.insert((t.thread_id.clone(), h.id.clone(), t.target.clone()))
                 })
                 .unwrap_or(true),
+            origin: h.origin.clone(),
+            available_scopes: h.available_scopes.clone(),
         };
         append_guard(&ev);
         let _ = guard_sender().send(ev.clone());

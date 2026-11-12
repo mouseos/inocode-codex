@@ -29,6 +29,38 @@ pub struct GuardHit {
     pub severity: Severity,
     pub reason: String,
     pub scope: Scope,
+    /// Where the prohibition comes from (for the card that says why the action was stopped).
+    pub origin: Option<GuardOrigin>,
+    /// The ranges the user can choose to relax it for (`request`, `session`, `always`); empty for an
+    /// old rule that has not been migrated.
+    pub available_scopes: Vec<String>,
+}
+
+/// The origin of a prohibition: the user's own words in the ledger, the screen, or an old rule.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GuardOrigin {
+    /// `ledger`, `ui` or `legacy`.
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<String>,
+    /// The referenced user message is no longer in the ledger.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub missing: bool,
+}
+
+impl GuardOrigin {
+    pub fn legacy() -> Self {
+        Self { kind: "legacy".into(), thread_id: None, seq: None, quote: None, missing: false }
+    }
+}
+
+pub fn all_scopes() -> Vec<String> {
+    ["request", "session", "always"].iter().map(|s| (*s).to_string()).collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -50,6 +82,8 @@ pub fn check_action(store: &Store, action: &GuardAction) -> GuardVerdict {
             continue;
         }
         let h = GuardHit {
+            origin: Some(GuardOrigin::legacy()),
+            available_scopes: Vec::new(),
             id: rule.id.clone(),
             title: rule.title.clone(),
             severity: rule.severity.unwrap_or(Severity::Warn),
@@ -183,6 +217,8 @@ const WRITE_TOOLS: [&str; 11] = [
 
 fn builtin_hit(reason: &str) -> GuardHit {
     GuardHit {
+        origin: None,
+        available_scopes: Vec::new(),
         id: "builtin-protect-self".into(),
         title: "ガード自体の保護".into(),
         severity: Severity::Block,

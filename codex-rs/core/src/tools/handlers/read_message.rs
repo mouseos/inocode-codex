@@ -56,7 +56,11 @@ pub(crate) fn create_read_message_tool() -> ToolSpec {
 A user message may begin with a line `[返信 #ID「hint」]`: the user is replying to the message \
 with that ID, and the hint is its first words. If that message is not visible in your history \
 (after compaction or a fork), call this tool with the ID to read it. Returns the kind of the \
-message (user, assistant or tool), its turn number and its text."
+message (user, assistant or tool), its turn number and its text. A user message may also begin \
+with a line `[引用 #ID thread:... 40-95]`: a quote, with its original text given just below (cut \
+at 4,000 characters; read the rest here). To point at an earlier message instead of repeating it, \
+write `[引用 #ID]` on its own line (`thread:<id>` for another thread, `40-95` for a character \
+range); the screen shows it as a card."
             .to_string(),
         strict: false,
         defer_loading: None,
@@ -103,7 +107,7 @@ impl ToolExecutor<ToolInvocation> for ReadMessageHandler {
 
             let path = match args.thread_id.as_deref().filter(|t| !t.is_empty()) {
                 Some(other) if other != session.thread_id.to_string() => {
-                    codex_rollout::find_thread_path_by_id_str(
+                    let other_path = codex_rollout::find_thread_path_by_id_str(
                         &turn.config.codex_home,
                         other,
                         session.state_db().as_deref(),
@@ -116,7 +120,19 @@ impl ToolExecutor<ToolInvocation> for ReadMessageHandler {
                     })?
                     .ok_or_else(|| {
                         FunctionCallError::RespondToModel(format!("thread not found: {other}"))
-                    })?
+                    })?;
+                    // Only threads of this workplace (same folder). Anything else is for the user
+                    // to attach as a card.
+                    let same_workplace = codex_rollout::read_session_meta_line(&other_path)
+                        .await
+                        .ok()
+                        .is_some_and(|line| line.meta.cwd.to_path_buf() == turn.cwd.as_path().to_path_buf());
+                    if !same_workplace {
+                        return Err(FunctionCallError::RespondToModel(format!(
+                            "thread {other} belongs to another workplace; ask the user to attach the message as a card"
+                        )));
+                    }
+                    other_path
                 }
                 _ => {
                     // The recorder may still hold the newest items.
@@ -197,5 +213,6 @@ mod tests {
         assert_eq!(tool.name, "read_message");
         assert!(tool.description.contains("[返信 #ID「hint」]"));
         assert!(tool.description.contains("read it"));
+        assert!(tool.description.contains("[引用 #ID]"));
     }
 }

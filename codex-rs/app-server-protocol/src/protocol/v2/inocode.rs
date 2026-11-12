@@ -1151,6 +1151,26 @@ pub enum InocodeGuardResult {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
+pub struct InocodeGuardOrigin {
+    /// `ledger`, `ui` or `legacy`.
+    pub kind: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub thread_id: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub seq: Option<i64>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub quote: Option<String>,
+    /// The referenced user message is no longer in the ledger.
+    #[serde(default)]
+    pub missing: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
 pub struct InocodeGuardEvent {
     pub ts_ms: i64,
     pub thread_id: String,
@@ -1167,6 +1187,13 @@ pub struct InocodeGuardEvent {
     pub rule_title: String,
     pub reason: String,
     pub scope: InocodeKnowledgeScope,
+    /// Where the prohibition comes from, for the card that says why the action was stopped.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub origin: Option<InocodeGuardOrigin>,
+    /// `request`, `session`, `always`: what the user can relax it for (empty: not relaxable).
+    #[serde(default)]
+    pub available_scopes: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -1210,6 +1237,11 @@ pub struct InocodeGuardFiredNotification {
     pub rule_title: String,
     pub reason: String,
     pub scope: InocodeKnowledgeScope,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub origin: Option<InocodeGuardOrigin>,
+    #[serde(default)]
+    pub available_scopes: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -2192,4 +2224,88 @@ kb_responses!(
     InocodeKbLegacyRulesResponse,
     InocodeKbLegacyMigrateResponse,
     InocodeKbLegacyFailureCasesResponse,
+    InocodeKbCandidateListResponse,
+    InocodeKbCandidateApproveResponse,
+    InocodeKbCandidateRejectResponse,
 );
+
+// ---------------------------------------------------------------- messages/resolveMany (quotes)
+
+/// One pointer to a message: `id` is `#<turn>.<item>`; `range` is a [start, end) character range of
+/// the text (a selected quote).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeMessageRef {
+    /// The thread of the message; the caller's thread when omitted.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub thread_id: Option<String>,
+    pub id: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub range: Option<Vec<i64>>,
+    /// The user attached this message as a card: readable even from another workplace.
+    #[serde(default)]
+    pub user_attached: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeMessagesResolveManyParams {
+    /// The thread the user is in (for the same-workplace check and to complete refs).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub caller_thread_id: Option<String>,
+    pub refs: Vec<InocodeMessageRef>,
+    /// Cut each text to this many characters (default 4,000). `truncated` and `totalChars` say so.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub max_chars: Option<i64>,
+}
+
+/// `state`: `ok`, `notFound`, `cannotOpen` or `outOfScope`. The other fields are set when `ok`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeResolvedMessageRef {
+    #[serde(rename = "ref")]
+    #[ts(rename = "ref")]
+    pub message_ref: InocodeMessageRef,
+    pub state: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub turn_number: Option<i64>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub item_number: Option<i64>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub turn_id: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub item_id: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub role: Option<InocodeMessageRole>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub truncated: bool,
+    /// The number of characters of the whole text (or of the range) before any cut.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub total_chars: Option<i64>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub range: Option<Vec<i64>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeMessagesResolveManyResponse {
+    pub items: Vec<InocodeResolvedMessageRef>,
+}

@@ -4,6 +4,7 @@
 import type { InocodeBenchmarkMatch } from "./InocodeBenchmarkMatch";
 import type { InocodeModelPrice } from "./InocodeModelPrice";
 import type { InocodeModelScore } from "./InocodeModelScore";
+import type { InocodeModelSpeed } from "./InocodeModelSpeed";
 import type { InocodeModelTheos } from "./InocodeModelTheos";
 
 export type InocodeModelEnrichment = { provider: string, modelId: string,
@@ -12,6 +13,21 @@ export type InocodeModelEnrichment = { provider: string, modelId: string,
  * `scores` is empty: unmeasured, not zero).
  */
 benchmarkMatch?: InocodeBenchmarkMatch | null, scores: Array<InocodeModelScore>, price: InocodeModelPrice,
+/**
+ * The model's context window in tokens. Absent when no source gives one. See
+ * `contextWindowSource` for where the number comes from.
+ */
+contextWindow?: number | null,
+/**
+ * `catalog` (the provider's own model catalog; the limit the requests really run under) or
+ * `models.dev`. Present exactly when `contextWindow` is.
+ */
+contextWindowSource?: string | null,
+/**
+ * Output speed, tokens per second: this machine's measurement when there is one, else the
+ * benchmark source's. Absent when neither exists.
+ */
+speed?: InocodeModelSpeed | null,
 /**
  * DeepAI models only: whether the model is free and what a request costs in Theos.
  */

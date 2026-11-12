@@ -341,3 +341,71 @@ fn the_ledger_view_and_failure_candidates() {
     // and they are not injected through the handoff pack
     assert!(!store.build_handoff_pack("cargo test").contains("cargo test exit=101"));
 }
+
+#[test]
+fn a_ui_relaxation_takes_the_newest_user_message_as_its_range() {
+    let (_d, cwd) = project();
+    let th = "th-ui-relax";
+    say(th, "全部消す前に確認して");
+    ok(
+        "prohibition/write",
+        json!({ "cwd": cwd, "title": "rm を使わない", "reason": "取り戻せない", "strength": "block",
+                "match": { "commands": ["re:^rm\\b"] }, "origin": { "kind": "ui" } }),
+    );
+    assert_eq!(verdict_for(&cwd, "rm -rf build", th), (1, 0));
+    // from the card: no words, only the thread; this request = until the next user message
+    let rel = ok("relaxation/add", json!({
+        "cwd": cwd, "prohibitionId": "proh-0001", "effect": "allowOnly",
+        "allow": { "commands": ["rm -rf build"] }, "scope": "request", "by": "user-ui", "threadId": th }));
+    assert_eq!(rel["id"], "rel-0001");
+    assert_eq!(verdict_for(&cwd, "rm -rf build", th), (0, 0));
+    assert_eq!(verdict_for(&cwd, "rm -rf src", th), (1, 0));
+    say(th, "次の依頼");
+    assert_eq!(verdict_for(&cwd, "rm -rf build", th), (1, 0), "the next user message ends it");
+    // without a thread, request/session from the screen has no range
+    let no_thread = err("relaxation/add", json!({
+        "cwd": cwd, "prohibitionId": "proh-0001", "effect": "disable", "scope": "request", "by": "user-ui" }));
+    assert_eq!(no_thread.code, INVALID);
+    // an old rule cannot be relaxed before it is migrated
+    let old = err("relaxation/add", json!({
+        "cwd": cwd, "prohibitionId": "rule-0005", "effect": "disable", "scope": "always", "by": "user-ui" }));
+    assert!(old.message.contains("migrated"));
+    // the stopped card gets the origin and the ranges the user can choose
+    let store = guard_store(&cwd);
+    let action = GuardAction { command: Some("rm -rf src".into()), thread_id: Some(th.into()), ..Default::default() };
+    let v = crate::guard_check_with(&codex_inocode_flags::InocodeFlags::default(), &store, &action);
+    let hit = &v.blocked[0];
+    assert_eq!(hit.origin.as_ref().unwrap().kind, "ui");
+    assert_eq!(hit.available_scopes, vec!["request", "session", "always"]);
+}
+
+#[test]
+fn candidates_wait_for_the_user_and_register_on_approval() {
+    let (d, cwd) = project();
+    let root = d.path();
+    let a = add_candidate(root, "checklistItem", "変更の後にテストを走らせる",
+        json!({ "role": "実装", "text": "変更の後にテストを走らせる", "when": "afterChange", "check": "machine" }), "model").unwrap();
+    let b = add_candidate(root, "overviewAppend", "概要へ追記", json!({ "text": "方針: 小さく直す" }), "model").unwrap();
+    assert_eq!((a.as_str(), b.as_str()), ("cand-0001", "cand-0002"));
+    assert!(add_candidate(root, "prohibition", "x", json!({}), "model").is_err(), "a model cannot propose a prohibition");
+    let list = ok("candidate/list", json!({ "cwd": cwd }));
+    assert_eq!(list["candidates"].as_array().unwrap().len(), 2);
+    assert_eq!(list["candidates"][0]["status"], "candidate");
+    assert_eq!(list["candidates"][0]["requiresApproval"], true);
+    // nothing is registered until approval
+    assert_eq!(ok("checklist/list", json!({ "cwd": cwd }))["items"].as_array().unwrap().len(), 0);
+    let done = ok("candidate/approve", json!({ "cwd": cwd, "id": a }));
+    assert_eq!(done["status"], "registered");
+    assert_eq!(done["target"]["sub"], "checklist");
+    assert_eq!(ok("checklist/list", json!({ "cwd": cwd }))["items"][0]["origin"], "candidate:cand-0001");
+    // reject keeps the file (moved), registers nothing
+    assert_eq!(ok("candidate/reject", json!({ "cwd": cwd, "id": b }))["status"], "denied");
+    assert!(!std::fs::read_to_string(d.path().join(".inocode/kb/overview.md")).is_ok());
+    assert_eq!(ok("candidate/list", json!({ "cwd": cwd }))["candidates"].as_array().unwrap().len(), 0);
+    assert!(d.path().join(".inocode/kb/inbox/rejected/cand-0002.json").exists());
+    assert_eq!(err("candidate/approve", json!({ "cwd": cwd, "id": a })).code, NOT_FOUND);
+    // an approved overview append lands in the overview
+    let c = add_candidate(root, "overviewAppend", "追記", json!({ "text": "方針: 小さく直す" }), "model").unwrap();
+    ok("candidate/approve", json!({ "cwd": cwd, "id": c }));
+    assert!(ok("overview/read", json!({ "cwd": cwd }))["text"].as_str().unwrap().contains("小さく直す"));
+}

@@ -53,6 +53,14 @@ pub(crate) fn to_event(e: kb::GuardEvent) -> InocodeGuardEvent {
         rule_title: e.rule_title,
         reason: e.reason,
         scope: scope(e.scope),
+        origin: e.origin.map(|o| codex_app_server_protocol::InocodeGuardOrigin {
+            kind: o.kind,
+            thread_id: o.thread_id,
+            seq: o.seq.and_then(|s| i64::try_from(s).ok()),
+            quote: o.quote,
+            missing: o.missing,
+        }),
+        available_scopes: e.available_scopes,
     }
 }
 
@@ -71,6 +79,8 @@ pub(crate) fn to_fired(e: kb::GuardEvent) -> InocodeGuardFiredNotification {
         rule_title: e.rule_title,
         reason: e.reason,
         scope: e.scope,
+        origin: e.origin,
+        available_scopes: e.available_scopes,
     }
 }
 

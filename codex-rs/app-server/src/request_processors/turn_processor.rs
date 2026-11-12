@@ -599,7 +599,17 @@ impl TurnRequestProcessor {
             return Err(error);
         }
         // Validate before changing the thread's live MCP policy.
-        let additional_context = map_additional_context(params.additional_context);
+        // The originals of the quotes in the user's message go to the model as untrusted context;
+        // the message itself keeps the pointers (doc 64).
+        let mut additional = params.additional_context;
+        for (key, value) in crate::inocode::quote_context(&params.thread_id, &params.input).await {
+            additional.get_or_insert_with(HashMap::new).entry(key).or_insert(AdditionalContextEntry {
+                value,
+                kind: AdditionalContextKind::Untrusted,
+                name: Some("引用".to_string()),
+            });
+        }
+        let additional_context = map_additional_context(additional);
         additional_context
             .values()
             .try_for_each(CoreAdditionalContextEntry::validate)

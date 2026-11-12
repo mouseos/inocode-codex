@@ -12012,6 +12012,26 @@
     },
     "InocodeGuardEvent": {
       "properties": {
+        "availableScopes": {
+          "default": [],
+          "description": "`request`, `session`, `always`: what the user can relax it for (empty: not relaxable).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InocodeGuardOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Where the prohibition comes from, for the card that says why the action was stopped."
+        },
         "reason": {
           "type": "string"
         },
@@ -12075,6 +12095,24 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "description": "Same shape as `InocodeGuardEvent`; sent when a guard rule fires.",
       "properties": {
+        "availableScopes": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InocodeGuardOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "reason": {
           "type": "string"
         },
@@ -12132,6 +12170,45 @@
         "tsMs"
       ],
       "title": "InocodeGuardFiredNotification",
+      "type": "object"
+    },
+    "InocodeGuardOrigin": {
+      "properties": {
+        "kind": {
+          "description": "`ledger`, `ui` or `legacy`.",
+          "type": "string"
+        },
+        "missing": {
+          "default": false,
+          "description": "The referenced user message is no longer in the ledger.",
+          "type": "boolean"
+        },
+        "quote": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seq": {
+          "default": null,
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "threadId": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
       "type": "object"
     },
     "InocodeGuardResult": {
@@ -12858,6 +12935,42 @@
       ],
       "type": "string"
     },
+    "InocodeMessageRef": {
+      "description": "One pointer to a message: `id` is `#<turn>.<item>`; `range` is a [start, end) character range of the text (a selected quote).",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "range": {
+          "default": null,
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "threadId": {
+          "default": null,
+          "description": "The thread of the message; the caller's thread when omitted.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "userAttached": {
+          "default": false,
+          "description": "The user attached this message as a card: readable even from another workplace.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
     "InocodeMessageRole": {
       "oneOf": [
         {
@@ -12988,6 +13101,21 @@
           "default": null,
           "description": "How the model was found in the benchmark source; absent when it was not found (then `scores` is empty: unmeasured, not zero)."
         },
+        "contextWindow": {
+          "description": "The model's context window in tokens. Absent when no source gives one. See `contextWindowSource` for where the number comes from.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "contextWindowSource": {
+          "description": "`catalog` (the provider's own model catalog; the limit the requests really run under) or `models.dev`. Present exactly when `contextWindow` is.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "modelId": {
           "type": "string"
         },
@@ -13002,6 +13130,17 @@
             "$ref": "#/definitions/InocodeModelScore"
           },
           "type": "array"
+        },
+        "speed": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InocodeModelSpeed"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Output speed, tokens per second: this machine's measurement when there is one, else the benchmark source's. Absent when neither exists."
         },
         "theos": {
           "anyOf": [
@@ -13178,6 +13317,59 @@
         "license",
         "name",
         "url"
+      ],
+      "type": "object"
+    },
+    "InocodeModelSpeed": {
+      "description": "How fast a model produces output.",
+      "properties": {
+        "metric": {
+          "default": null,
+          "description": "`llmbenchmark` only: the metric name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "nSamples": {
+          "default": null,
+          "description": "`inocode_measured`: how many requests. `llmbenchmark`: how many serving providers.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "observedAt": {
+          "default": null,
+          "description": "Date of the newest data (`YYYY-MM-DD`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "`inocode_measured` (this app's own requests: output tokens divided by generation seconds, summed over the measured requests of the last 30 days) or `llmbenchmark` (the median of the serving providers' values for `or_output_tokens_per_second`; not measured here).",
+          "type": "string"
+        },
+        "sourceUrl": {
+          "default": null,
+          "description": "`llmbenchmark` only.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tokensPerSecond": {
+          "description": "Output tokens per second.",
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "source",
+        "tokensPerSecond"
       ],
       "type": "object"
     },
@@ -13839,6 +14031,94 @@
           "type": "string"
         }
       ]
+    },
+    "InocodeResolvedMessageRef": {
+      "description": "`state`: `ok`, `notFound`, `cannotOpen` or `outOfScope`. The other fields are set when `ok`.",
+      "properties": {
+        "itemId": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "itemNumber": {
+          "default": null,
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "range": {
+          "default": null,
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "ref": {
+          "$ref": "#/definitions/InocodeMessageRef"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InocodeMessageRole"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "state": {
+          "type": "string"
+        },
+        "text": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "totalChars": {
+          "default": null,
+          "description": "The number of characters of the whole text (or of the range) before any cut.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "truncated": {
+          "default": false,
+          "type": "boolean"
+        },
+        "turnId": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turnNumber": {
+          "default": null,
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "ref",
+        "state"
+      ],
+      "type": "object"
     },
     "InocodeRuleEnforcedBy": {
       "enum": [

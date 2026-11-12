@@ -3494,6 +3494,24 @@
     "InocodeGuardFiredNotification": {
       "description": "Same shape as `InocodeGuardEvent`; sent when a guard rule fires.",
       "properties": {
+        "availableScopes": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InocodeGuardOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "reason": {
           "type": "string"
         },
@@ -3549,6 +3567,45 @@
         "threadId",
         "tool",
         "tsMs"
+      ],
+      "type": "object"
+    },
+    "InocodeGuardOrigin": {
+      "properties": {
+        "kind": {
+          "description": "`ledger`, `ui` or `legacy`.",
+          "type": "string"
+        },
+        "missing": {
+          "default": false,
+          "description": "The referenced user message is no longer in the ledger.",
+          "type": "boolean"
+        },
+        "quote": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seq": {
+          "default": null,
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "threadId": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
       ],
       "type": "object"
     },

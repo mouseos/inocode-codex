@@ -33,6 +33,7 @@ pub(crate) use accounts::start as start_account_pool;
 pub use accounts::open_claude_pool as open_claude_account_pool;
 pub use accounts::open_pool as open_account_pool;
 pub(crate) use guard::spawn_notifier as spawn_guard_notifier;
+pub(crate) use messages::quote_context;
 pub(crate) use team::spawn_notifier as spawn_team_notifier;
 
 /// Starts the forwarders for advisor events, agent messages and compaction events.

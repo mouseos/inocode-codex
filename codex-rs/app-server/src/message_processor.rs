@@ -1215,6 +1215,10 @@ impl MessageProcessor {
             ClientRequest::ServerDiagnostics { .. } => Ok(Some(read_server_diagnostics().into())),
             request @ (ClientRequest::InocodeKnowledgeList { .. }
             | ClientRequest::InocodeKbProjectGet { .. }
+            | ClientRequest::InocodeKbCandidateList { .. }
+            | ClientRequest::InocodeKbCandidateApprove { .. }
+            | ClientRequest::InocodeKbCandidateReject { .. }
+            | ClientRequest::InocodeMessagesResolveMany { .. }
             | ClientRequest::InocodeKbOverviewRead { .. }
             | ClientRequest::InocodeKbOverviewWrite { .. }
             | ClientRequest::InocodeKbIndexGet { .. }

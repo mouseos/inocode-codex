@@ -2173,6 +2173,42 @@
       ],
       "type": "string"
     },
+    "InocodeMessageRef": {
+      "description": "One pointer to a message: `id` is `#<turn>.<item>`; `range` is a [start, end) character range of the text (a selected quote).",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "range": {
+          "default": null,
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "threadId": {
+          "default": null,
+          "description": "The thread of the message; the caller's thread when omitted.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "userAttached": {
+          "default": false,
+          "description": "The user attached this message as a card: readable even from another workplace.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
     "InocodeMetricsBucket": {
       "enum": [
         "hour",

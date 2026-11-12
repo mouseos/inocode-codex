@@ -1050,6 +1050,9 @@ fn append_relaxation_event(dirs: &Dirs, ev: &RelaxationEvent) -> Result<(), KbEr
 fn relaxation_add(p: &Value) -> R {
     let dirs = Dirs::new(&cwd_of(p)?);
     let pid = need_str(p, "prohibitionId")?;
+    if pid.starts_with("rule-") {
+        return Err(invalid("an old rule cannot be relaxed before it is migrated (legacy/migrate)"));
+    }
     let proh = load_prohibition(&prohibition_path(&dirs, pid)).ok_or_else(|| not_found(format!("prohibition {pid}")))?;
     if proh.status != "active" {
         return Err(invalid("the prohibition is retracted"));
@@ -1068,6 +1071,16 @@ fn relaxation_add(p: &Value) -> R {
     }
     let reference = p.get("ledgerRef").filter(|v| !v.is_null());
     let quote = str_of(p, "quote");
+    // From the screen there are no words to quote. For "this request" / "this session" the host
+    // records the newest user message of the thread as the basis of the range.
+    let derived: Option<Value> = if by == "user-ui" && reference.is_none() && matches!(scope, "request" | "session") {
+        str_of(p, "threadId")
+            .filter(|t| !t.is_empty())
+            .map(|t| json!({ "threadId": t, "seq": ledger_latest_seq(&dirs.home, t) }))
+    } else {
+        None
+    };
+    let reference = reference.or(derived.as_ref());
     if by == "user-text" {
         let r = reference.ok_or_else(|| invalid("ledgerRef is required when by is user-text"))?;
         check_ledger_quote(&dirs, r, quote.unwrap_or(""))?;
@@ -1075,7 +1088,7 @@ fn relaxation_add(p: &Value) -> R {
         check_ledger_quote(&dirs, r, q)?;
     }
     if scope == "request" && reference.is_none() {
-        return Err(invalid("scope request needs the ledgerRef of the user's message; use until or always from the screen"));
+        return Err(invalid("scope request needs the ledgerRef of the user's message (or the threadId, from the screen)"));
     }
     let until = str_of(p, "until").filter(|s| !s.is_empty());
     if scope == "until" {
@@ -1185,6 +1198,26 @@ pub fn active_relaxations(root: &Path, prohibition: &str, thread: Option<&str>) 
         .into_iter()
         .filter(|r| r.prohibition_id == prohibition && r.active(&dirs.home, thread))
         .collect()
+}
+
+/// The origin of a prohibition as the guard card shows it (is the quoted message still there?).
+pub fn hit_origin(x: &Prohibition) -> crate::guard::GuardOrigin {
+    let thread = x.origin.ledger_ref.as_ref().and_then(|r| r.get("threadId")).and_then(Value::as_str);
+    let seq = x.origin.ledger_ref.as_ref().and_then(|r| r.get("seq")).and_then(Value::as_u64);
+    let missing = match (x.origin.kind.as_str(), thread, seq) {
+        ("ledger", Some(t), Some(s)) => !codex_inocode_ledger::entries_at(&crate::inocode_home(), t)
+            .iter()
+            .any(|e| e.seq == s),
+        ("ledger", _, _) => true,
+        _ => false,
+    };
+    crate::guard::GuardOrigin {
+        kind: x.origin.kind.clone(),
+        thread_id: thread.map(str::to_string),
+        seq,
+        quote: x.origin.quote.clone(),
+        missing,
+    }
 }
 
 pub(crate) fn prohibition_rule(x: &Prohibition) -> crate::record::Record {
@@ -1505,6 +1538,128 @@ fn legacy_failure_cases(p: &Value) -> R {
 }
 
 // ---------------------------------------------------------------------------
+// candidates (proposals waiting for the user)
+// ---------------------------------------------------------------------------
+
+fn inbox(dirs: &Dirs) -> PathBuf {
+    dirs.kb().join("inbox")
+}
+
+/// A proposal the model made. Only the user approves or rejects it (the model has no way to).
+/// `kind`: `checklistItem` (payload: role, text, when, check) or `overviewAppend` (payload: text).
+pub fn add_candidate(root: &Path, kind: &str, title: &str, payload: Value, by: &str) -> Result<String, KbError> {
+    let dirs = Dirs { root: root.to_path_buf(), home: crate::inocode_home() };
+    if !matches!(kind, "checklistItem" | "overviewAppend") {
+        return Err(invalid("kind must be checklistItem or overviewAppend"));
+    }
+    let existing: Vec<String> = std::fs::read_dir(inbox(&dirs))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .collect();
+    let id = next_number("cand", existing.into_iter());
+    let doc = json!({ "id": id, "kind": kind, "op": "add", "title": title, "by": by, "at": now(), "payload": payload });
+    write_text(&inbox(&dirs).join(format!("{id}.json")), &serde_json::to_string_pretty(&doc).unwrap_or_default())?;
+    Ok(id)
+}
+
+fn candidate_target(kind: &str, payload: &Value) -> Value {
+    match kind {
+        "checklistItem" => json!({ "tab": "knowledge", "sub": "checklist", "ref": str_of(payload, "role") }),
+        _ => json!({ "tab": "knowledge", "sub": "overview", "ref": null }),
+    }
+}
+
+fn read_candidate(dirs: &Dirs, id: &str) -> Result<Value, KbError> {
+    let path = inbox(dirs).join(format!("{}.json", slug(id)));
+    read_text(&path)
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .ok_or_else(|| not_found(format!("candidate {id}")))
+}
+
+fn candidate_list(p: &Value) -> R {
+    let dirs = Dirs::new(&cwd_of(p)?);
+    let mut out: Vec<Value> = std::fs::read_dir(inbox(&dirs))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        .filter_map(|e| read_text(&e.path()).and_then(|t| serde_json::from_str::<Value>(&t).ok()))
+        .map(|mut c| {
+            let target = candidate_target(str_of(&c, "kind").unwrap_or(""), c.get("payload").unwrap_or(&Value::Null));
+            if let Some(m) = c.as_object_mut() {
+                m.insert("status".into(), json!("candidate"));
+                m.insert("requiresApproval".into(), json!(true));
+                m.insert("target".into(), target);
+            }
+            c
+        })
+        .collect();
+    out.sort_by(|a, b| str_of(a, "id").cmp(&str_of(b, "id")));
+    Ok(json!({ "candidates": out }))
+}
+
+fn finish_candidate(dirs: &Dirs, id: &str, to: &str) -> Result<(), KbError> {
+    let from = inbox(dirs).join(format!("{}.json", slug(id)));
+    let dest = inbox(dirs).join(to).join(format!("{}.json", slug(id)));
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(io)?;
+    }
+    std::fs::rename(from, dest).map_err(io)
+}
+
+fn candidate_approve(p: &Value) -> R {
+    let dirs = Dirs::new(&cwd_of(p)?);
+    let id = need_str(p, "id")?;
+    let c = read_candidate(&dirs, id)?;
+    let kind = str_of(&c, "kind").unwrap_or("");
+    let payload = c.get("payload").cloned().unwrap_or(Value::Null);
+    let (new_id, target) = match kind {
+        "checklistItem" => {
+            let role = need_str(&payload, "role")?.to_string();
+            let all = load_checklists(&dirs);
+            let mut list = all
+                .iter()
+                .find(|c| c.role == role)
+                .cloned()
+                .unwrap_or(ChecklistFile { role: role.clone(), items: vec![] });
+            let item_id = next_number("chk", all.iter().flat_map(|c| c.items.iter().map(|i| i.id.clone())));
+            list.items.push(ChecklistItem {
+                id: item_id.clone(),
+                text: need_str(&payload, "text")?.trim().to_string(),
+                when: str_of(&payload, "when").filter(|s| !s.is_empty()).unwrap_or("beforeReport").to_string(),
+                check: str_of(&payload, "check").filter(|s| !s.is_empty()).unwrap_or("self").to_string(),
+                origin: Some(format!("candidate:{id}")),
+                ..Default::default()
+            });
+            ensure_project(&dirs);
+            save_checklist(&dirs, &list)?;
+            (item_id, candidate_target(kind, &payload))
+        }
+        "overviewAppend" => {
+            let add = need_str(&payload, "text")?;
+            let current = read_text(&dirs.overview()).unwrap_or_default();
+            let sep = if current.is_empty() || current.ends_with('\n') { "" } else { "\n" };
+            ensure_project(&dirs);
+            write_text(&dirs.overview(), &format!("{current}{sep}{add}\n"))?;
+            ("overview".to_string(), candidate_target(kind, &payload))
+        }
+        _ => return Err(invalid("this kind of candidate cannot be approved yet")),
+    };
+    finish_candidate(&dirs, id, "approved")?;
+    Ok(json!({ "status": "registered", "target": target, "id": new_id }))
+}
+
+fn candidate_reject(p: &Value) -> R {
+    let dirs = Dirs::new(&cwd_of(p)?);
+    let id = need_str(p, "id")?;
+    read_candidate(&dirs, id)?;
+    finish_candidate(&dirs, id, "rejected")?;
+    Ok(json!({ "status": "denied" }))
+}
+
+// ---------------------------------------------------------------------------
 // the computed index
 // ---------------------------------------------------------------------------
 
@@ -1596,6 +1751,9 @@ pub fn call(method: &str, params: &Value) -> R {
         "legacy/rules" => legacy_rules(params),
         "legacy/migrate" => legacy_migrate(params),
         "legacy/failureCases" => legacy_failure_cases(params),
+        "candidate/list" => candidate_list(params),
+        "candidate/approve" => candidate_approve(params),
+        "candidate/reject" => candidate_reject(params),
         other => Err(KbError { code: -32601, message: format!("method not found: inocode/kb/{other}"), data: None }),
     }
 }

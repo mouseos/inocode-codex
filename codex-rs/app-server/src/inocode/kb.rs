@@ -4,6 +4,9 @@ use super::InocodeResult;
 use crate::error_code::internal_error;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::InocodeKbProjectGetResponse;
+use codex_app_server_protocol::InocodeKbCandidateListResponse;
+use codex_app_server_protocol::InocodeKbCandidateApproveResponse;
+use codex_app_server_protocol::InocodeKbCandidateRejectResponse;
 use codex_app_server_protocol::InocodeKbOverviewReadResponse;
 use codex_app_server_protocol::InocodeKbOverviewWriteResponse;
 use codex_app_server_protocol::InocodeKbIndexGetResponse;
@@ -56,6 +59,9 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
     };
     Ok(Some(match &request {
         ClientRequest::InocodeKbProjectGet { .. } => InocodeKbProjectGetResponse { fields }.into(),
+        ClientRequest::InocodeKbCandidateList { .. } => InocodeKbCandidateListResponse { fields }.into(),
+        ClientRequest::InocodeKbCandidateApprove { .. } => InocodeKbCandidateApproveResponse { fields }.into(),
+        ClientRequest::InocodeKbCandidateReject { .. } => InocodeKbCandidateRejectResponse { fields }.into(),
         ClientRequest::InocodeKbOverviewRead { .. } => InocodeKbOverviewReadResponse { fields }.into(),
         ClientRequest::InocodeKbOverviewWrite { .. } => InocodeKbOverviewWriteResponse { fields }.into(),
         ClientRequest::InocodeKbIndexGet { .. } => InocodeKbIndexGetResponse { fields }.into(),

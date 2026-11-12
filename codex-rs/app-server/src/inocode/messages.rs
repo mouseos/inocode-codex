@@ -296,8 +296,207 @@ async fn with_ids(mut response: InocodeMessagesListResponse) -> InocodeMessagesL
     response
 }
 
+const QUOTE_DEFAULT_CHARS: usize = 4000;
+
+async fn rollout_of(thread_id: &str) -> Option<std::path::PathBuf> {
+    let codex_home = codex_core::config::find_codex_home().ok()?;
+    codex_rollout::find_thread_path_by_id_str(&codex_home, thread_id, None)
+        .await
+        .ok()
+        .flatten()
+}
+
+async fn cwd_of(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    codex_rollout::read_session_meta_line(path)
+        .await
+        .ok()
+        .map(|line| line.meta.cwd.to_path_buf())
+}
+
+fn state_only(message_ref: codex_app_server_protocol::InocodeMessageRef, state: &str) -> codex_app_server_protocol::InocodeResolvedMessageRef {
+    codex_app_server_protocol::InocodeResolvedMessageRef {
+        message_ref,
+        state: state.to_string(),
+        turn_number: None,
+        item_number: None,
+        turn_id: None,
+        item_id: None,
+        role: None,
+        text: None,
+        truncated: false,
+        total_chars: None,
+        range: None,
+    }
+}
+
+/// Resolves many pointers at once. A pointer that cannot be read is a state, not an error.
+async fn resolve_many(
+    params: codex_app_server_protocol::InocodeMessagesResolveManyParams,
+) -> codex_app_server_protocol::InocodeMessagesResolveManyResponse {
+    let limit = params
+        .max_chars
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or(QUOTE_DEFAULT_CHARS);
+    let caller_cwd = match &params.caller_thread_id {
+        Some(t) => match rollout_of(t).await {
+            Some(p) => cwd_of(&p).await,
+            None => None,
+        },
+        None => None,
+    };
+    let mut items = Vec::new();
+    for r in params.refs {
+        let Some(thread) = r.thread_id.clone().or_else(|| params.caller_thread_id.clone()) else {
+            items.push(state_only(r, "notFound"));
+            continue;
+        };
+        let Some(path) = rollout_of(&thread).await else {
+            items.push(state_only(r, "notFound"));
+            continue;
+        };
+        // another workplace: only what the user attached as a card
+        let other_thread = params.caller_thread_id.as_deref() != Some(thread.as_str());
+        if other_thread && !r.user_attached {
+            let same = match (&caller_cwd, cwd_of(&path).await) {
+                (Some(a), Some(b)) => *a == b,
+                _ => false,
+            };
+            if !same {
+                items.push(state_only(r, "outOfScope"));
+                continue;
+            }
+        }
+        let resolve_params = InocodeMessagesResolveParams {
+            thread_id: thread.clone(),
+            id: Some(r.id.clone()),
+            turn_id: None,
+            item_index: None,
+            max_chars: None,
+        };
+        let Ok(found) = resolve_at(path, &resolve_params).await else {
+            items.push(state_only(r, "notFound"));
+            continue;
+        };
+        let chars: Vec<char> = found.text.chars().collect();
+        let (start, end) = match r.range.as_deref() {
+            Some([s, e]) if *s >= 0 && *e >= *s => (
+                usize::try_from(*s).unwrap_or(0).min(chars.len()),
+                usize::try_from(*e).unwrap_or(0).min(chars.len()),
+            ),
+            _ => (0, chars.len()),
+        };
+        let selected = &chars[start..end];
+        let total = selected.len();
+        let truncated = total > limit;
+        let text: String = selected.iter().take(limit).collect();
+        items.push(codex_app_server_protocol::InocodeResolvedMessageRef {
+            range: r.range.clone().filter(|_| selected.len() != chars.len() || start != 0),
+            message_ref: r,
+            state: "ok".to_string(),
+            turn_number: Some(found.turn_number),
+            item_number: Some(found.item_number),
+            turn_id: Some(found.turn_id),
+            item_id: Some(found.item_id),
+            role: Some(found.role),
+            text: Some(text),
+            truncated,
+            total_chars: i64::try_from(total).ok(),
+        });
+    }
+    codex_app_server_protocol::InocodeMessagesResolveManyResponse { items }
+}
+
+/// `[引用 #12.3 thread:<id> 40-95]`: a pointer to a quoted message (the form a card takes in the
+/// user's message). Returns the reference, or None for any other line.
+pub(crate) fn parse_quote_line(line: &str) -> Option<codex_app_server_protocol::InocodeMessageRef> {
+    let inner = line.trim().strip_prefix("[引用")?.strip_suffix(']')?;
+    let mut id = None;
+    let mut thread_id = None;
+    let mut range = None;
+    for token in inner.split_whitespace() {
+        if token.starts_with('#') {
+            id = Some(token.to_string());
+        } else if let Some(t) = token.strip_prefix("thread:") {
+            thread_id = Some(t.to_string());
+        } else if let Some((a, b)) = token.split_once('-')
+            && let (Ok(a), Ok(b)) = (a.parse::<i64>(), b.parse::<i64>())
+        {
+            range = Some(vec![a, b]);
+        }
+    }
+    Some(codex_app_server_protocol::InocodeMessageRef {
+        thread_id,
+        id: id?,
+        range,
+        // a card the user put in the message: readable even from another workplace
+        user_attached: true,
+    })
+}
+
+/// The originals of the quotes in a turn's input, for the model: one untrusted context entry per
+/// pointer (a quote is information, not an instruction). The user's message keeps only the
+/// pointers. A pointer that cannot be read says so; nothing stops.
+pub(crate) async fn quote_context(
+    thread_id: &str,
+    input: &[codex_app_server_protocol::UserInput],
+) -> Vec<(String, String)> {
+    let refs: Vec<_> = input
+        .iter()
+        .filter_map(|item| match item {
+            codex_app_server_protocol::UserInput::Text { text, .. } => Some(text.as_str()),
+            _ => None,
+        })
+        .flat_map(str::lines)
+        .filter_map(parse_quote_line)
+        .collect();
+    if refs.is_empty() {
+        return Vec::new();
+    }
+    let resolved = resolve_many(codex_app_server_protocol::InocodeMessagesResolveManyParams {
+        caller_thread_id: Some(thread_id.to_string()),
+        refs,
+        max_chars: None,
+    })
+    .await;
+    resolved
+        .items
+        .into_iter()
+        .enumerate()
+        .map(|(n, item)| {
+            let r = &item.message_ref;
+            let mut head = format!("[引用 {}", r.id);
+            if let Some(t) = &r.thread_id {
+                head.push_str(&format!(" thread:{t}"));
+            }
+            if let Some(range) = &r.range
+                && let [a, b] = range.as_slice()
+            {
+                head.push_str(&format!(" {a}-{b}"));
+            }
+            let body = match item.state.as_str() {
+                "ok" => {
+                    let who = match item.role {
+                        Some(InocodeMessageRole::User) => " 自分",
+                        Some(InocodeMessageRole::Assistant) => " AI",
+                        _ => "",
+                    };
+                    let mut text = item.text.clone().unwrap_or_default();
+                    if item.truncated {
+                        text.push_str("\n(…上限で切れています。続きは read_message で読めます)");
+                    }
+                    format!("{head}{who}]\n{text}")
+                }
+                "outOfScope" => format!("{head}] (別の作業場のメッセージです。読めません)"),
+                _ => format!("{head}] (メッセージが見つかりません)"),
+            };
+            (format!("quote-{}", n + 1), body)
+        })
+        .collect()
+}
+
 pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
     match request {
+        ClientRequest::InocodeMessagesResolveMany { params, .. } => Ok(Some(resolve_many(params).await.into())),
         ClientRequest::InocodeMessagesResolve { params, .. } => Ok(Some(resolve(params).await?.into())),
         ClientRequest::InocodeMessagesList { params, .. } => Ok(Some(
             with_ids(list_in(&codex_inocode_flags::inocode_home(), &params))
@@ -311,6 +510,22 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quote_pointer_lines_are_read_with_thread_and_range() {
+        let full = parse_quote_line("[引用 #1.2 thread:abc-123 40-95]").unwrap();
+        assert_eq!(full.id, "#1.2");
+        assert_eq!(full.thread_id.as_deref(), Some("abc-123"));
+        assert_eq!(full.range, Some(vec![40, 95]));
+        assert!(full.user_attached, "a card the user put in the message is attached");
+        let plain = parse_quote_line("  [引用 #12.3]  ").unwrap();
+        assert_eq!((plain.id.as_str(), plain.thread_id, plain.range), ("#12.3", None, None));
+        // not a pointer: ordinary text, a reply line, a pointer without an id
+        assert!(parse_quote_line("引用 #1.2").is_none());
+        assert!(parse_quote_line("[返信 #1.2「hi」]").is_none());
+        assert!(parse_quote_line("[引用 thread:x]").is_none());
+        assert!(parse_quote_line("この 2 つを踏まえて直して").is_none());
+    }
 
     fn logged(ts: u64, delivery: &str, text: &str) -> LoggedMessage {
         LoggedMessage {

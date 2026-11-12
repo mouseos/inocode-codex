@@ -12,6 +12,7 @@ pub mod kb;
 mod record;
 mod store;
 
+pub use guard::GuardOrigin;
 pub use guard::{GuardAction, action_from_tool_input, builtin_check, GuardHit, GuardVerdict, check_action, guard_message};
 pub use events::{
     GuardEvent, GuardOutcome, GuardRuleStats, GuardTarget, guard_stats, KnowledgeRecorded, guard_events_path, list_guard_events,
@@ -181,6 +182,8 @@ fn add_prohibition_hits(root: &Path, action: &GuardAction, verdict: &mut GuardVe
             continue;
         }
         let hit = GuardHit {
+            origin: Some(kb::hit_origin(&x)),
+            available_scopes: guard::all_scopes(),
             id: x.id.clone(),
             title: x.title.clone(),
             severity,
@@ -240,6 +243,8 @@ mod event_tests {
         let mut rx = subscribe_guard();
         let verdict = GuardVerdict {
             blocked: vec![GuardHit {
+                origin: None,
+                available_scopes: Vec::new(),
                 id: "rule-0001".into(),
                 title: "force push".into(),
                 severity: Severity::Block,

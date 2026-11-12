@@ -696,6 +696,30 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeKbLegacyFailureCasesResponse,
     },
+    #[experimental("inocode/kb/candidate/list")]
+    InocodeKbCandidateList => "inocode/kb/candidate/list" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbCandidateListResponse,
+    },
+    #[experimental("inocode/kb/candidate/approve")]
+    InocodeKbCandidateApprove => "inocode/kb/candidate/approve" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbCandidateApproveResponse,
+    },
+    #[experimental("inocode/kb/candidate/reject")]
+    InocodeKbCandidateReject => "inocode/kb/candidate/reject" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbCandidateRejectResponse,
+    },
+    #[experimental("inocode/messages/resolveMany")]
+    InocodeMessagesResolveMany => "inocode/messages/resolveMany" {
+        params: v2::InocodeMessagesResolveManyParams,
+        serialization: None,
+        response: v2::InocodeMessagesResolveManyResponse,
+    },
     #[experimental("inocode/knowledge/search")]
     InocodeKnowledgeSearch => "inocode/knowledge/search" {
         params: v2::InocodeKnowledgeSearchParams,
