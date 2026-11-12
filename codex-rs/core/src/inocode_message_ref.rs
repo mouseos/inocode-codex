@@ -192,6 +192,13 @@ fn resolve_in_turn(
     selector: &MessageSelector,
 ) -> Option<ResolvedMessage> {
     let mut turns = build_turns_from_rollout_items(items);
+    if turns.iter().all(|t| t.items.is_empty()) {
+        // Rollouts written with canonical item events only: read them the way thread/read does.
+        turns = codex_app_server_protocol::build_turns_from_rollout_items_for_mode(
+            items,
+            codex_protocol::protocol::ThreadHistoryMode::Paginated,
+        );
+    }
     if turns.iter().any(|t| t.id == span.turn_id) {
         turns.retain(|t| t.id == span.turn_id);
     }

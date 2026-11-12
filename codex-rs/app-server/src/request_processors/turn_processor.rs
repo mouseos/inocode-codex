@@ -606,7 +606,7 @@ impl TurnRequestProcessor {
             additional.get_or_insert_with(HashMap::new).entry(key).or_insert(AdditionalContextEntry {
                 value,
                 kind: AdditionalContextKind::Untrusted,
-                name: Some("引用".to_string()),
+                name: Some("quote".to_string()),
             });
         }
         let additional_context = map_additional_context(additional);

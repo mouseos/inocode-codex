@@ -99,6 +99,27 @@ pub fn build_turns_from_rollout_items(items: &[RolloutItem]) -> Vec<Turn> {
     builder.finish()
 }
 
+/// Like [`build_turns_from_rollout_items`], reading the events the way `mode` says. A rollout that
+/// records canonical item events and no compatibility copies of them builds no items in `Legacy`
+/// mode and needs `Paginated`.
+pub fn build_turns_from_rollout_items_for_mode(
+    items: &[RolloutItem],
+    mode: ThreadHistoryMode,
+) -> Vec<Turn> {
+    let mut builder = ThreadHistoryBuilder::new();
+    for item in items {
+        match item {
+            RolloutItem::EventMsg(event) => {
+                builder.current_rollout_index = builder.next_rollout_index;
+                builder.next_rollout_index += 1;
+                builder.handle_event_for_history_mode(event, mode);
+            }
+            other => builder.handle_rollout_item(other),
+        }
+    }
+    builder.finish()
+}
+
 #[derive(Default)]
 struct ItemTimes {
     started_at_ms: Option<i64>,

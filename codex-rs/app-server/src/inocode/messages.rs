@@ -489,7 +489,7 @@ pub(crate) async fn quote_context(
                 "outOfScope" => format!("{head}] (別の作業場のメッセージです。読めません)"),
                 _ => format!("{head}] (メッセージが見つかりません)"),
             };
-            (format!("quote-{}", n + 1), body)
+            (format!("quote_{}", n + 1), body)
         })
         .collect()
 }
