@@ -9,6 +9,7 @@ New-Item -ItemType Directory -Force "$root\.build\cargo-home", "$root\.build\tmp
 $env:TMP = "$root\.build\tmp"; $env:TEMP = $env:TMP
 $env:CARGO_NET_GIT_FETCH_WITH_CLI = 'true'
 $env:CARGO_INCREMENTAL = '0'
+$env:CARGO_BUILD_JOBS = '8'   # 24 CPUs x several GB per rustc ran out of memory (23.6GB RAM)
 $env:RUST_MIN_STACK = '67108864'   # 64MB; 256MB x many rustc threads crashed rustc (0xc0000409)
 foreach ($n in 'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NODE_EXTRA_CA_CERTS') { Remove-Item "Env:$n" -ErrorAction SilentlyContinue }
 if ($Gui) {
@@ -18,4 +19,12 @@ if ($Gui) {
 } else {
     $env:CARGO_HOME = "$root\.build\cargo-home"
     $env:CARGO_TARGET_DIR = "$root\codex-rs\target-win"
+}
+
+# cargo, then remove stale copies/old executables (files in use are skipped). Use instead of plain cargo.
+function ino-cargo {
+    & cargo @args
+    $rc = $LASTEXITCODE
+    & "$root\scripts\ino-clean.ps1" | Out-Null
+    $global:LASTEXITCODE = $rc
 }
