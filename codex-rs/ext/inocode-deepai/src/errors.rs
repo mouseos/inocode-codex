@@ -86,6 +86,9 @@ impl DeepAiError {
             (Some("machine_required"), _) => {
                 "このマシンを識別できないため、Theos を消費するモデルは使えません。"
             }
+            (Some("check_in_unavailable"), _) => {
+                "DeepAI との接続の更新ができませんでした。もう一度試してください。"
+            }
             (Some("session_busy"), _) => "DeepAI のセッションが混み合っています。順番を待っています。",
             _ => "DeepAI がエラーを返しました。",
         };

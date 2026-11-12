@@ -81,6 +81,8 @@ struct Account {
     last_attempt: Option<Instant>,
     last_failed: bool,
     check_in: Option<CheckIn>,
+    /// When a server last answered like one that has no check-in (an older lane).
+    legacy_at: Option<Instant>,
     balance: Option<Balance>,
     last_error: Option<DeepAiError>,
 }
@@ -92,6 +94,9 @@ pub struct TheosClient {
     started: Instant,
     accounts: Mutex<HashMap<String, Account>>,
 }
+
+/// An answer of the server: the result, and whether its body carried a check-in.
+type Answer = (Result<Balance, DeepAiError>, bool);
 
 impl TheosClient {
     pub fn new(base_url: &str, inocode_version: &str) -> Self {
@@ -124,7 +129,8 @@ impl TheosClient {
             .and_then(|account| account.last_error.clone())
     }
 
-    /// The `X-DeepAI-Code-Beacon` value.
+    /// The `X-DeepAI-Code-Beacon` value: `v=<version>;up=<seconds>;pi=<0|1>`. `focus` is left
+    /// out because InoCode does not know whether a window is in front.
     pub fn beacon(&self) -> String {
         format!(
             "v={};up={};pi={}",
@@ -154,7 +160,7 @@ impl TheosClient {
     /// interval the earlier answer is returned and nothing is sent.
     pub async fn read(&self, api_key: &str, manual: bool) -> Result<Balance, DeepAiError> {
         let id = crate::display_id(api_key);
-        let (check_in, held) = {
+        let held = {
             let accounts = self.lock();
             let account = accounts.get(&id);
             let interval = if manual {
@@ -164,97 +170,152 @@ impl TheosClient {
             } else {
                 MIN_INTERVAL
             };
-            let held = account
+            account
                 .filter(|a| a.last_attempt.is_some_and(|t| t.elapsed() < interval))
                 .map(|a| match (&a.balance, &a.last_error, a.last_failed) {
                     (_, Some(error), true) => Err(error.clone()),
                     (Some(balance), _, _) => Ok(balance.clone()),
                     _ => Err(DeepAiError::unreachable("no earlier answer")),
-                });
-            (account.and_then(|a| a.check_in.clone()), held)
+                })
         };
-        if let Some(answer) = held {
-            return answer;
+        match held {
+            Some(answer) => answer,
+            None => self.request(api_key).await.0,
         }
-        let result = self.send(api_key, check_in).await;
+    }
+
+    /// Before every model call, the original client's `ensureCheckedIn`: nothing to do while the
+    /// check-in is younger than half of its interval (or the server is of an older lane);
+    /// otherwise `/theos` is read, and the call goes ahead only when a valid check-in stands
+    /// afterwards. A failed read still lets the call go ahead when the earlier check-in is valid
+    /// and the failure is no answer at all, a 5xx, or an answer that carried a check-in.
+    pub async fn ensure_checked_in(&self, api_key: &str) -> Result<(), DeepAiError> {
+        let id = crate::display_id(api_key);
+        let state = |client: &Self| {
+            let accounts = client.lock();
+            let account = accounts.get(&id);
+            let check_in = account.and_then(|a| a.check_in.as_ref());
+            (
+                check_in.map(|c| (c.seconds, c.received.elapsed())),
+                account
+                    .and_then(|a| a.legacy_at)
+                    .is_some_and(|at| at.elapsed() < Duration::from_secs(30)),
+            )
+        };
+        let (check_in, legacy) = state(self);
+        if legacy
+            || check_in.is_some_and(|(seconds, age)| age.as_secs_f64() < seconds as f64 / 2.0)
+        {
+            return Ok(());
+        }
+        let (result, carried_check_in) = self.request(api_key).await;
+        let (check_in, legacy) = state(self);
+        let valid_mark = check_in.is_some_and(|(seconds, age)| age.as_secs() < seconds);
+        match result {
+            Err(error) => {
+                if valid_mark && (error.status == 0 || error.status >= 500 || carried_check_in) {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            }
+            Ok(_) if valid_mark || legacy => Ok(()),
+            Ok(_) => Err(DeepAiError::unreachable(
+                "the server did not return a check-in",
+            )),
+        }
+    }
+
+    /// One `GET /theos` (no spacing check). The state of the account follows the answer: the
+    /// balance, the error, the check-in (from a success or a refusal), the older-lane mark.
+    async fn request(&self, api_key: &str) -> Answer {
+        let id = crate::display_id(api_key);
+        let check_in = self.lock().get(&id).and_then(|a| a.check_in.clone());
+        let (result, value) = self.send(api_key, check_in).await;
+        let new_check_in = value.as_ref().and_then(parse_check_in);
+        let carried = new_check_in.is_some();
+        let legacy = new_check_in.is_none() && value.as_ref().is_some_and(is_older_lane);
         let mut accounts = self.lock();
         let account = accounts.entry(id).or_default();
         account.last_attempt = Some(Instant::now());
+        if let Some(new_check_in) = new_check_in {
+            account.check_in = Some(new_check_in);
+        } else if legacy {
+            account.legacy_at = Some(Instant::now());
+        }
         match &result {
-            Ok((balance, new_check_in)) => {
+            Ok(balance) => {
                 account.last_failed = false;
                 account.last_error = None;
                 account.balance = Some(balance.clone());
-                if let Some(new_check_in) = new_check_in {
-                    account.check_in = Some(new_check_in.clone());
-                }
             }
-            Err((error, new_check_in)) => {
+            Err(error) => {
                 account.last_failed = true;
                 account.last_error = Some(error.clone());
-                if let Some(new_check_in) = new_check_in {
-                    account.check_in = Some(new_check_in.clone());
-                }
             }
         }
-        result.map(|(balance, _)| balance).map_err(|(error, _)| error)
-    }
-
-    /// Before a model call: reads again when the check-in is past half of its interval.
-    pub async fn ensure_checked_in(&self, api_key: &str) {
-        let due = {
-            let accounts = self.lock();
-            accounts
-                .get(&crate::display_id(api_key))
-                .and_then(|account| account.check_in.as_ref())
-                .is_some_and(|check_in| {
-                    check_in.received.elapsed() > Duration::from_secs(check_in.seconds / 2)
-                })
-        };
-        if due {
-            let _ = self.read(api_key, /*manual*/ false).await;
-        }
+        (result, carried)
     }
 
     async fn send(
         &self,
         api_key: &str,
         check_in: Option<CheckIn>,
-    ) -> Result<(Balance, Option<CheckIn>), (DeepAiError, Option<CheckIn>)> {
-        let client = crate::http_client().map_err(|e| (DeepAiError::unreachable(&e), None))?;
+    ) -> (Result<Balance, DeepAiError>, Option<Value>) {
+        let client = match crate::http_client() {
+            Ok(client) => client,
+            Err(error) => return (Err(DeepAiError::unreachable(&error)), None),
+        };
         let mut request = client
             .get(format!("{}/theos", self.base_url))
+            .timeout(Duration::from_secs(30))
             .header(crate::headers::API_KEY, api_key)
             .header("Content-Type", "application/json");
         for (name, value) in crate::headers::common(None) {
             request = request.header(name, value);
         }
+        // The beacon goes with every read; the nonce only once the server has issued one.
+        request = request.header(crate::headers::BEACON, self.beacon());
         if let Some(check_in) = &check_in {
-            request = request
-                .header(crate::headers::CHECK_IN, &check_in.nonce)
-                .header(crate::headers::BEACON, self.beacon());
+            request = request.header(crate::headers::CHECK_IN, &check_in.nonce);
         }
-        let response = request.send().await.map_err(|error| {
-            (
-                DeepAiError::unreachable(&error.without_url().to_string()),
-                None,
-            )
-        })?;
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(error) => {
+                return (
+                    Err(DeepAiError::unreachable(&error.without_url().to_string())),
+                    None,
+                );
+            }
+        };
         let status = response.status().as_u16();
         let body = response.text().await.unwrap_or_default();
         let value: Option<Value> = serde_json::from_str(&body).ok();
-        let new_check_in = value.as_ref().and_then(parse_check_in);
         if !(200..300).contains(&status) {
-            return Err((DeepAiError::from_response(status, &body), new_check_in));
+            return (Err(DeepAiError::from_response(status, &body)), value);
         }
-        let Some(value) = value else {
-            return Err((
-                DeepAiError::unreachable("the balance answer was not JSON"),
-                new_check_in,
-            ));
-        };
-        Ok((parse_balance(&value), new_check_in))
+        match &value {
+            Some(value) => (Ok(parse_balance(value)), Some(value.clone())),
+            None => (
+                Err(DeepAiError::unreachable("the balance answer was not JSON")),
+                None,
+            ),
+        }
     }
+}
+
+/// An answer that says the server is on an older lane or has the check-in switched off:
+/// `enabled` is a boolean and it is false, or `lane_version` is missing or below this lane's.
+fn is_older_lane(value: &Value) -> bool {
+    let Some(enabled) = value.get("enabled").and_then(Value::as_bool) else {
+        return false;
+    };
+    let lane: i64 = crate::LANE_VERSION.parse().unwrap_or(0);
+    !enabled
+        || match value.get("lane_version") {
+            None => true,
+            Some(version) => version.as_f64().is_some_and(|v| v < lane as f64),
+        }
 }
 
 fn amount(value: &Value, name: &str) -> Option<String> {
@@ -279,16 +340,19 @@ pub(crate) fn parse_balance(value: &Value) -> Balance {
     }
 }
 
-/// `check_in: {nonce, seconds}` at the top level of the body, or inside `error`.
+/// `check_in: {nonce, seconds}` at the top level of the body. The nonce is 32 lower-case hex
+/// digits and `seconds` a number above zero, as the original checks.
 fn parse_check_in(value: &Value) -> Option<CheckIn> {
-    let node = value
-        .get("check_in")
-        .or_else(|| value.get("error").and_then(|e| e.get("check_in")))?;
-    let nonce = node.get("nonce")?.as_str()?.to_string();
-    let seconds = node.get("seconds").and_then(Value::as_u64)?;
-    (!nonce.is_empty()).then(|| CheckIn {
-        nonce,
-        seconds,
+    let node = value.get("check_in")?;
+    let nonce = node.get("nonce")?.as_str()?;
+    let seconds = node.get("seconds")?.as_f64().filter(|s| *s > 0.0)?;
+    let valid = nonce.len() == 32
+        && nonce
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+    valid.then(|| CheckIn {
+        nonce: nonce.to_string(),
+        seconds: seconds.ceil() as u64,
         received: Instant::now(),
     })
 }
@@ -405,7 +469,7 @@ mod tests {
             .and(path("/theos"))
             .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
                 "error": {"message": "Sign in", "type": "auth_required", "code": "auth_required"},
-                "check_in": {"nonce": "abc", "seconds": 60}
+                "check_in": {"nonce": "0123456789abcdef0123456789abcdef", "seconds": 60}
             })))
             .mount(&server)
             .await;
@@ -438,6 +502,82 @@ mod tests {
             .await;
         assert_eq!(is_pro(&server.uri(), "good").await, Some(true));
         assert_eq!(is_pro(&server.uri(), "other").await, None);
+    }
+
+    #[tokio::test]
+    async fn a_model_call_needs_a_valid_check_in_and_renews_it_only_past_half_of_its_interval() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/theos"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "enabled": true, "lane_version": 4, "balance": "1", "granted": "2",
+                "check_in": {"nonce": "0123456789abcdef0123456789abcdef", "seconds": 600}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = TheosClient::new(&server.uri(), "1");
+        client.ensure_checked_in("k").await.expect("first check-in");
+        // Younger than half of 600 seconds: nothing is sent (the mock expects one request).
+        client.ensure_checked_in("k").await.expect("still valid");
+    }
+
+    #[tokio::test]
+    async fn without_a_check_in_the_call_is_refused_unless_the_server_is_of_an_older_lane() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/theos"))
+            .and(header("api-key", "old"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"enabled": true, "balance": "1", "granted": "2"}),
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/theos"))
+            .and(header("api-key", "silent"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!(
+                {"enabled": true, "lane_version": 4, "balance": "1", "granted": "2"}
+            )))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/theos"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "error": {"message": "Sign in", "type": "auth_required", "code": "auth_required"}
+            })))
+            .mount(&server)
+            .await;
+        let client = TheosClient::new(&server.uri(), "1");
+        // No lane_version: an older lane, which has no check-in to wait for.
+        client.ensure_checked_in("old").await.expect("older lane");
+        // The current lane that issues no check-in: the call does not go ahead.
+        let silent = client.ensure_checked_in("silent").await.expect_err("no check-in");
+        assert_eq!(silent.status, 0);
+        // A refusal is the refusal (the caller shows it, with its code and status).
+        let refused = client.ensure_checked_in("bad").await.expect_err("refused");
+        assert_eq!((refused.status, refused.code.as_deref()), (401, Some("auth_required")));
+    }
+
+    #[test]
+    fn check_ins_and_older_lanes_are_read_as_the_original_reads_them() {
+        let nonce = "0123456789abcdef0123456789abcdef";
+        let ok = serde_json::json!({"check_in": {"nonce": nonce, "seconds": 90}});
+        assert!(parse_check_in(&ok).is_some());
+        for bad in [
+            serde_json::json!({"check_in": {"nonce": "ABCDEF0123456789ABCDEF0123456789", "seconds": 90}}),
+            serde_json::json!({"check_in": {"nonce": "abc", "seconds": 90}}),
+            serde_json::json!({"check_in": {"nonce": nonce, "seconds": 0}}),
+            serde_json::json!({"check_in": {"nonce": nonce}}),
+            serde_json::json!({"error": {"check_in": {"nonce": nonce, "seconds": 90}}}),
+        ] {
+            assert!(parse_check_in(&bad).is_none(), "{bad}");
+        }
+        assert!(is_older_lane(&serde_json::json!({"enabled": false, "lane_version": 4})));
+        assert!(is_older_lane(&serde_json::json!({"enabled": true})));
+        assert!(is_older_lane(&serde_json::json!({"enabled": true, "lane_version": 3})));
+        assert!(!is_older_lane(&serde_json::json!({"enabled": true, "lane_version": 4})));
+        assert!(!is_older_lane(&serde_json::json!({"balance": "1"})));
     }
 
     #[test]

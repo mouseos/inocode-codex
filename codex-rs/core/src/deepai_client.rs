@@ -38,17 +38,43 @@ async fn active_key() -> Option<String> {
     manager.auth().await?.api_key().map(str::to_string)
 }
 
+/// The refusal shown when the connection could not be renewed before a model call: the server's
+/// own 4xx answer, or a 503 `check_in_unavailable` (as the original app reports it).
+fn check_in_error(error: &deepai::errors::DeepAiError) -> CodexErr {
+    let refused = (400..500).contains(&error.status).then(|| error.clone());
+    let shown = refused.unwrap_or(deepai::errors::DeepAiError {
+        status: 503,
+        code: Some("check_in_unavailable".to_string()),
+        message: None,
+    });
+    CodexErr::UnexpectedStatus(UnexpectedResponseError {
+        status: http::StatusCode::from_u16(shown.status)
+            .unwrap_or(http::StatusCode::SERVICE_UNAVAILABLE),
+        body: shown.code.clone().unwrap_or_default(),
+        user_message: Some(shown.user_message()),
+        url: None,
+        cf_ray: None,
+        request_id: None,
+        identity_authorization_error: None,
+        identity_error_code: None,
+    })
+}
+
 pub(crate) async fn prepare(
     provider: &Provider,
     model: &str,
     conversation_key: Option<&str>,
-) -> Attempt {
+) -> Result<Attempt, CodexErr> {
     let metered = deepai::catalog::model_is_metered(model);
     let permit = deepai::busy::metered_slot(metered).await;
     let key = active_key().await;
-    if metered && let Some(key) = &key {
-        // Before a model call: the check-in is renewed when it is past half of its interval.
-        deepai::theos::global().ensure_checked_in(key).await;
+    if let Some(key) = &key {
+        // Before every model call (free models too): the connection's check-in is renewed when
+        // it is past half of its interval, and the call goes ahead only with a valid one.
+        deepai::theos::global()
+            .ensure_checked_in(key)
+            .await
+            .map_err(|error| check_in_error(&error))?;
     }
     deepai::theos::note_model_call();
     let mut provider = provider.clone();
@@ -63,11 +89,11 @@ pub(crate) async fn prepare(
         value.set_sensitive(true);
         provider.headers.insert(deepai::headers::API_KEY, value);
     }
-    Attempt {
+    Ok(Attempt {
         provider,
         responses: deepai::catalog::model_uses_responses(model),
         permit,
-    }
+    })
 }
 
 impl Attempt {

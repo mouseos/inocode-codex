@@ -967,6 +967,8 @@ pub fn create_deepai_provider() -> ModelProviderInfo {
         supports_websockets: false,
         supports_standalone_web_search: false,
         include_internal_metadata: false,
+        // No bytes for 330 seconds ends the request (the original client's watchdog).
+        stream_idle_timeout_ms: Some(330_000),
         ..create_oss_provider_with_base_url(DEEPAI_BASE_URL, WireApi::ChatCompletions)
     }
 }

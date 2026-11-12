@@ -1,4 +1,5 @@
 //! The model catalog: `GET {BASE}/models`, read without a sign-in and checked before use.
+//! The checks are those of DeepAI Code 0.3.35 (`decodeDeepAIModels` in its server bundle).
 //!
 //! No list of models is bundled. The only fallback is a single minimal entry, so that the first
 //! screen after a start is not empty when the endpoint cannot be reached.
@@ -35,37 +36,46 @@ pub struct CatalogModel {
     pub theos_per_second: Option<serde_json::Value>,
 }
 
+const LEVELS: [&str; 4] = ["none", "low", "medium", "high"];
+
 impl CatalogModel {
-    /// Free: `theosPerRequest` is `"0"` and the model is not `premier`.
+    /// Free: `theosPerRequest` is `"0"` and the model is not marked `premier`.
     pub fn is_free(&self) -> bool {
         self.theos_per_request
             .as_deref()
             .is_some_and(|amount| theos_number(amount) == Some(0.0))
-            && self.premier == Some(false)
+            && self.premier != Some(true)
     }
 
-    /// Consumes Theos. The rule of the original client: with `theosPerRequest` the amount
-    /// decides; else any positive `theosPerSecond`; else `premier`.
+    /// The rate the catalog gives, when it gives a readable one: `Some(true)` for a rate with a
+    /// non-zero digit (a per-request price, else the per-level rates), `Some(false)` for zero,
+    /// `None` when the catalog carries no usable price (`hasMeteredRate` of the original).
+    fn metered_by_rate(&self) -> Option<bool> {
+        let nonzero = |amount: &str| amount.bytes().any(|b| (b'1'..=b'9').contains(&b));
+        if let Some(amount) = &self.theos_per_request {
+            return theos_number(amount).map(|_| nonzero(amount));
+        }
+        let rates: Vec<&serde_json::Value> = self
+            .theos_per_second
+            .as_ref()
+            .and_then(serde_json::Value::as_object)
+            .map(|map| map.values().collect())
+            .unwrap_or_default();
+        if rates.is_empty() {
+            return None;
+        }
+        let texts: Option<Vec<&str>> = rates
+            .iter()
+            .map(|rate| rate.as_str().filter(|text| theos_number(text).is_some()))
+            .collect();
+        texts.map(|texts| texts.iter().any(|text| nonzero(text)))
+    }
+
+    /// Consumes Theos, by the original client's rule: the catalog's rate when it has one, else
+    /// whether the model is marked `premier` (a model with neither counts as free here; a model
+    /// missing from the catalog counts as consuming, see `model_is_metered`).
     pub fn is_metered(&self) -> bool {
-        if let Some(amount) = self.theos_per_request.as_deref() {
-            return theos_number(amount).is_none_or(|n| n > 0.0);
-        }
-        if let Some(rates) = &self.theos_per_second {
-            let positive = |value: &serde_json::Value| match value {
-                serde_json::Value::String(text) => theos_number(text).is_some_and(|n| n > 0.0),
-                serde_json::Value::Number(number) => number.as_f64().is_some_and(|n| n > 0.0),
-                _ => false,
-            };
-            let any = match rates {
-                serde_json::Value::Object(map) => map.values().any(positive),
-                other => positive(other),
-            };
-            if any {
-                return true;
-            }
-        }
-        // No `premier` at all counts as consuming (the original client's reading).
-        self.premier != Some(false)
+        self.metered_by_rate().unwrap_or(self.premier == Some(true))
     }
 
     pub fn takes_images(&self) -> bool {
@@ -127,37 +137,51 @@ pub fn parse(body: &str) -> Result<Catalog, String> {
         if !valid_id(&model.id) {
             return Err("a catalog entry has an invalid id".to_string());
         }
+        if models.iter().any(|seen: &CatalogModel| seen.id == model.id) {
+            return Err(format!("`{}` is listed twice", model.id));
+        }
+        if model.name.trim().is_empty()
+            || model.name.chars().count() > 100
+            || !model.input.iter().any(|kind| kind == "text")
+            || model.input.iter().any(|kind| kind != "text" && kind != "image")
+        {
+            return Err(format!("`{}` has an invalid name or input", model.id));
+        }
         if model.context_window <= 0
             || model.max_tokens <= 0
             || model.max_tokens > model.context_window
         {
             return Err(format!("`{}` has inconsistent token limits", model.id));
         }
-        if models.iter().any(|seen: &CatalogModel| seen.id == model.id) {
-            return Err(format!("`{}` is listed twice", model.id));
-        }
-        if model.name.is_empty()
-            || model.input.is_empty()
-            || model.input.iter().any(|kind| kind != "text" && kind != "image")
-            || !model.input.iter().any(|kind| kind == "text")
-        {
-            return Err(format!("`{}` has an invalid name or input", model.id));
-        }
-        if model.api.as_deref().is_some_and(|api| api != "openai-completions" && api != "openai-responses") {
+        // The original accepts only `openai-responses` here; anything else voids the catalog
+        // rather than routing a model by an invented wire format.
+        if model.api.as_deref().is_some_and(|api| api != "openai-responses") {
             return Err(format!("`{}` names an unknown api", model.id));
         }
-        // An unreadable `theosPerRequest` is not rejected: the model counts as metered.
+        if let Some(amount) = &model.theos_per_request
+            && theos_number(amount).is_none()
+        {
+            return Err(format!("`{}` has an unreadable theosPerRequest", model.id));
+        }
+        if let Some(rates) = &model.theos_per_second {
+            let valid = rates.as_object().is_some_and(|map| {
+                map.iter().all(|(level, rate)| {
+                    LEVELS.contains(&level.as_str())
+                        && rate.as_str().is_some_and(|text| theos_number(text).is_some())
+                })
+            });
+            if !valid {
+                return Err(format!("`{}` has an unreadable theosPerSecond", model.id));
+            }
+        }
         models.push(model);
     }
-    // The default must name a listed model, else the whole catalog is refused.
+    // `default` is not part of the original's checks; a missing or unlisted one falls back to
+    // the first model (see `Catalog::default_model`).
     let default = wire
         .default
-        .filter(|id| models.iter().any(|model| &model.id == id))
-        .ok_or_else(|| "the default model is not in the catalog".to_string())?;
-    Ok(Catalog {
-        models,
-        default: Some(default),
-    })
+        .filter(|id| models.iter().any(|model| &model.id == id));
+    Ok(Catalog { models, default })
 }
 
 /// The single entry used when nothing can be read.
@@ -167,12 +191,13 @@ pub fn fallback() -> Catalog {
             id: "glm-5.3-flash".to_string(),
             name: "GLM 5.3 Flash".to_string(),
             reasoning: true,
-            input: vec!["text".to_string()],
-            context_window: 128_000,
-            max_tokens: 16_000,
-            premier: Some(false),
+            input: vec!["text".to_string(), "image".to_string()],
+            context_window: 1_048_576,
+            max_tokens: 131_072,
+            premier: None,
             api: None,
-            theos_per_request: Some("0".to_string()),
+            // The original's bundled entry carries no price fields.
+            theos_per_request: None,
             theos_per_second: None,
         }],
         default: Some("glm-5.3-flash".to_string()),
@@ -195,9 +220,16 @@ impl Catalog {
 
 /// Reads `GET {base_url}/models`.
 pub async fn fetch(base_url: &str) -> Result<Catalog, String> {
-    let response = crate::http_client()?
+    // Sent as the original sends it: JSON content type, lane, instance and machine headers, no
+    // key, and a 5 second limit.
+    let mut request = crate::http_client()?
         .get(format!("{}/models", base_url.trim_end_matches('/')))
-        .header("X-DeepAI-Code-Theos", crate::LANE_VERSION)
+        .timeout(std::time::Duration::from_secs(5))
+        .header("Content-Type", "application/json");
+    for (name, value) in crate::headers::common(None) {
+        request = request.header(name, value);
+    }
+    let response = request
         .send()
         .await
         .map_err(|error| format!("the model list could not be read: {error}"))?;
@@ -270,6 +302,7 @@ mod tests {
             .iter()
             .map(|m| (m.is_free(), m.is_metered()))
             .collect();
+        // `o` is not free (marked premier) and, by its price of 0, does not consume either.
         assert_eq!(flags, vec![(true, false), (false, true), (false, false)]);
         assert!(catalog.models[0].takes_images());
     }
@@ -282,11 +315,16 @@ mod tests {
                 .models
                 .remove(0)
         };
-        assert!(by("").is_metered(), "no premier at all counts as consuming");
-        assert!(!by(r#","premier":false"#).is_metered());
+        assert!(!by("").is_metered(), "neither a rate nor premier");
         assert!(by(r#","premier":true"#).is_metered());
+        assert!(!by(r#","premier":false"#).is_metered());
+        // A readable per-request price decides, whatever `premier` says.
+        assert!(!by(r#","theosPerRequest":"0","premier":true"#).is_metered());
+        assert!(by(r#","theosPerRequest":"0.5""#).is_metered());
+        // Per-level rates only when there is no per-request price.
         assert!(by(r#","theosPerSecond":{"high":"0.5"}"#).is_metered());
-        assert!(!by(r#","premier":false,"theosPerSecond":{"high":"0"}"#).is_metered());
+        assert!(!by(r#","theosPerSecond":{"high":"0"}"#).is_metered());
+        assert!(by(r#","theosPerSecond":{"high":"0","low":"2"}"#).is_metered());
     }
 
     #[test]
@@ -299,11 +337,16 @@ mod tests {
         assert!(parse(&format!(r#"{{"models":[{many}],"default":"m0"}}"#)).is_err());
         let twice = format!(r#"{{"models":[{},{}],"default":"m"}}"#, model(""), model(""));
         assert!(parse(&twice).is_err(), "a repeated id");
-        assert!(parse(&format!(r#"{{"models":[{}],"default":"x"}}"#, model(""))).is_err());
-        assert!(parse(&format!(r#"{{"models":[{}]}}"#, model(""))).is_err(), "no default");
+        // The original does not read `default`: a missing or unlisted one is not a refusal.
+        let unlisted = parse(&format!(r#"{{"models":[{}],"default":"x"}}"#, model(""))).expect("ok");
+        assert_eq!(unlisted.default, None);
+        assert_eq!(unlisted.default_model().map(|m| m.id.as_str()), Some("m"));
+        assert!(parse(&format!(r#"{{"models":[{}]}}"#, model(""))).is_ok());
+        let bad_rate = model(r#","theosPerSecond":{"extreme":"1"}"#);
+        assert!(parse(&format!(r#"{{"models":[{bad_rate}],"default":"m"}}"#)).is_err());
         let no_text = model("").replace(r#""input":["text","image"]"#, r#""input":["image"]"#);
         assert!(parse(&format!(r#"{{"models":[{no_text}],"default":"m"}}"#)).is_err());
-        let bad_api = model(r#","api":"weird""#);
+        let bad_api = model(r#","api":"openai-completions""#);
         assert!(parse(&format!(r#"{{"models":[{bad_api}],"default":"m"}}"#)).is_err());
         assert!(
             parse(r#"{"models":[{"id":"a b","name":"x","input":["text"],"contextWindow":10,"maxTokens":5}],"default":"a b"}"#)
@@ -313,13 +356,14 @@ mod tests {
             parse(r#"{"models":[{"id":"a","name":"x","input":["text"],"contextWindow":10,"maxTokens":50}],"default":"a"}"#)
                 .is_err()
         );
-        // An unreadable theosPerRequest is not a reason to refuse; the model counts as metered.
-        let odd = parse(&format!(
-            r#"{{"models":[{}],"default":"m"}}"#,
-            model(r#","theosPerRequest":"x""#)
-        ))
-        .expect("accepted");
-        assert!(odd.models[0].is_metered() && !odd.models[0].is_free());
+        // An unreadable theosPerRequest voids the catalog, as in the original.
+        assert!(
+            parse(&format!(
+                r#"{{"models":[{}],"default":"m"}}"#,
+                model(r#","theosPerRequest":"x""#)
+            ))
+            .is_err()
+        );
     }
 
     #[test]

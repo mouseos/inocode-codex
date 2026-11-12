@@ -2102,7 +2102,7 @@ impl ResponsesHttpExecutor<'_> {
                         &model_info.slug,
                         request.prompt_cache_key.as_deref(),
                     )
-                    .await,
+                    .await?,
                 )
             } else {
                 None
