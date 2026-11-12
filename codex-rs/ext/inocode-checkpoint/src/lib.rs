@@ -752,10 +752,27 @@ pub fn restore(
     let deadline = Instant::now() + cfg.budget;
 
     // The earliest saved state of each file wins.
+    // Once a shell point exists, nothing saved after it can be the earliest state of a file it did
+    // not already hold: such a file may have been changed by a command in between, and what it
+    // was at that first shell point is in git (its `HEAD`). Those paths go to the git step below.
+    let first_shell_index = range.iter().position(|p| p.kind == Kind::Shell);
     let mut wanted: BTreeMap<String, Wanted> = BTreeMap::new();
     let mut skipped: BTreeSet<String> = BTreeSet::new();
-    for point in &range {
+    let mut late_paths: BTreeSet<String> = BTreeSet::new();
+    for (index, point) in range.iter().enumerate() {
+        let late = first_shell_index.is_some_and(|first| index > first);
         for entry in &point.entries {
+            if late && !wanted.contains_key(&entry.path) {
+                match &entry.state {
+                    EntryState::Skipped { .. } => {
+                        skipped.insert(entry.path.clone());
+                    }
+                    _ => {
+                        late_paths.insert(entry.path.clone());
+                    }
+                }
+                continue;
+            }
             match &entry.state {
                 EntryState::Saved { blob, .. } => {
                     wanted
@@ -799,6 +816,7 @@ pub fn restore(
             }
         }
         candidates.extend(changed_between(&root, head, deadline));
+        candidates.extend(late_paths.iter().cloned());
         for path in candidates {
             if is_excluded(&path)
                 || wanted.contains_key(&path)
@@ -1028,6 +1046,27 @@ mod tests {
         assert_eq!(fs::read_to_string(work.path().join("scratch.txt")).unwrap(), "mine\n");
         assert_eq!(fs::read_to_string(work.path().join("b.txt")).unwrap(), "b0\n");
         assert!(!work.path().join("made.txt").exists());
+    }
+
+    #[test]
+    fn a_file_a_later_shell_point_saw_already_changed_still_comes_back_from_git() {
+        let work = repo();
+        let store_dir = tempfile::tempdir().unwrap();
+        let store = Store::at_home(store_dir.path());
+        let cfg = Config::default();
+        made(capture_shell(&store, &origin(work.path(), "turn1"), &cfg));
+        // Command 1 changes b.txt and creates d.txt; the next shell point sees both already changed.
+        fs::write(work.path().join("b.txt"), "after command 1
+").unwrap();
+        fs::write(work.path().join("d.txt"), "d
+").unwrap();
+        made(capture_shell(&store, &origin(work.path(), "turn1"), &cfg));
+        fs::write(work.path().join("b.txt"), "after command 2
+").unwrap();
+        restore(&store, "t1", &Target::Turn("turn1".into()), &cfg).unwrap();
+        assert_eq!(fs::read_to_string(work.path().join("b.txt")).unwrap(), "b0
+");
+        assert!(!work.path().join("d.txt").exists());
     }
 
     #[test]
