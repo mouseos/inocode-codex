@@ -81,6 +81,9 @@ pub struct Observation {
     /// When the call finished (milliseconds since the Unix epoch), if known. Failures with the
     /// same signature finishing almost together came from one batch of parallel calls.
     pub at_ms: Option<u64>,
+    /// What could be observed of the state the call ran in (see [`StateTracker`]). Empty when
+    /// unknown. Calls repeat each other only in the same state.
+    pub state: String,
 }
 
 /// Failures with the same signature finishing within this many milliseconds of each other are
@@ -114,7 +117,10 @@ impl Observation {
 
     /// Same action and same observation: what makes a repetition a stall.
     fn action_key(&self) -> String {
-        format!("{}\u{1}{}\u{1}{}", self.tool, self.args, self.observation)
+        format!(
+            "{}\u{1}{}\u{1}{}\u{1}{}",
+            self.tool, self.args, self.observation, self.state
+        )
     }
 }
 
@@ -172,6 +178,63 @@ pub struct Stall {
     pub trigger: Trigger,
     /// Failure signature (for `SameFailure`) or a description of the repetition.
     pub signature: String,
+    /// How many calls in a row made the stall (for `NoProgress`, the calls without progress).
+    pub count: usize,
+    /// The state the repeated calls ran in (empty for `NoProgress`).
+    pub state: String,
+}
+
+impl Stall {
+    /// A statement of fact for the stalls made of the same call in the same state with the same
+    /// result. Nothing is said about what to do, and nothing is stopped.
+    pub fn fact(&self) -> Option<String> {
+        if self.trigger == Trigger::NoProgress {
+            return None;
+        }
+        let state = if self.state.is_empty() {
+            "not known".to_string()
+        } else {
+            self.state.clone()
+        };
+        Some(format!(
+            "The same state and the same result, {} calls in a row. State: {state}. Call: {}",
+            self.count, self.signature
+        ))
+    }
+}
+
+/// Observable state of a thread: the working directory, the result of the latest state check (a
+/// read-only call) and how many calls that might have changed things came since the start (a
+/// successful call that is not a repeat of the call before it). A repeat in a changed state is
+/// not a stall; a repeat in the same state with the same result is.
+#[derive(Debug, Clone, Default)]
+pub struct StateTracker {
+    changes: u64,
+    last_check: String,
+    last_action: String,
+}
+
+impl StateTracker {
+    /// The state the next call runs in.
+    pub fn state_before(&self, cwd: &str) -> String {
+        let check: String = self.last_check.chars().take(80).collect();
+        format!(
+            "cwd {cwd}; latest state check: {}; changing calls so far: {}",
+            if check.is_empty() { "none" } else { &check },
+            self.changes
+        )
+    }
+
+    /// Take a finished call into account.
+    pub fn after(&mut self, obs: &Observation) {
+        let action = format!("{}\u{1}{}", obs.tool, obs.args);
+        if obs.read_only {
+            self.last_check = obs.observation.clone();
+        } else if !obs.failed() && action != self.last_action {
+            self.changes += 1;
+        }
+        self.last_action = action;
+    }
 }
 
 /// Feed every tool call to [`StallDetector::observe`]; it returns a [`Stall`] when one fires.
@@ -257,11 +320,16 @@ impl StallDetector {
     fn check_same_failure(&self) -> Option<Stall> {
         let tail = self.tail(self.config.same_failure_k)?;
         let first = tail[0].failure_signature()?;
+        let state = tail[0].state.clone();
         tail.iter()
-            .all(|o| o.failure_signature().as_deref() == Some(first.as_str()))
+            .all(|o| {
+                o.failure_signature().as_deref() == Some(first.as_str()) && o.state == state
+            })
             .then_some(Stall {
                 trigger: Trigger::SameFailure,
                 signature: first,
+                count: tail.len(),
+                state,
             })
     }
 
@@ -277,6 +345,8 @@ impl StallDetector {
             .then(|| Stall {
                 trigger: Trigger::RepeatedAction,
                 signature: format!("{} {}", tail[0].tool, tail[0].args),
+                count: tail.len(),
+                state: tail[0].state.clone(),
             })
     }
 
@@ -297,6 +367,8 @@ impl StallDetector {
             .then(|| Stall {
                 trigger: Trigger::Alternation,
                 signature: format!("{} {} <-> {} {}", tail[0].tool, tail[0].args, tail[1].tool, tail[1].args),
+                count: tail.len(),
+                state: tail[0].state.clone(),
             })
     }
 
@@ -309,6 +381,8 @@ impl StallDetector {
                     "{} tool calls without a file change or test-result change ({} read-only calls not counted)",
                     self.turns_without_progress, self.read_only_since_progress
                 ),
+                count: self.turns_without_progress,
+                state: String::new(),
             })
     }
 }
@@ -348,8 +422,12 @@ impl ConsultState {
 
 /// Wraps the advisor's answer as the next-turn input for the main agent, as hypotheses.
 pub fn advice_as_input(stall: &Stall, advice: &str) -> String {
+    let fact = stall
+        .fact()
+        .map(|f| format!(" Fact: {f}."))
+        .unwrap_or_default();
     format!(
-        "[advisor] Stall detected ({}: {}). The advisor suggests the following hypotheses; verify them against evidence before relying on them.\n\n{}",
+        "[advisor] Stall detected ({}: {}).{fact} The advisor suggests the following hypotheses; verify them against evidence before relying on them.\n\n{}",
         stall.trigger.as_str(),
         stall.signature,
         advice.trim()
@@ -383,6 +461,77 @@ mod tests {
             exit_code: Some(code),
             ..Default::default()
         }
+    }
+
+    fn in_state(mut obs: Observation, state: &str, at: u64) -> Observation {
+        obs.state = state.to_string();
+        obs.at_ms = Some(at);
+        obs
+    }
+
+    #[test]
+    fn the_same_result_in_the_same_state_is_reported_as_a_fact() {
+        let mut d = StallDetector::new(StallConfig::default());
+        let mut stall = None;
+        for i in 0..3 {
+            stall = d.observe(in_state(run("adb shell", 1), "s0", 10_000 + i * 5_000));
+        }
+        let stall = stall.expect("fires");
+        assert_eq!(stall.count, 3);
+        let fact = stall.fact().expect("a fact");
+        assert!(fact.contains("3 calls in a row"));
+        assert!(fact.contains("State: s0"));
+    }
+
+    #[test]
+    fn a_repeat_in_a_changed_state_is_not_a_stall() {
+        let mut d = StallDetector::new(StallConfig::default());
+        for i in 0..6 {
+            let state = format!("s{i}");
+            assert_eq!(
+                d.observe(in_state(run("adb shell", 1), &state, 10_000 + i * 5_000)),
+                None
+            );
+        }
+        // The same alternation with the state changing between the calls.
+        let mut d = StallDetector::new(StallConfig {
+            no_progress_turns: 0,
+            ..StallConfig::default()
+        });
+        for i in 0..8 {
+            let call = if i % 2 == 0 { run("adb shell", 1) } else { run("fastboot reboot", 0) };
+            assert_eq!(d.observe(in_state(call, &format!("s{i}"), 10_000 + i * 5_000)), None);
+        }
+    }
+
+    #[test]
+    fn a_stall_without_a_state_has_no_state_fact_for_no_progress() {
+        let stall = Stall {
+            trigger: Trigger::NoProgress,
+            signature: "8 tool calls without a file change".into(),
+            count: 8,
+            state: String::new(),
+        };
+        assert_eq!(stall.fact(), None);
+    }
+
+    #[test]
+    fn the_state_changes_after_a_different_successful_call_but_not_after_a_repeat() {
+        let mut t = StateTracker::default();
+        let before = t.state_before("/w");
+        t.after(&run("adb shell", 1)); // a failure changes nothing
+        assert_eq!(t.state_before("/w"), before);
+        t.after(&run("fastboot reboot", 0)); // a different call that succeeded
+        let changed = t.state_before("/w");
+        assert_ne!(changed, before);
+        t.after(&run("fastboot reboot", 0)); // a repeat of it
+        assert_eq!(t.state_before("/w"), changed);
+        let mut check = run("adb devices", 0);
+        check.read_only = true;
+        check.observation = "list of devices attached".into();
+        t.after(&check);
+        assert!(t.state_before("/w").contains("list of devices attached"));
+        assert_ne!(t.state_before("/w"), changed);
     }
 
     fn edit(path: &str) -> Observation {
@@ -493,6 +642,8 @@ mod tests {
         let stall = Stall {
             trigger: Trigger::SameFailure,
             signature: "cargo build exit=101".into(),
+            count: 3,
+            state: String::new(),
         };
         let state = ConsultState {
             goal: "make build pass".into(),

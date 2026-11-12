@@ -218,6 +218,7 @@ struct ThreadStall {
     detector: StallDetector,
     recent: VecDeque<String>,
     last_error: String,
+    tracker: codex_inocode_advisor::StateTracker,
 }
 
 fn detectors() -> &'static Mutex<HashMap<ThreadId, ThreadStall>> {
@@ -318,6 +319,7 @@ pub(crate) fn build_observation(
             .duration_since(std::time::UNIX_EPOCH)
             .ok()
             .map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+        state: String::new(),
     }
 }
 
@@ -384,6 +386,7 @@ pub(crate) fn observe_tool_result(
             detector: StallDetector::new(stall_config()),
             recent: VecDeque::new(),
             last_error: String::new(),
+            tracker: Default::default(),
         });
         entry.recent.push_back(format!(
             "{summary} -> {}",
@@ -395,7 +398,12 @@ pub(crate) fn observe_tool_result(
         if failed {
             entry.last_error = error_text;
         }
+        // The state the call ran in; a repeat only counts in the same state.
+        let mut obs = obs;
+        obs.state = entry.tracker.state_before(&cwd.display().to_string());
+        let finished = obs.clone();
         let stall = entry.detector.observe(obs);
+        entry.tracker.after(&finished);
         let recent = entry.recent.iter().cloned().collect::<Vec<_>>();
         let conditions = codex_inocode_advisor::call_conditions(&recent, &cwd, &obs_for_conditions);
         (stall, recent, entry.last_error.clone(), conditions)
@@ -531,6 +539,10 @@ async fn run_consultation(
         }
         Err(err) => {
             tracing::warn!("advisor consultation failed: {err}");
+            // The statement of fact does not depend on the model's answer.
+            if let Some(fact) = stall.fact() {
+                deliver_advice(&session, format!("[advisor] Fact: {fact}.")).await;
+            }
             codex_inocode_advisor::record_global(
                 &home,
                 codex_inocode_advisor::AdvisorEvent::error(
