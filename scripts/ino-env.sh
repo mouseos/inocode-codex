@@ -10,12 +10,13 @@ export CARGO_HOME="$_ino_root/.build/cargo-home"
 export TMP="$_ino_root/.build/tmp" TEMP="$_ino_root/.build/tmp"
 export CARGO_NET_GIT_FETCH_WITH_CLI=true
 export CARGO_INCREMENTAL=0
-export RUST_MIN_STACK=268435456
+export RUST_MIN_STACK=67108864   # 64MB; 256MB x many rustc threads crashed rustc (0xc0000409)
 unset HTTPS_PROXY HTTP_PROXY ALL_PROXY NODE_EXTRA_CA_CERTS
 if [ "$1" = "gui" ]; then
   export CARGO_TARGET_DIR="$_ino_root/../../gui/inocode-desktop/target"
   # The GUI has its own Cargo home semantics: keep the default one.
   unset CARGO_HOME
+  export RUST_MIN_STACK=268435456   # GUI builds with -j 1
 else
   export CARGO_TARGET_DIR="$_ino_root/codex-rs/target-win"
 fi

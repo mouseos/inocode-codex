@@ -9,11 +9,12 @@ New-Item -ItemType Directory -Force "$root\.build\cargo-home", "$root\.build\tmp
 $env:TMP = "$root\.build\tmp"; $env:TEMP = $env:TMP
 $env:CARGO_NET_GIT_FETCH_WITH_CLI = 'true'
 $env:CARGO_INCREMENTAL = '0'
-$env:RUST_MIN_STACK = '268435456'
+$env:RUST_MIN_STACK = '67108864'   # 64MB; 256MB x many rustc threads crashed rustc (0xc0000409)
 foreach ($n in 'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NODE_EXTRA_CA_CERTS') { Remove-Item "Env:$n" -ErrorAction SilentlyContinue }
 if ($Gui) {
     $env:CARGO_TARGET_DIR = [IO.Path]::GetFullPath("$root\..\..\gui\inocode-desktop\target")
     Remove-Item Env:CARGO_HOME -ErrorAction SilentlyContinue
+    $env:RUST_MIN_STACK = '268435456'   # GUI builds with -j 1
 } else {
     $env:CARGO_HOME = "$root\.build\cargo-home"
     $env:CARGO_TARGET_DIR = "$root\codex-rs\target-win"
