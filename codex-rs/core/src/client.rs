@@ -2093,7 +2093,41 @@ impl ResponsesHttpExecutor<'_> {
                 request.input = input;
             }
             inference_trace_attempt.record_started(&request);
-            let stream_result = match self.client.state.provider.info().wire_api {
+            // DeepAI: its own key and headers, a wire chosen per model, one metered request at a
+            // time (see `deepai_client`).
+            let deepai_attempt = if crate::deepai_client::is_deepai(&client_setup.api_provider) {
+                Some(
+                    crate::deepai_client::prepare(
+                        &client_setup.api_provider,
+                        &model_info.slug,
+                        request.prompt_cache_key.as_deref(),
+                    )
+                    .await,
+                )
+            } else {
+                None
+            };
+            let stream_result = if let Some(attempt) = deepai_attempt {
+                let provider = attempt.provider.clone();
+                let result = if attempt.responses {
+                    ApiResponsesClient::new(transport, provider, client_setup.api_auth)
+                        .with_telemetry(Some(request_telemetry), Some(sse_telemetry))
+                        .stream_request(request, options)
+                        .await
+                } else {
+                    codex_api::WireClient::new(
+                        transport,
+                        provider,
+                        client_setup.api_auth,
+                        codex_api::WireKind::ChatCompletions(Default::default()),
+                    )
+                    .with_telemetry(Some(request_telemetry))
+                    .stream_request(request, options)
+                    .await
+                };
+                result.map(|stream| attempt.hold_slot(stream))
+            } else {
+            match self.client.state.provider.info().wire_api {
                 WireApi::Responses => {
                     let client = ApiResponsesClient::new(
                         transport,
@@ -2132,6 +2166,7 @@ impl ResponsesHttpExecutor<'_> {
                     .stream_request(request, options)
                     .await
                 }
+                        }
             };
 
             match stream_result {
@@ -2144,6 +2179,25 @@ impl ResponsesHttpExecutor<'_> {
                         interceptors,
                         /*last_response_tx*/ None,
                     ));
+                }
+                // DeepAI says "session busy": wait for the time it names and send the same request
+                // again, until the user stops the turn.
+                Err(err) if crate::deepai_client::busy_wait(&err).is_some() => {
+                    let wait = crate::deepai_client::busy_wait(&err).unwrap_or_default();
+                    tokio::time::sleep(wait).await;
+                    continue;
+                }
+                Err(err) if crate::deepai_client::user_error(&err).is_some() => {
+                    let response_debug_context =
+                        extract_response_debug_context_from_api_error(&err);
+                    let shown = crate::deepai_client::user_error(&err)
+                        .unwrap_or_else(|| self.client.state.provider.map_api_error(err));
+                    inference_trace_attempt.record_failed(
+                        &shown,
+                        response_debug_context.request_id.as_deref(),
+                        /*output_items*/ &[],
+                    );
+                    return Err(shown);
                 }
                 Err(ApiError::Transport(unauthorized_transport))
                     if self

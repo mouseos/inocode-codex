@@ -163,9 +163,10 @@ pub struct InocodeReferencePrice {
     pub reason: Option<String>,
 }
 
-/// A price estimated from the user's own usage. Never mixed with the reference price. For a
-/// subscription it is an upper bound (other devices' usage is included). Reserved: the usage
-/// statistics fill it; until then it is absent.
+/// A price from the user's own recorded usage: the tokens of this app's live requests (the last
+/// 30 days) priced at the reference price. Never mixed with the reference price. For a
+/// subscription (`billing: plan_included`) it is an upper bound. Absent when the model has no
+/// reference price or no request was recorded.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
@@ -184,6 +185,20 @@ pub struct InocodeMeasuredPrice {
     #[serde(default)]
     #[ts(optional = nullable)]
     pub n_samples: Option<u32>,
+    /// What the counted requests would cost at the reference price, in USD (the sum of recorded
+    /// tokens times the listed prices; not a bill).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub total_cost_usd: Option<f64>,
+    #[serde(default)]
+    #[ts(type = "number | null", optional = nullable)]
+    pub uncached_input_tokens: Option<u64>,
+    #[serde(default)]
+    #[ts(type = "number | null", optional = nullable)]
+    pub cached_input_tokens: Option<u64>,
+    #[serde(default)]
+    #[ts(type = "number | null", optional = nullable)]
+    pub output_tokens: Option<u64>,
 }
 
 /// A price the user set by hand. A fetch never overwrites it.
@@ -236,6 +251,26 @@ pub struct InocodeModelEnrichment {
     pub benchmark_match: Option<InocodeBenchmarkMatch>,
     pub scores: Vec<InocodeModelScore>,
     pub price: InocodeModelPrice,
+    /// DeepAI models only: whether the model is free and what a request costs in Theos.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub theos: Option<InocodeModelTheos>,
+}
+
+/// How a DeepAI model is paid for. Read from the live catalog, never guessed.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeModelTheos {
+    /// `theosPerRequest` is `"0"` and the model is not `premier`.
+    pub is_free: bool,
+    /// Theos one request consumes, as the catalog writes it (`"0"`, `"3"`, `"10"`); absent when
+    /// the catalog gives none for this model.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub theos_per_request: Option<String>,
+    /// The catalog's `premier` mark (the older sign of a Theos-consuming model).
+    pub premier: bool,
 }
 
 /// A source behind the answer, with what its license asks to be shown.

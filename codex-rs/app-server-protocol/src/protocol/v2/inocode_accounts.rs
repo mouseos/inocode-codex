@@ -279,6 +279,65 @@ pub struct InocodeAccount {
     pub in_use: bool,
     /// True for the legacy `auth.json` login shown as the default account.
     pub is_default: bool,
+    /// DeepAI entries only: the sign-in's identity and the Theos balance. Absent for other
+    /// providers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub deepai: Option<InocodeAccountDeepAi>,
+}
+
+/// The DeepAI side of an account: which key it is (never the key), and the Theos balance read
+/// from `GET /theos`. Amounts are decimal strings, as the server writes them.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeAccountDeepAi {
+    /// The first 12 hex characters of `sha256(api_key)`: a way to tell keys apart on screen.
+    pub key_id: String,
+    /// `null` until it is known (the sign-in answers it; a pasted key learns it on the first
+    /// usage read).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub is_pro: Option<bool>,
+    /// `ok`: the balance below is the last read. `notRead`: no read has happened yet. `error`:
+    /// the last read failed (`error*` say how; a balance, if any, is the last good one).
+    pub balance_status: InocodeDeepAiBalanceStatus,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub enabled: Option<bool>,
+    /// Theos left.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub balance: Option<String>,
+    /// Theos the day grants.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub granted: Option<String>,
+    /// When the allowance comes back, as the server wrote it.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub refresh_at: Option<String>,
+    /// Display text (Japanese) of the last failure, naming the code and the HTTP status.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub error: Option<String>,
+    /// `error.code` of the last failure, when the server gave one.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub error_code: Option<String>,
+    /// HTTP status of the last failure; `0` when there was no answer.
+    #[serde(default)]
+    #[ts(type = "number | null", optional = nullable)]
+    pub error_status: Option<u16>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum InocodeDeepAiBalanceStatus {
+    Ok,
+    NotRead,
+    Error,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -322,7 +381,8 @@ pub struct InocodeAccountsListResponse {
 pub struct InocodeAccountsAddApiKeyParams {
     pub alias: String,
     pub api_key: String,
-    /// `openai` (default) or `claude`.
+    /// `openai` (default), `claude` or `deepai`. A DeepAI key is checked with `GET /theos`
+    /// before it is stored.
     #[serde(default)]
     #[ts(optional = nullable)]
     pub provider: Option<String>,
@@ -336,6 +396,48 @@ pub struct InocodeAccountsAddApiKeyParams {
 #[ts(export_to = "v2/")]
 pub struct InocodeAccountsAddApiKeyResponse {
     pub account: InocodeAccount,
+    /// What checking the key at the provider showed. A key the provider refuses is not stored:
+    /// the request fails with an error instead.
+    pub verification: InocodeKeyVerification,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum InocodeKeyVerificationStatus {
+    /// The provider accepted the key.
+    Verified,
+    /// The check could not be made (no connection, a timeout, an error status): the key was
+    /// stored anyway and may or may not work.
+    Unverified,
+}
+
+/// The result of the check made when an API key is added (one light authenticated read).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeKeyVerification {
+    pub status: InocodeKeyVerificationStatus,
+    /// Display text (Japanese) for `unverified`: why the check could not be made.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub reason: Option<String>,
+    /// HTTP status of the provider's answer, when there was one.
+    #[serde(default)]
+    #[ts(type = "number | null", optional = nullable)]
+    pub http_status: Option<u16>,
+    /// The models the key can use, when the provider listed them. Use them for the picker.
+    pub models: Vec<InocodeVerifiedModel>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeVerifiedModel {
+    pub id: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub display_name: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -458,7 +560,7 @@ impl From<InocodeAccountsLoginStartResponse> for InocodeAccountsReauthResponse {
 #[ts(export_to = "v2/")]
 pub struct InocodeAccountsLoginStartParams {
     pub alias: String,
-    /// `openai` (default) or `claude`.
+    /// `openai` (default), `claude` or `deepai` (browser sign-in only: a loopback redirect).
     #[serde(default)]
     #[ts(optional = nullable)]
     pub provider: Option<String>,

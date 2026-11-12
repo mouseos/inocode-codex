@@ -64,6 +64,7 @@ codex-history-notes-extension = { workspace = true }
 codex-http-client = { workspace = true }
 codex-inocode-flags = { workspace = true }
 codex-inocode-advisor = { workspace = true }
+codex-inocode-deepai = { workspace = true }
 codex-inocode-compaction = { workspace = true }
 codex-inocode-model-catalog = { workspace = true }
 codex-inocode-stats = { workspace = true }

@@ -29,6 +29,8 @@ pub use overrides::PriceOverride;
 pub use overrides::read_overrides;
 pub use overrides::write_override;
 pub use price::MeasuredPrice;
+pub use price::RequestUsage;
+pub use price::measure;
 pub use price::Price;
 pub use price::PriceKind;
 pub use price::PriceSource;

@@ -15,6 +15,11 @@ use crate::error_code::invalid_request;
 use crate::outgoing_message::OutgoingMessageSender;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::InocodeAccount;
+use codex_app_server_protocol::InocodeAccountDeepAi;
+use codex_app_server_protocol::InocodeKeyVerification;
+use codex_app_server_protocol::InocodeKeyVerificationStatus;
+use codex_app_server_protocol::InocodeVerifiedModel;
+use codex_app_server_protocol::InocodeDeepAiBalanceStatus;
 use codex_app_server_protocol::InocodeAccountKind;
 use codex_app_server_protocol::InocodeAccountLoginMethod;
 use codex_app_server_protocol::InocodeAccountPolicy;
@@ -102,12 +107,16 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const OPENAI: &str = "openai";
 const CLAUDE: &str = "claude";
 const CLAUDE_DIR: &str = "accounts-claude";
+const DEEPAI: &str = codex_inocode_deepai::PROVIDER_ID;
+const DEEPAI_DIR: &str = "accounts-deepai";
 
 enum PendingLogin {
     Browser(codex_login::ShutdownHandle),
     Device(CancellationToken),
     /// Claude sign-in with a local listener.
     ClaudeListener(Arc<AtomicBool>),
+    /// DeepAI sign-in with a loopback listener.
+    DeepAiListener(Arc<AtomicBool>),
     /// Claude sign-in waiting for the user to paste `code#state`.
     ClaudeCode {
         pending: claude_oauth::Pending,
@@ -141,7 +150,7 @@ fn pool() -> Result<Arc<AccountPool>, JSONRPCErrorError> {
 }
 
 fn all_pools() -> Vec<Arc<AccountPool>> {
-    [OPENAI, CLAUDE]
+    [OPENAI, CLAUDE, DEEPAI]
         .iter()
         .filter_map(|group| account_pool::global_for(group))
         .collect()
@@ -167,6 +176,7 @@ fn group_of(provider: Option<&str>) -> Result<&'static str, JSONRPCErrorError> {
     match provider.unwrap_or(OPENAI) {
         OPENAI => Ok(OPENAI),
         CLAUDE => Ok(CLAUDE),
+        DEEPAI => Ok(DEEPAI),
         other => Err(invalid_params(format!("unknown provider `{other}`"))),
     }
 }
@@ -234,12 +244,17 @@ pub(crate) fn start(
     let claude_env = inputs.env.clone();
     handle.spawn(async move {
         let pool = open_with(inputs, auth_manager).await;
-        let claude = AccountPool::open_group(claude_env, CLAUDE, CLAUDE_DIR).await;
+        let claude = AccountPool::open_group(claude_env.clone(), CLAUDE, CLAUDE_DIR).await;
+        let deepai = AccountPool::open_group(claude_env, DEEPAI, DEEPAI_DIR).await;
         account_pool::install_global_for(OPENAI, Some(Arc::clone(&pool)));
         account_pool::install_global_for(CLAUDE, Some(Arc::clone(&claude)));
+        account_pool::install_global_for(DEEPAI, Some(Arc::clone(&deepai)));
         pool.spawn_refresh_loop(USAGE_REFRESH_INTERVAL);
         claude.spawn_refresh_loop(USAGE_REFRESH_INTERVAL);
-        for source in [pool, claude] {
+        deepai.spawn_refresh_loop(USAGE_REFRESH_INTERVAL);
+        // The Theos balances are read once now (each read keeps its own spacing).
+        tokio::spawn(refresh_deepai(/*manual*/ false));
+        for source in [pool, claude, deepai] {
             let mut events = source.subscribe();
             let outgoing = Arc::clone(&outgoing);
             tokio::spawn(async move {
@@ -763,7 +778,9 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
                 for pool in all_pools() {
                     pool.refresh_usage().await;
                 }
+                refresh_deepai(/*manual*/ true).await;
             } else {
+                tokio::spawn(refresh_deepai(/*manual*/ false));
                 // The answer below is not held up: a Claude sign-in whose usage is older than a
                 // minute is re-read in the background, and `inocode/accounts/updated` follows.
                 for pool in all_pools() {
@@ -783,13 +800,22 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
             ))
         }
         ClientRequest::InocodeAccountsAddApiKey { params, .. } => {
-            let view = pool_of(group_of(params.provider.as_deref())?)?
+            let group = group_of(params.provider.as_deref())?;
+            let pool = pool_of(group)?;
+            // The key is checked at the provider first: a refusal (401/403) stops here with the
+            // reason; a check that could not be made lets the key in as unverified.
+            let verification = verify_key(group, &pool, params.api_key.trim()).await?;
+            let view = pool
                 .add_api_key(&params.alias, &params.api_key, params.priority)
                 .await
                 .map_err(client_error)?;
+            if group == DEEPAI {
+                tokio::spawn(refresh_deepai(/*manual*/ false));
+            }
             Ok(Some(
                 InocodeAccountsAddApiKeyResponse {
                     account: to_account(view),
+                    verification,
                 }
                 .into(),
             ))
@@ -853,6 +879,7 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
                 Some(PendingLogin::Browser(handle)) => handle.shutdown(),
                 Some(PendingLogin::Device(token)) => token.cancel(),
                 Some(PendingLogin::ClaudeListener(cancel)) => cancel.store(true, Ordering::SeqCst),
+                Some(PendingLogin::DeepAiListener(cancel)) => cancel.store(true, Ordering::SeqCst),
                 Some(PendingLogin::ClaudeCode { .. }) => {}
                 None => return Err(invalid_request("unknown login id")),
             }
@@ -890,6 +917,97 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
     }
 }
 
+/// Checks an API key with one light authenticated read at its provider.
+async fn verify_key(
+    group: &str,
+    pool: &AccountPool,
+    key: &str,
+) -> Result<InocodeKeyVerification, JSONRPCErrorError> {
+    let unverified = |reason: String, http_status: Option<u16>| InocodeKeyVerification {
+        status: InocodeKeyVerificationStatus::Unverified,
+        reason: Some(reason),
+        http_status,
+        models: Vec::new(),
+    };
+    let rejected = |name: &str, status: u16| {
+        invalid_request(format!(
+            "{name} がこの API キーを受け付けませんでした (HTTP {status})。キーが正しいか、有効かを確かめてください。"
+        ))
+    };
+    if group == DEEPAI {
+        // DeepAI's own steps: `GET /theos` with the key, then the public model list.
+        return match codex_inocode_deepai::theos::global().read(key, /*manual*/ true).await {
+            Ok(_) => {
+                let models = match codex_inocode_deepai::catalog::fetch(
+                    &codex_inocode_deepai::base_url(),
+                )
+                .await
+                {
+                    Ok(read) => {
+                        codex_inocode_deepai::catalog::remember(&read);
+                        read.models
+                            .iter()
+                            .map(|model| InocodeVerifiedModel {
+                                id: model.id.clone(),
+                                display_name: Some(model.name.clone()),
+                            })
+                            .collect()
+                    }
+                    Err(_) => Vec::new(),
+                };
+                Ok(InocodeKeyVerification {
+                    status: InocodeKeyVerificationStatus::Verified,
+                    reason: None,
+                    http_status: Some(200),
+                    models,
+                })
+            }
+            Err(error) if matches!(error.status, 401 | 403) => {
+                Err(invalid_request(error.user_message()))
+            }
+            Err(error) => Ok(unverified(
+                format!("検証できませんでした。{}", error.user_message()),
+                (error.status != 0).then_some(error.status),
+            )),
+        };
+    }
+    // Unit tests never reach a real provider with their fake keys.
+    if cfg!(test) {
+        return Ok(unverified("検証できませんでした(テスト)。".to_string(), None));
+    }
+    let route = &pool.env().auth_route_config;
+    let (name, check) = if group == CLAUDE {
+        (
+            "Claude",
+            codex_login::key_check::check_claude(route, "https://api.anthropic.com", key).await,
+        )
+    } else {
+        (
+            "OpenAI",
+            codex_login::key_check::check_openai(route, "https://api.openai.com/v1", key).await,
+        )
+    };
+    match check {
+        codex_login::key_check::KeyCheck::Valid { models } => Ok(InocodeKeyVerification {
+            status: InocodeKeyVerificationStatus::Verified,
+            reason: None,
+            http_status: Some(200),
+            models: models
+                .into_iter()
+                .map(|model| InocodeVerifiedModel {
+                    id: model.id,
+                    display_name: model.display_name,
+                })
+                .collect(),
+        }),
+        codex_login::key_check::KeyCheck::Rejected { status } => Err(rejected(name, status)),
+        codex_login::key_check::KeyCheck::Unverified { reason, status } => Ok(unverified(
+            format!("検証できませんでした({reason})。キーはそのまま登録しました。"),
+            status,
+        )),
+    }
+}
+
 fn providers() -> Vec<InocodeProvider> {
     let count = |group: &str| {
         account_pool::global_for(group)
@@ -909,6 +1027,13 @@ fn providers() -> Vec<InocodeProvider> {
             wire: InocodeProviderWire::Anthropic,
             auth_kinds: vec![InocodeAccountKind::ClaudeOauth, InocodeAccountKind::ApiKey],
             account_count: count(CLAUDE),
+        },
+        InocodeProvider {
+            id: DEEPAI.to_string(),
+            name: "DeepAI".to_string(),
+            wire: InocodeProviderWire::Chat,
+            auth_kinds: vec![InocodeAccountKind::ApiKey],
+            account_count: count(DEEPAI),
         },
     ]
 }
@@ -968,8 +1093,12 @@ async fn login_start(
     }
     let login_id = uuid::Uuid::new_v4().to_string();
 
-    if group_of(params.provider.as_deref())? == CLAUDE {
-        return claude_login_start(runtime, login_id, alias, params.method, expected).await;
+    match group_of(params.provider.as_deref())? {
+        CLAUDE => {
+            return claude_login_start(runtime, login_id, alias, params.method, expected).await;
+        }
+        DEEPAI => return deepai_login_start(runtime, login_id, alias, params.method).await,
+        _ => {}
     }
 
     let pool = pool()?;
@@ -1208,7 +1337,9 @@ pub(crate) fn cancel_all_logins() {
         match login {
             PendingLogin::Browser(handle) => handle.shutdown(),
             PendingLogin::Device(cancel) => cancel.cancel(),
-            PendingLogin::ClaudeListener(cancel) => cancel.store(true, Ordering::SeqCst),
+            PendingLogin::ClaudeListener(cancel) | PendingLogin::DeepAiListener(cancel) => {
+                cancel.store(true, Ordering::SeqCst);
+            }
             PendingLogin::ClaudeCode { .. } => {}
         }
     }
@@ -1277,9 +1408,191 @@ async fn finish(
     notify_login(runtime, login_id, outcome).await;
 }
 
+// ------------------------------------------------------------------ DeepAI
+
+/// What was last learned about each DeepAI account (by pool id): key identity, Pro, Theos balance.
+fn deepai_states() -> &'static Mutex<HashMap<String, InocodeAccountDeepAi>> {
+    static STATES: OnceLock<Mutex<HashMap<String, InocodeAccountDeepAi>>> = OnceLock::new();
+    STATES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn deepai_state_of(id: &str) -> InocodeAccountDeepAi {
+    deepai_states()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(id)
+        .cloned()
+        .unwrap_or(InocodeAccountDeepAi {
+            key_id: String::new(),
+            is_pro: None,
+            balance_status: InocodeDeepAiBalanceStatus::NotRead,
+            enabled: None,
+            balance: None,
+            granted: None,
+            refresh_at: None,
+            error: None,
+            error_code: None,
+            error_status: None,
+        })
+}
+
+/// Reads the Theos balance of every DeepAI account (each read keeps its own spacing: 30 seconds,
+/// 5 for a read the user asked for) and tells the clients when something changed.
+async fn refresh_deepai(manual: bool) {
+    let Some(pool) = account_pool::global_for(DEEPAI) else {
+        return;
+    };
+    let mut changed = false;
+    for view in pool.list() {
+        let Some(handles) = pool.spend_handles(&view.id) else {
+            continue;
+        };
+        let Some(key) = handles
+            .manager
+            .auth()
+            .await
+            .and_then(|auth| auth.api_key().map(str::to_string))
+        else {
+            continue;
+        };
+        let theos = codex_inocode_deepai::theos::global();
+        let result = theos.read(&key, manual).await;
+        let previous = deepai_state_of(&view.id);
+        let is_pro = match previous.is_pro {
+            Some(known) => Some(known),
+            None => codex_inocode_deepai::theos::is_pro(&codex_inocode_deepai::origin(), &key).await,
+        };
+        let balance = result.as_ref().ok().cloned().or_else(|| theos.cached(&key));
+        let mut entry = InocodeAccountDeepAi {
+            key_id: codex_inocode_deepai::display_id(&key),
+            is_pro,
+            balance_status: InocodeDeepAiBalanceStatus::Ok,
+            enabled: balance.as_ref().map(|b| b.enabled),
+            balance: balance.as_ref().and_then(|b| b.balance.clone()),
+            granted: balance.as_ref().and_then(|b| b.granted.clone()),
+            refresh_at: balance.as_ref().and_then(|b| b.refresh_at.clone()),
+            error: None,
+            error_code: None,
+            error_status: None,
+        };
+        if let Err(error) = &result {
+            entry.balance_status = InocodeDeepAiBalanceStatus::Error;
+            entry.error = Some(error.user_message());
+            entry.error_code = error.code.clone();
+            entry.error_status = Some(error.status);
+        }
+        let mut states = deepai_states()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if states.get(&view.id) != Some(&entry) {
+            states.insert(view.id.clone(), entry);
+            changed = true;
+        }
+    }
+    if changed && let Ok(runtime) = runtime() {
+        runtime
+            .outgoing
+            .send_server_notification(ServerNotification::InocodeAccountsUpdated(
+                InocodeAccountsUpdatedNotification {
+                    accounts: all_accounts(),
+                },
+            ))
+            .await;
+    }
+}
+
+/// The loopback sign-in. The browser opens `auth_url`; the redirect lands on a port of this
+/// machine; the code is exchanged for a key, which goes straight into the account pool.
+async fn deepai_login_start(
+    runtime: &'static Runtime,
+    login_id: String,
+    alias: String,
+    method: Option<InocodeAccountLoginMethod>,
+) -> Result<InocodeAccountsLoginStartResponse, JSONRPCErrorError> {
+    if !matches!(method, None | Some(InocodeAccountLoginMethod::Browser)) {
+        return Err(invalid_params(
+            "the deepai provider signs in with the browser only",
+        ));
+    }
+    // One sign-in at a time: a new one cancels the one still waiting.
+    {
+        let mut logins = runtime
+            .logins
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let stale: Vec<String> = logins
+            .iter()
+            .filter(|(_, pending)| matches!(pending, PendingLogin::DeepAiListener(_)))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in stale {
+            if let Some(PendingLogin::DeepAiListener(cancel)) = logins.remove(&id) {
+                cancel.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+    let pending = codex_inocode_deepai::signin::begin(&codex_inocode_deepai::base_url())
+        .await
+        .map_err(|err| internal_error(format!("failed to start the sign-in listener: {err}")))?;
+    let auth_url = pending.url.clone();
+    let cancel = Arc::new(AtomicBool::new(false));
+    register(runtime, &login_id, PendingLogin::DeepAiListener(Arc::clone(&cancel)));
+    let id = login_id.clone();
+    tokio::spawn(async move {
+        let result = match pending.wait_for_code(LOGIN_TIMEOUT, cancel).await {
+            Ok(code) => deepai_finish(&alias, &code).await,
+            Err(err) => Err(err.to_string()),
+        };
+        // The error text never contains the code, the state or a key.
+        finish_claude(id, result).await;
+    });
+    Ok(InocodeAccountsLoginStartResponse {
+        login_id,
+        auth_url: Some(auth_url),
+        verification_url: None,
+        user_code: None,
+        code_entry: false,
+    })
+}
+
+async fn deepai_finish(alias: &str, code: &str) -> Result<String, String> {
+    let exchanged = codex_inocode_deepai::signin::exchange(&codex_inocode_deepai::base_url(), code)
+        .await
+        .map_err(|error| codex_inocode_deepai::signin::exchange_failure_text(&error))?;
+    let pool = pool_of(DEEPAI).map_err(|_| "the account pool is not ready yet".to_string())?;
+    let view = pool
+        .add_api_key(alias, &exchanged.api_key, None)
+        .await
+        .map_err(|err| err.to_string())?;
+    if !exchanged.username.is_empty() {
+        let _ = pool.set_identity(&view.id, None, Some(exchanged.username.clone()));
+    }
+    deepai_states()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(
+            view.id.clone(),
+            InocodeAccountDeepAi {
+                key_id: codex_inocode_deepai::display_id(&exchanged.api_key),
+                is_pro: Some(exchanged.is_pro),
+                balance_status: InocodeDeepAiBalanceStatus::NotRead,
+                enabled: None,
+                balance: None,
+                granted: None,
+                refresh_at: None,
+                error: None,
+                error_code: None,
+                error_status: None,
+            },
+        );
+    tokio::spawn(refresh_deepai(/*manual*/ true));
+    Ok(view.id)
+}
+
 // ------------------------------------------------------------------ conversion
 
 fn to_account(view: AccountView) -> InocodeAccount {
+    let deepai = (view.provider == DEEPAI).then(|| deepai_state_of(&view.id));
     InocodeAccount {
         id: view.id,
         kind: match view.kind {
@@ -1312,6 +1625,7 @@ fn to_account(view: AccountView) -> InocodeAccount {
         last_used_at: view.last_used_at,
         in_use: view.in_use,
         is_default: view.is_default,
+        deepai,
     }
 }
 
@@ -1585,5 +1899,113 @@ mod tests {
             .is_err()
         );
         account_pool::install_global(None);
+    }
+
+    #[tokio::test]
+    async fn deepai_keys_are_checked_with_theos_and_the_balance_reaches_the_list_without_the_key() {
+        use codex_app_server_protocol::InocodeAccountsAddApiKeyParams;
+        use codex_app_server_protocol::InocodeAccountsListParams;
+        use codex_app_server_protocol::RequestId;
+        use wiremock::Mock;
+        use wiremock::MockServer;
+        use wiremock::ResponseTemplate;
+        use wiremock::matchers::header;
+        use wiremock::matchers::method;
+        use wiremock::matchers::path;
+
+        let server = MockServer::start().await;
+        // SAFETY: set before the first DeepAI request of this process; nothing else reads it.
+        unsafe { std::env::set_var("INOCODE_DEEPAI_TEST_ORIGIN", server.uri()) };
+        Mock::given(method("GET"))
+            .and(path("/deepai_code/theos"))
+            .and(header("api-key", "good-key-FAKE"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "enabled": true, "balance": "150.5", "granted": "200",
+                "refresh_at": "2026-11-13T00:00:00Z"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/deepai_code/theos"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "error": {"message": "Sign in", "type": "auth_required", "code": "auth_required"}
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/get_usage_summary"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"is_authenticated": true, "is_pro": false}),
+            ))
+            .mount(&server)
+            .await;
+
+        let home = tempfile::tempdir().expect("tempdir");
+        let env = PoolEnv {
+            codex_home: home.path().to_path_buf(),
+            mode: codex_login::AuthCredentialsStoreMode::File,
+            keyring: Default::default(),
+            chatgpt_base_url: None,
+            auth_route_config: codex_login::test_support::transport_default_auth_route_config(),
+        };
+        account_pool::install_global_for(
+            DEEPAI,
+            Some(AccountPool::open_group(env, DEEPAI, DEEPAI_DIR).await),
+        );
+        let add = |n: i64, key: &str| {
+            handle(ClientRequest::InocodeAccountsAddApiKey {
+                request_id: RequestId::Integer(n),
+                params: InocodeAccountsAddApiKeyParams {
+                    alias: "DeepAI".to_string(),
+                    api_key: key.to_string(),
+                    priority: None,
+                    provider: Some("deepai".to_string()),
+                },
+            })
+        };
+        // A key the server refuses is not stored; the text names the code and the status.
+        let refused = add(1, "bad-key-FAKE").await.expect_err("refused");
+        assert!(
+            refused.message.contains("HTTP 401") && refused.message.contains("auth_required"),
+            "{}",
+            refused.message
+        );
+        assert!(!refused.message.contains("bad-key-FAKE"));
+        assert!(pool_of(DEEPAI).expect("pool").list().is_empty());
+
+        let added = add(2, "good-key-FAKE").await.expect("added").expect("payload");
+        let added = serde_json::to_value(&added).expect("json");
+        assert_eq!(added["verification"]["status"], "verified");
+        assert!(!added.to_string().contains("good-key-FAKE"));
+        refresh_deepai(/*manual*/ true).await;
+        let list = handle(ClientRequest::InocodeAccountsList {
+            request_id: RequestId::Integer(3),
+            params: InocodeAccountsListParams { refresh: None },
+        })
+        .await
+        .expect("list")
+        .expect("payload");
+        let json = serde_json::to_string(&list).expect("json");
+        assert!(!json.contains("good-key-FAKE"), "{json}");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("value");
+        let account = value["accounts"]
+            .as_array()
+            .expect("accounts")
+            .iter()
+            .find(|a| a["provider"] == "deepai")
+            .expect("the deepai account");
+        let deepai = &account["deepai"];
+        assert_eq!(deepai["balance"], "150.5");
+        assert_eq!(deepai["granted"], "200");
+        assert_eq!(deepai["refreshAt"], "2026-11-13T00:00:00Z");
+        assert_eq!(deepai["balanceStatus"], "ok");
+        assert_eq!(deepai["isPro"], false);
+        assert_eq!(
+            deepai["keyId"],
+            codex_inocode_deepai::display_id("good-key-FAKE")
+        );
+        assert_eq!(group_of(Some("deepai")).expect("deepai"), DEEPAI);
+        assert!(providers().iter().any(|p| p.id == "deepai"));
+        account_pool::install_global_for(DEEPAI, None);
     }
 }

@@ -1,5 +1,6 @@
 pub mod account_pool;
 pub mod claude_oauth;
+pub mod key_check;
 pub mod auth;
 pub mod auth_env_telemetry;
 pub mod test_support;

@@ -86,6 +86,9 @@ const OPENAI_ACTOR_AUTHORIZATION_HEADER: &str = "x-openai-actor-authorization";
 pub const OPENAI_PROVIDER_ID: &str = "openai";
 /// The built-in Claude provider (Messages wire, signed in through the account pool's `claude` group).
 pub const CLAUDE_PROVIDER_ID: &str = "claude";
+/// The built-in DeepAI provider (free and Theos-metered models; `codex-inocode-deepai`).
+pub const DEEPAI_PROVIDER_ID: &str = "deepai";
+pub const DEEPAI_BASE_URL: &str = "https://api.deepai.org/deepai_code";
 pub const CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 pub const AMAZON_BEDROCK_PROVIDER_NAME: &str = "Amazon Bedrock";
 pub const AMAZON_BEDROCK_PROVIDER_ID: &str = "amazon-bedrock";
@@ -785,6 +788,7 @@ pub fn built_in_model_providers(
     [
         (OPENAI_PROVIDER_ID, openai_provider),
         (CLAUDE_PROVIDER_ID, create_claude_provider()),
+        (DEEPAI_PROVIDER_ID, create_deepai_provider()),
         (AMAZON_BEDROCK_PROVIDER_ID, amazon_bedrock_provider),
         (GCP_PROVIDER_ID, gcp_provider),
         (
@@ -860,7 +864,7 @@ pub fn merge_configured_model_providers(
                         .extend(http_headers_override);
                 }
             }
-        } else if key == CLAUDE_PROVIDER_ID {
+        } else if key == CLAUDE_PROVIDER_ID || key == DEEPAI_PROVIDER_ID {
             // The built-in Claude provider works without any configuration; an entry in
             // config.toml replaces it (another base URL, a key of its own).
             model_providers.insert(key, provider);
@@ -947,6 +951,23 @@ pub fn create_claude_provider() -> ModelProviderInfo {
         supports_standalone_web_search: false,
         include_internal_metadata: false,
         ..create_oss_provider_with_base_url("https://api.anthropic.com", WireApi::AnthropicMessages)
+    }
+}
+
+/// The built-in DeepAI provider. Models and the key come from the provider itself (the catalog is
+/// read live; the key is signed in or pasted into the account pool's `deepai` group), so no
+/// configuration is needed. Whether a model is called in the Responses or the Chat Completions
+/// format is decided per model by the catalog.
+pub fn create_deepai_provider() -> ModelProviderInfo {
+    ModelProviderInfo {
+        name: "DeepAI".into(),
+        base_url: Some(DEEPAI_BASE_URL.into()),
+        wire_api: WireApi::ChatCompletions,
+        requires_openai_auth: false,
+        supports_websockets: false,
+        supports_standalone_web_search: false,
+        include_internal_metadata: false,
+        ..create_oss_provider_with_base_url(DEEPAI_BASE_URL, WireApi::ChatCompletions)
     }
 }
 

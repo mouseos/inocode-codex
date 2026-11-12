@@ -533,6 +533,15 @@ impl ConfiguredModelProvider {
         )))
     }
 
+    /// The DeepAI catalog (live `GET /models`, a minimal fallback) for the built-in provider.
+    fn deepai_models_manager(&self) -> Option<SharedModelsManager> {
+        let base_url = self.info.base_url.clone()?;
+        if !codex_inocode_deepai::is_deepai_url(&base_url) || self.info.model_catalog_url.is_some() {
+            return None;
+        }
+        Some(Arc::new(crate::deepai_models::DeepAiModelsManager::new(base_url)))
+    }
+
     /// The account pool (when installed) picks which account's manager serves this request.
     /// Only the first-party sign-in path is pooled; providers with their own credentials
     /// (API key env var, command auth, cloud auth) keep theirs.
@@ -732,7 +741,9 @@ impl ModelProvider for ConfiguredModelProvider {
         config_model_catalog: Option<ModelsResponse>,
     ) -> SharedModelsManager {
         if config_model_catalog.is_none()
-            && let Some(manager) = self.claude_models_manager(Some(codex_home.clone()))
+            && let Some(manager) = self
+                .claude_models_manager(Some(codex_home.clone()))
+                .or_else(|| self.deepai_models_manager())
         {
             return manager;
         }
@@ -754,7 +765,10 @@ impl ModelProvider for ConfiguredModelProvider {
                 codex_models_manager::ModelOrigin::ExplicitConfig,
             ));
         }
-        if let Some(manager) = self.claude_models_manager(/*codex_home*/ None) {
+        if let Some(manager) = self
+            .claude_models_manager(/*codex_home*/ None)
+            .or_else(|| self.deepai_models_manager())
+        {
             return manager;
         }
         let endpoint = Arc::new(

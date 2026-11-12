@@ -14,6 +14,7 @@ use codex_app_server_protocol::InocodeModelEnrichment;
 use codex_app_server_protocol::InocodeModelPrice;
 use codex_app_server_protocol::InocodeModelScore;
 use codex_app_server_protocol::InocodeModelSource;
+use codex_app_server_protocol::InocodeModelTheos;
 use codex_app_server_protocol::InocodeModelsEnrichParams;
 use codex_app_server_protocol::InocodeModelsEnrichResponse;
 use codex_app_server_protocol::InocodeModelsPriceOverrideParams;
@@ -24,6 +25,7 @@ use codex_app_server_protocol::InocodePriceSource;
 use codex_app_server_protocol::InocodePriceTier;
 use codex_app_server_protocol::InocodeReferencePrice;
 use codex_inocode_model_catalog as catalog;
+use codex_inocode_stats::StatsStore;
 use std::path::Path;
 
 /// More models than the picker can hold; keeps one request bounded.
@@ -75,11 +77,27 @@ async fn enrich(
         refresh: params.refresh.unwrap_or(false),
         uses: params.uses,
     };
-    let result = catalog::Catalog::with_endpoints(home, endpoints)
+    // DeepAI models are free or cost Theos; the live catalog says which (read once if the
+    // process has not read it yet).
+    let wants_deepai = models
+        .iter()
+        .any(|model| model.provider == codex_inocode_deepai::PROVIDER_ID);
+    if wants_deepai && codex_inocode_deepai::catalog::current().is_none() {
+        match codex_inocode_deepai::catalog::fetch(&codex_inocode_deepai::base_url()).await {
+            Ok(read) => codex_inocode_deepai::catalog::remember(&read),
+            Err(error) => tracing::debug!("deepai model list read failed: {error}"),
+        }
+    }
+    let mut result = catalog::Catalog::with_endpoints(home, endpoints)
         .enrich(&models, &options)
         .await;
+    attach_measured(&mut result.models, &StatsStore::at(home));
+    // The main agent reads a short line per model when it chooses a model for delegated work.
+    for model in &result.models {
+        codex_inocode_advisor::set_model_hint(&model.model_id, hint_line(model));
+    }
     Ok(InocodeModelsEnrichResponse {
-        models: result.models.into_iter().map(to_model).collect(),
+        models: result.models.into_iter().map(to_model).map(with_theos).collect(),
         sources: result
             .sources
             .into_iter()
@@ -95,6 +113,91 @@ async fn enrich(
         stale: result.stale,
         use_map: result.use_map.into_iter().collect(),
     })
+}
+
+/// Two benchmark readings (best-ranked uses first) and the list price, as one short line:
+/// `Benchmarks: coding 71 (rank 3 of 40), speed 120 tok/s (rank 5 of 38). List price $1.25 in /
+/// $10 out per 1M tokens.` `None` when the model has neither.
+fn hint_line(model: &catalog::ModelEnrichment) -> Option<String> {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
+    for score in &model.scores {
+        if parts.len() == 2 {
+            break;
+        }
+        if seen.contains(&score.use_name.as_str()) {
+            continue;
+        }
+        seen.push(&score.use_name);
+        let unit = if score.unit.is_empty() { String::new() } else { format!(" {}", score.unit) };
+        parts.push(format!(
+            "{} {}{unit} (rank {} of {})",
+            score.use_name,
+            format!("{:.4}", score.value).trim_end_matches('0').trim_end_matches('.'),
+            score.rank,
+            score.n_models_in_metric
+        ));
+    }
+    let reference = &model.price.reference;
+    let price = match (reference.input, reference.output) {
+        (Some(input), Some(output)) => Some(format!(
+            "List price ${input} in / ${output} out per 1M tokens."
+        )),
+        _ => None,
+    };
+    match (parts.is_empty(), price) {
+        (true, None) => None,
+        (true, Some(price)) => Some(price),
+        (false, None) => Some(format!("Benchmarks: {}.", parts.join(", "))),
+        (false, Some(price)) => Some(format!("Benchmarks: {}. {price}", parts.join(", "))),
+    }
+}
+
+/// The Theos data of a DeepAI model, from the catalog the process last read. A model the catalog
+/// does not list gets none.
+fn with_theos(mut model: InocodeModelEnrichment) -> InocodeModelEnrichment {
+    if model.provider != codex_inocode_deepai::PROVIDER_ID {
+        return model;
+    }
+    let found = codex_inocode_deepai::catalog::current()
+        .and_then(|catalog| catalog.find(&model.model_id).cloned());
+    if let Some(found) = found {
+        model.price.billing = if found.is_free() {
+            "free".to_string()
+        } else if found.is_metered() {
+            "theos".to_string()
+        } else {
+            model.price.billing
+        };
+        model.theos = Some(InocodeModelTheos {
+            is_free: found.is_free(),
+            theos_per_request: found.theos_per_request.clone(),
+            premier: found.premier == Some(true),
+        });
+    }
+    model
+}
+
+/// How far back the recorded requests count toward a measured price.
+const MEASURED_WINDOW_DAYS: u64 = 30;
+
+/// Prices the recorded live requests of each model at its reference price.
+fn attach_measured(models: &mut [catalog::ModelEnrichment], store: &StatsStore) {
+    let since_ms = codex_inocode_stats::now_ms().saturating_sub(MEASURED_WINDOW_DAYS * 86_400_000);
+    let records = store.read_since(since_ms);
+    for model in models {
+        let usage: Vec<catalog::RequestUsage> = records
+            .iter()
+            .filter(|r| r.source == "live" && r.provider == model.provider && r.model == model.model_id)
+            .map(|r| catalog::RequestUsage {
+                ts_ms: r.ts_ms,
+                uncached_input: r.uncached_input,
+                cached_input: r.cached_input,
+                output: r.output,
+            })
+            .collect();
+        model.price.measured = catalog::measure(&model.price.reference, &usage, &model.price.billing);
+    }
 }
 
 fn to_model(model: catalog::ModelEnrichment) -> InocodeModelEnrichment {
@@ -162,6 +265,10 @@ fn to_model(model: catalog::ModelEnrichment) -> InocodeModelEnrichment {
                 basis: measured.basis,
                 observed_at: measured.observed_at,
                 n_samples: measured.n_samples,
+                total_cost_usd: measured.total_cost_usd,
+                uncached_input_tokens: measured.uncached_input_tokens,
+                cached_input_tokens: measured.cached_input_tokens,
+                output_tokens: measured.output_tokens,
             }),
             user_override: model.price.user_override.map(|user| InocodePriceOverride {
                 input: user.input,
@@ -172,6 +279,7 @@ fn to_model(model: catalog::ModelEnrichment) -> InocodeModelEnrichment {
             }),
             billing: model.price.billing,
         },
+        theos: None,
     }
 }
 
@@ -205,6 +313,66 @@ fn price_override(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hint_line_is_short_and_has_scores_and_the_list_price() {
+        let model = catalog::ModelEnrichment {
+            provider: "openai".into(),
+            model_id: "gpt-x".into(),
+            benchmark_match: None,
+            scores: vec![
+                catalog::Score {
+                    use_name: "coding".into(),
+                    metric: "m".into(),
+                    board: "b".into(),
+                    value: 71.5,
+                    unit: String::new(),
+                    setting: None,
+                    observed_at: None,
+                    source_url: None,
+                    n_models_in_metric: 40,
+                    rank: 3,
+                },
+                catalog::Score {
+                    use_name: "coding".into(),
+                    metric: "m2".into(),
+                    board: "b".into(),
+                    value: 60.0,
+                    unit: String::new(),
+                    setting: None,
+                    observed_at: None,
+                    source_url: None,
+                    n_models_in_metric: 40,
+                    rank: 9,
+                },
+            ],
+            price: catalog::Price {
+                reference: catalog::ReferencePrice {
+                    kind: catalog::PriceKind::PerTokenList,
+                    input: Some(1.25),
+                    output: Some(10.0),
+                    cache_read: None,
+                    cache_write: None,
+                    tiers: Vec::new(),
+                    source: None,
+                    fetched_at: None,
+                    source_data_date: None,
+                    reason: None,
+                },
+                measured: None,
+                user_override: None,
+                billing: "api".into(),
+            },
+        };
+        assert_eq!(
+            hint_line(&model).as_deref(),
+            Some("Benchmarks: coding 71.5 (rank 3 of 40). List price $1.25 in / $10 out per 1M tokens.")
+        );
+        let mut bare = model.clone();
+        bare.scores.clear();
+        bare.price.reference.input = None;
+        assert_eq!(hint_line(&bare), None);
+    }
     use codex_app_server_protocol::InocodeModelRef;
     use pretty_assertions::assert_eq;
     use wiremock::Mock;

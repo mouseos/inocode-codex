@@ -30,7 +30,14 @@ async fn announce(sess: &Session, turn_context: &TurnContext, event: &SwitchEven
 
 /// The pool that serves this turn's provider.
 fn pool_for(turn_context: &TurnContext) -> Option<Arc<AccountPool>> {
+    let is_deepai = turn_context
+        .config
+        .model_provider
+        .base_url
+        .as_deref()
+        .is_some_and(codex_inocode_deepai::is_deepai_url);
     let group = match turn_context.config.model_provider.wire_api {
+        _ if is_deepai => codex_inocode_deepai::PROVIDER_ID,
         WireApi::AnthropicMessages => crate::claude_auth::CLAUDE_GROUP,
         _ => "openai",
     };

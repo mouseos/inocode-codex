@@ -34,6 +34,7 @@ pub use turn_metadata::detached_memory_responses_metadata;
 mod codex_thread;
 mod account_pool_hook;
 mod claude_auth;
+mod deepai_client;
 mod inocode_loop;
 mod inocode_rollout_spill;
 pub mod inocode_message_ref;
