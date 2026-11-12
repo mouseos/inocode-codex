@@ -174,6 +174,25 @@ fn with_theos(mut model: InocodeModelEnrichment) -> InocodeModelEnrichment {
             theos_per_request: found.theos_per_request.clone(),
             premier: found.premier == Some(true),
         });
+        // A model paid for in Theos has no per-token price: the list price of the upstream model
+        // and a cost worked out from it would be numbers that mean nothing here. Benchmarks stay.
+        if matches!(model.price.billing.as_str(), "free" | "theos") {
+            model.price.reference = InocodeReferencePrice {
+                kind: InocodePriceKind::Unknown,
+                unit: "usd_per_1m_tokens".to_string(),
+                reference: true,
+                input: None,
+                output: None,
+                cache_read: None,
+                cache_write: None,
+                tiers: Vec::new(),
+                source: None,
+                fetched_at: None,
+                source_data_date: None,
+                reason: Some("billed_in_theos".to_string()),
+            };
+            model.price.measured = None;
+        }
     }
     model
 }
@@ -456,5 +475,78 @@ mod tests {
         assert_eq!(catalog::read_overrides(home.path()).len(), 1);
         price_override(home.path(), set(None)).expect("clear");
         assert_eq!(catalog::read_overrides(home.path()).len(), 0);
+    }
+
+    #[test]
+    fn a_theos_model_has_no_list_price_or_measured_cost_but_keeps_its_benchmarks() {
+        let catalog = codex_inocode_deepai::catalog::parse(
+            r#"{"models":[
+              {"id":"free-one","name":"F","input":["text"],"contextWindow":10,"maxTokens":5,"theosPerRequest":"0","premier":false},
+              {"id":"paid-one","name":"P","input":["text"],"contextWindow":10,"maxTokens":5,"theosPerRequest":"10","premier":true}
+            ]}"#,
+        )
+        .expect("catalog");
+        codex_inocode_deepai::catalog::remember(&catalog);
+        let priced = |provider: &str, id: &str| InocodeModelEnrichment {
+            provider: provider.to_string(),
+            model_id: id.to_string(),
+            benchmark_match: None,
+            scores: vec![InocodeModelScore {
+                use_name: "coding".to_string(),
+                metric: "m".to_string(),
+                board: "b".to_string(),
+                value: 1.0,
+                unit: "points".to_string(),
+                setting: None,
+                observed_at: None,
+                source_url: None,
+                n_models_in_metric: 2,
+                rank: 1,
+            }],
+            price: InocodeModelPrice {
+                reference: InocodeReferencePrice {
+                    kind: InocodePriceKind::PerTokenList,
+                    unit: "usd_per_1m_tokens".to_string(),
+                    reference: true,
+                    input: Some(1.0),
+                    output: Some(2.0),
+                    cache_read: None,
+                    cache_write: None,
+                    tiers: Vec::new(),
+                    source: None,
+                    fetched_at: None,
+                    source_data_date: None,
+                    reason: None,
+                },
+                measured: Some(InocodeMeasuredPrice {
+                    input: Some(1.0),
+                    output: Some(2.0),
+                    upper_bound: false,
+                    basis: "x".to_string(),
+                    observed_at: None,
+                    n_samples: Some(1),
+                    total_cost_usd: Some(0.5),
+                    uncached_input_tokens: None,
+                    cached_input_tokens: None,
+                    output_tokens: None,
+                }),
+                user_override: None,
+                billing: "unknown".to_string(),
+            },
+            theos: None,
+        };
+        for id in ["free-one", "paid-one"] {
+            let out = with_theos(priced("deepai", id));
+            assert!(out.theos.is_some());
+            assert_eq!(out.price.reference.kind, InocodePriceKind::Unknown);
+            assert_eq!(out.price.reference.input, None);
+            assert_eq!(out.price.reference.reason.as_deref(), Some("billed_in_theos"));
+            assert!(out.price.measured.is_none());
+            assert_eq!(out.scores.len(), 1, "benchmarks stay");
+        }
+        // Another provider's model keeps its price and measured cost.
+        let other = with_theos(priced("openai", "free-one"));
+        assert_eq!(other.price.reference.kind, InocodePriceKind::PerTokenList);
+        assert!(other.price.measured.is_some());
     }
 }
