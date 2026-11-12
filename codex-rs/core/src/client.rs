@@ -1188,6 +1188,9 @@ impl ModelClient {
             });
         }
         let is_openai = self.state.provider.info().is_openai();
+        if !is_openai {
+            crate::client_common::agent_messages_as_plain_messages(&mut input);
+        }
         // These prompt-only items are rebuilt on every request. Hash their visible payloads
         // within the thread so retries and resumed sessions preserve their identity.
         let prefix_namespace = Uuid::new_v5(

@@ -141,6 +141,79 @@ impl Drop for ResponseStream {
     }
 }
 
+/// Providers other than OpenAI's own backend do not know the `agent_message` item type and
+/// answer with an error for the whole request. A message between agents (a reply, the advisor, the
+/// host's facts) is sent to them as a plain user message that says who sent it. A message whose
+/// text only the OpenAI backend can read (encrypted) has nothing to send and is left out.
+pub(crate) fn agent_messages_as_plain_messages(input: &mut Vec<ResponseItem>) {
+    use codex_protocol::models::AgentMessageInputContent;
+    let items = std::mem::take(input);
+    for item in items {
+        match item {
+            ResponseItem::AgentMessage {
+                id,
+                author,
+                recipient,
+                content,
+                internal_chat_message_metadata_passthrough,
+            } => {
+                let Some(text) = codex_protocol::models::plaintext_agent_message_content(&content)
+                else {
+                    // Encrypted parts cannot be read here; keep the readable ones, if any.
+                    let readable: Vec<&str> = content
+                        .iter()
+                        .filter_map(|part| match part {
+                            AgentMessageInputContent::InputText { text } => Some(text.as_str()),
+                            AgentMessageInputContent::EncryptedContent { .. } => None,
+                        })
+                        .collect();
+                    if readable.is_empty() {
+                        continue;
+                    }
+                    input.push(plain_message(
+                        id,
+                        &author,
+                        &recipient,
+                        &readable.join("\n"),
+                        internal_chat_message_metadata_passthrough,
+                    ));
+                    continue;
+                };
+                input.push(plain_message(
+                    id,
+                    &author,
+                    &recipient,
+                    &text,
+                    internal_chat_message_metadata_passthrough,
+                ));
+            }
+            other => input.push(other),
+        }
+    }
+}
+
+fn plain_message(
+    id: Option<codex_protocol::ResponseItemId>,
+    author: &str,
+    recipient: &str,
+    text: &str,
+    internal_chat_message_metadata_passthrough: Option<
+        codex_protocol::models::InternalChatMessageMetadataPassthrough,
+    >,
+) -> ResponseItem {
+    ResponseItem::Message {
+        encrypted_content: None,
+        status: None,
+        id,
+        role: "user".to_string(),
+        content: vec![ContentItem::InputText {
+            text: format!("[message from {author} to {recipient}]\n{text}"),
+        }],
+        phase: None,
+        internal_chat_message_metadata_passthrough,
+    }
+}
+
 #[cfg(test)]
 #[path = "client_common_tests.rs"]
 mod tests;

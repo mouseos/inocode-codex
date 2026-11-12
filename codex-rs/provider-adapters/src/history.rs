@@ -5,7 +5,8 @@
 //! * Consecutive assistant output (reasoning, assistant messages, function calls) is one
 //!   [`Turn::Assistant`], in order.
 //! * A `function_call_output` becomes a [`Turn::ToolResult`].
-//! * Items that have no wire form (tool search, additional tools, agent messages) are dropped.
+//! * A message between agents becomes a user message that says who sent it.
+//! * Items that have no wire form (additional tools and the like) are dropped.
 
 use crate::envelope::Envelope;
 use crate::ir::AssistantPart;
@@ -14,6 +15,7 @@ use crate::ir::Thinking;
 use crate::ir::ToolCall;
 use crate::ir::ToolResult;
 use crate::ir::Turn;
+use codex_protocol::models::AgentMessageInputContent;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputContentItem;
@@ -181,6 +183,31 @@ pub fn turns_from_items(items: &[ResponseItem]) -> Vec<Turn> {
                     is_error: output.success == Some(false),
                 }));
             }
+            // A message between agents (an advisor's note, a reply, the host's facts) reaches these
+            // providers as a user message that says who sent it. Encrypted text cannot be read here.
+            ResponseItem::AgentMessage {
+                author,
+                recipient,
+                content,
+                ..
+            } => {
+                let text: Vec<&str> = content
+                    .iter()
+                    .filter_map(|part| match part {
+                        AgentMessageInputContent::InputText { text } => Some(text.as_str()),
+                        AgentMessageInputContent::EncryptedContent { .. } => None,
+                    })
+                    .collect();
+                if !text.is_empty() {
+                    flush(&mut turns, &mut assistant);
+                    turns.push(Turn::User(vec![Part::Text(format!(
+                        "[message from {author} to {recipient}]
+{}",
+                        text.join("
+")
+                    ))]));
+                }
+            }
             _ => {}
         }
     }
@@ -251,6 +278,23 @@ mod tests {
 
     fn items(value: serde_json::Value) -> Vec<ResponseItem> {
         serde_json::from_value(value).expect("items")
+    }
+
+    #[test]
+    fn a_message_between_agents_becomes_a_user_message() {
+        let turns = turns_from_items(&items(json!([
+            {"type": "agent_message", "author": "/root/advisor", "recipient": "/root",
+             "content": [{"type": "input_text", "text": "try another way"}]},
+            {"type": "agent_message", "author": "/root/x", "recipient": "/root",
+             "content": [{"type": "encrypted_content", "encrypted_content": "zz"}]}
+        ])));
+        assert_eq!(
+            turns,
+            vec![Turn::User(vec![Part::Text(
+                "[message from /root/advisor to /root]
+try another way".to_string()
+            )])]
+        );
     }
 
     #[test]

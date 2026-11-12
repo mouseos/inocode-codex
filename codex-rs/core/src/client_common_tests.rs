@@ -272,3 +272,37 @@ fn serializes_flex_service_tier_when_set() {
         Some("flex")
     );
 }
+
+#[test]
+fn agent_messages_become_plain_user_messages_for_providers_that_do_not_know_the_type() {
+    use codex_protocol::models::AgentMessageInputContent;
+    let agent = |text: AgentMessageInputContent| ResponseItem::AgentMessage {
+        id: None,
+        author: "/root/advisor".to_string(),
+        recipient: "/root".to_string(),
+        content: vec![text],
+        internal_chat_message_metadata_passthrough: None,
+    };
+    let mut input = vec![
+        agent(AgentMessageInputContent::InputText {
+            text: "try another way".to_string(),
+        }),
+        agent(AgentMessageInputContent::EncryptedContent {
+            encrypted_content: "xyz".to_string(),
+        }),
+        ResponseItem::Other,
+    ];
+    agent_messages_as_plain_messages(&mut input);
+    assert_eq!(input.len(), 2);
+    let ResponseItem::Message { role, content, .. } = &input[0] else {
+        panic!("a plain message");
+    };
+    assert_eq!(role, "user");
+    assert_eq!(
+        content,
+        &vec![ContentItem::InputText {
+            text: "[message from /root/advisor to /root]\ntry another way".to_string()
+        }]
+    );
+    assert!(matches!(input[1], ResponseItem::Other));
+}
