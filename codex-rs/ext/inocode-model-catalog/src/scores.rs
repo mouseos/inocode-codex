@@ -5,8 +5,8 @@ use crate::Match;
 use crate::ModelRef;
 use crate::cache::Fetcher;
 use crate::cache::get_json;
-use crate::normalize::normalize_model;
-use crate::normalize::source_provider;
+use crate::resolve::Resolved;
+use crate::resolve::resolve;
 use crate::normalize::split_provider;
 use crate::usemap::valid_metric;
 use serde::Deserialize;
@@ -126,19 +126,26 @@ pub(crate) async fn load_board(
     board
 }
 
-fn matches_model(row: &RawScore, model: &ModelRef) -> Option<&'static str> {
-    let provider = source_provider(&model.provider);
+/// The row is the model the lookup resolved to (see `resolve`).
+fn matches_model(row: &RawScore, resolved: &Resolved) -> Option<&'static str> {
     let (row_provider, row_model) = split_provider(&row.model_id);
-    if row_provider.map(str::to_ascii_lowercase).as_deref() != Some(provider.as_str()) {
-        return None;
+    (row_provider.map(str::to_ascii_lowercase).as_deref() == Some(resolved.provider.as_str())
+        && row_model == resolved.model)
+        .then_some(resolved.how)
+}
+
+/// The model ids the board lists for one provider.
+fn board_ids(board: &Board, provider: &str) -> Vec<String> {
+    let mut ids: BTreeSet<String> = BTreeSet::new();
+    for rows in board.metrics.values() {
+        for row in rows {
+            let (row_provider, row_model) = split_provider(&row.model_id);
+            if row_provider.map(str::to_ascii_lowercase).as_deref() == Some(provider) {
+                ids.insert(row_model.to_string());
+            }
+        }
     }
-    if row_model == model.model_id {
-        Some("exact")
-    } else if normalize_model(row_model) == normalize_model(&model.model_id) {
-        Some("normalized_id")
-    } else {
-        None
-    }
+    ids.into_iter().collect()
 }
 
 fn better(metric: &str, a: f64, b: f64) -> bool {
@@ -152,6 +159,9 @@ pub(crate) fn scores_for(
 ) -> (Option<Match>, Vec<Score>) {
     let mut found: Option<Match> = None;
     let mut out = Vec::new();
+    let Some(resolved) = resolve(model, &|provider| board_ids(board, provider)) else {
+        return (found, out);
+    };
     for (use_name, metrics) in wanted {
         for metric in metrics {
             let Some(rows) = board.metrics.get(metric) else {
@@ -159,7 +169,7 @@ pub(crate) fn scores_for(
             };
             let mine: Vec<(&RawScore, &'static str)> = rows
                 .iter()
-                .filter_map(|row| matches_model(row, model).map(|how| (row, how)))
+                .filter_map(|row| matches_model(row, &resolved).map(|how| (row, how)))
                 .collect();
             if mine.is_empty() {
                 continue;

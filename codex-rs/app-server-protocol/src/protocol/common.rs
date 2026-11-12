@@ -834,6 +834,12 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeAccountsRemoveResponse,
     },
+    #[experimental("inocode/accounts/update")]
+    InocodeAccountsUpdate => "inocode/accounts/update" {
+        params: v2::InocodeAccountsUpdateParams,
+        serialization: None,
+        response: v2::InocodeAccountsUpdateResponse,
+    },
     #[experimental("inocode/accounts/rename")]
     InocodeAccountsRename => "inocode/accounts/rename" {
         params: v2::InocodeAccountsRenameParams,
@@ -887,6 +893,12 @@ client_request_definitions! {
         params: v2::InocodeModelsEnrichParams,
         serialization: None,
         response: v2::InocodeModelsEnrichResponse,
+    },
+    #[experimental("inocode/models/refresh")]
+    InocodeModelsRefresh => "inocode/models/refresh" {
+        params: v2::InocodeModelsRefreshParams,
+        serialization: None,
+        response: v2::InocodeModelsRefreshResponse,
     },
     #[experimental("inocode/models/priceOverride")]
     InocodeModelsPriceOverride => "inocode/models/priceOverride" {

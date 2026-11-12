@@ -11,8 +11,6 @@ use crate::ModelRef;
 use crate::PriceOverride;
 use crate::cache::Fetcher;
 use crate::cache::get_json;
-use crate::normalize::normalize_model;
-use crate::normalize::source_provider;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -302,15 +300,20 @@ pub(crate) fn reference_for(
     let Some(table) = table else {
         return unknown("not_fetched", None);
     };
-    let provider = source_provider(&model.provider);
-    let Some(rows) = table.get(&provider) else {
+    // The provider as given, or (for a gateway's model) the provider its name belongs to.
+    let Some(resolved) = crate::resolve::resolve(model, &|provider| {
+        table
+            .get(provider)
+            .map(|rows| rows.keys().cloned().collect())
+            .unwrap_or_default()
+    }) else {
         return unknown("not_listed", fetched_at);
     };
-    let wanted = normalize_model(&model.model_id);
-    let found = rows
-        .get_key_value(&model.model_id)
-        .or_else(|| rows.iter().find(|(key, _)| normalize_model(key) == wanted));
-    let Some((key, row)) = found else {
+    let provider = resolved.provider.clone();
+    let Some((key, row)) = table
+        .get(&provider)
+        .and_then(|rows| rows.get_key_value(&resolved.model))
+    else {
         return unknown("not_listed", fetched_at);
     };
     if row.input == 0.0 && row.output == 0.0 {

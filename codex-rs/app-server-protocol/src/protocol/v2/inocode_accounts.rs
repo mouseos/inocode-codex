@@ -788,3 +788,35 @@ pub struct InocodeAccountsResetCreditConsumeResponse {
     /// Shortcut for `usage.resetCredit`.
     pub reset_credit: Option<InocodeAccountResetCredit>,
 }
+
+/// Changes an account: its name, its priority, and (API-key accounts only) its key. Anything
+/// omitted stays as it is. A new key is checked at the provider like `addApiKey` does (a refusal
+/// stops the update); the account then has a new `id` (the id follows the key) with the same
+/// name, priority and on/off state.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeAccountsUpdateParams {
+    pub id: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub alias: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub priority: Option<i32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeAccountsUpdateResponse {
+    /// The account after the change (its `id` is new when the key was replaced).
+    pub account: InocodeAccount,
+    /// Present when a new key was given.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub verification: Option<InocodeKeyVerification>,
+}

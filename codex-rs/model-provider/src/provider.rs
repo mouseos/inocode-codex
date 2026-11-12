@@ -783,6 +783,11 @@ impl ModelProvider for ConfiguredModelProvider {
         let manager = OpenAiModelsManager::with_settings(settings, endpoint, auth_manager);
         match &self.info.model_catalog_url {
             Some(_) => Arc::new(manager.with_provider_catalog()),
+            // A provider you configured yourself lists its own models (`GET {base_url}/models`);
+            // what it had before stays as the fallback.
+            None if crate::compat_models::applies_to(&self.info) => Arc::new(
+                crate::compat_models::CompatModelsManager::new(self.info.clone(), Arc::new(manager)),
+            ),
             None => Arc::new(manager),
         }
     }

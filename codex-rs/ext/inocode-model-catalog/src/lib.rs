@@ -22,6 +22,7 @@ mod cache;
 mod normalize;
 mod overrides;
 mod price;
+mod resolve;
 mod scores;
 mod usemap;
 

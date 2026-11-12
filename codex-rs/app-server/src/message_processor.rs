@@ -1261,6 +1261,7 @@ impl MessageProcessor {
             | ClientRequest::InocodeAccountsRemove { .. }
             | ClientRequest::InocodeAccountsRename { .. }
             | ClientRequest::InocodeAccountsSetPriority { .. }
+            | ClientRequest::InocodeAccountsUpdate { .. }
             | ClientRequest::InocodeAccountsSetEnabled { .. }
             | ClientRequest::InocodeAccountsUse { .. }
             | ClientRequest::InocodeAccountsLoginStart { .. }
@@ -1816,6 +1817,9 @@ impl MessageProcessor {
                 self.catalog_processor.model_list(params).await
             }
             ClientRequest::ExperimentalFeatureList { params, .. } => {
+            ClientRequest::InocodeModelsRefresh { params, .. } => {
+                self.catalog_processor.inocode_models_refresh(params).await
+            }
                 self.catalog_processor
                     .experimental_feature_list(params)
                     .await

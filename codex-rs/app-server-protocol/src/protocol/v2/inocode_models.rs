@@ -339,3 +339,33 @@ pub struct InocodePriceOverrideValue {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct InocodeModelsPriceOverrideResponse {}
+
+/// Reads a provider's model list again from the provider (the cached list is not used), and
+/// answers with what it holds now. For a provider that cannot be reached, the list it had is
+/// answered (nothing is emptied).
+#[derive(Serialize, Deserialize, Debug, Default, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeModelsRefreshParams {
+    /// The provider's id (`openai`, `claude`, `deepai`, or one from `config.toml`). Omitted: the
+    /// app-server's current provider.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub model_provider: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeRefreshedModel {
+    pub id: String,
+    pub display_name: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeModelsRefreshResponse {
+    pub model_provider: String,
+    pub models: Vec<InocodeRefreshedModel>,
+}

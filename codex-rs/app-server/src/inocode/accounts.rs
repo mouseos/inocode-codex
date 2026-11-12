@@ -827,6 +827,9 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
                 .map_err(client_error)?;
             Ok(Some(InocodeAccountsRemoveResponse {}.into()))
         }
+        ClientRequest::InocodeAccountsUpdate { params, .. } => {
+            Ok(Some(account_update(params).await?.into()))
+        }
         ClientRequest::InocodeAccountsRename { params, .. } => {
             pool_with(&params.id)?
                 .rename(&params.id, &params.alias)
@@ -915,6 +918,68 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
         )),
         other => Err(unknown_method(other.method_name())),
     }
+}
+
+/// `inocode/accounts/update`: name, priority, and (API-key accounts) a new key.
+async fn account_update(
+    params: codex_app_server_protocol::InocodeAccountsUpdateParams,
+) -> Result<codex_app_server_protocol::InocodeAccountsUpdateResponse, JSONRPCErrorError> {
+    let pool = pool_with(&params.id)?;
+    let view = pool
+        .list()
+        .into_iter()
+        .find(|view| view.id == params.id)
+        .ok_or_else(|| invalid_request("unknown account"))?;
+    let new_key = params
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty());
+    if new_key.is_some() && (view.kind != AccountKind::ApiKey || view.is_default) {
+        return Err(invalid_request(
+            "only the key of an API-key account can be replaced; sign in again for other accounts",
+        ));
+    }
+    let group = group_of(Some(view.provider.as_str()))?;
+    // The new key is checked first: a refusal changes nothing.
+    let verification = match new_key {
+        Some(key) => Some(verify_key(group, &pool, key).await?),
+        None => None,
+    };
+    let mut id = view.id.clone();
+    if let Some(key) = new_key {
+        let alias = params.alias.clone().unwrap_or_else(|| view.alias.clone());
+        let priority = params.priority.unwrap_or(view.priority);
+        let added = pool
+            .add_api_key(&alias, key, Some(priority))
+            .await
+            .map_err(client_error)?;
+        pool.remove(&view.id).await.map_err(client_error)?;
+        if view.state == AccountState::Disabled {
+            pool.set_enabled(&added.id, false).map_err(client_error)?;
+        }
+        id = added.id;
+        if group == DEEPAI {
+            tokio::spawn(refresh_deepai(/*manual*/ false));
+        }
+    } else {
+        if let Some(alias) = &params.alias {
+            pool.rename(&id, alias).map_err(client_error)?;
+        }
+        if let Some(priority) = params.priority {
+            pool.set_priority(&id, priority).map_err(client_error)?;
+        }
+    }
+    let account = pool
+        .list()
+        .into_iter()
+        .find(|view| view.id == id)
+        .map(to_account)
+        .ok_or_else(|| internal_error("the account is gone after the update"))?;
+    Ok(codex_app_server_protocol::InocodeAccountsUpdateResponse {
+        account,
+        verification,
+    })
 }
 
 /// Checks an API key with one light authenticated read at its provider.
@@ -1760,6 +1825,9 @@ mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
+    /// Tests that install the process-wide OpenAI pool take turns.
+    static OPENAI_POOL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[test]
     fn policy_round_trips_through_the_wire_type() {
         let policy = AccountPolicy::default();
@@ -1809,6 +1877,7 @@ mod tests {
         use codex_app_server_protocol::InocodeAccountsUseParams;
         use codex_app_server_protocol::RequestId;
 
+        let _turn = OPENAI_POOL.lock().await;
         let home = tempfile::tempdir().expect("tempdir");
         let primary =
             AuthManager::from_auth_for_testing(CodexAuth::from_api_key("sk-test-FAKE-handler-main"));
@@ -2007,5 +2076,90 @@ mod tests {
         assert_eq!(group_of(Some("deepai")).expect("deepai"), DEEPAI);
         assert!(providers().iter().any(|p| p.id == "deepai"));
         account_pool::install_global_for(DEEPAI, None);
+    }
+
+    #[tokio::test]
+    async fn an_api_key_account_can_be_renamed_and_its_key_replaced_without_losing_its_settings() {
+        use codex_app_server_protocol::InocodeAccountsAddApiKeyParams;
+        use codex_app_server_protocol::InocodeAccountsUpdateParams;
+        use codex_app_server_protocol::RequestId;
+
+        let _turn = OPENAI_POOL.lock().await;
+        let home = tempfile::tempdir().expect("tempdir");
+        let primary =
+            AuthManager::from_auth_for_testing(CodexAuth::from_api_key("sk-test-FAKE-update-main"));
+        let env = PoolEnv {
+            codex_home: home.path().to_path_buf(),
+            mode: codex_login::AuthCredentialsStoreMode::File,
+            keyring: Default::default(),
+            chatgpt_base_url: None,
+            auth_route_config: codex_login::test_support::transport_default_auth_route_config(),
+        };
+        account_pool::install_global(Some(AccountPool::open(env, primary).await));
+        let added = handle(ClientRequest::InocodeAccountsAddApiKey {
+            request_id: RequestId::Integer(1),
+            params: InocodeAccountsAddApiKeyParams {
+                alias: "旧".to_string(),
+                api_key: "sk-test-FAKE-update-old".to_string(),
+                priority: Some(7),
+                provider: None,
+            },
+        })
+        .await
+        .expect("add")
+        .expect("payload");
+        let old_id = serde_json::to_value(&added).expect("json")["account"]["id"]
+            .as_str()
+            .expect("id")
+            .to_string();
+        let update = |n: i64, alias: Option<&str>, key: Option<&str>| {
+            handle(ClientRequest::InocodeAccountsUpdate {
+                request_id: RequestId::Integer(n),
+                params: InocodeAccountsUpdateParams {
+                    id: old_id.clone(),
+                    alias: alias.map(str::to_string),
+                    api_key: key.map(str::to_string),
+                    priority: None,
+                },
+            })
+        };
+        // A name change keeps the id.
+        let renamed = serde_json::to_value(
+            update(2, Some("新"), None).await.expect("rename").expect("payload"),
+        )
+        .expect("json");
+        assert_eq!(renamed["account"]["alias"], "新");
+        assert_eq!(renamed["account"]["id"], old_id.as_str());
+        // A new key replaces the account: new id, same name and priority, the old one is gone.
+        let replaced = serde_json::to_value(
+            update(3, None, Some("sk-test-FAKE-update-new"))
+                .await
+                .expect("replace")
+                .expect("payload"),
+        )
+        .expect("json");
+        assert!(!replaced.to_string().contains("sk-test-FAKE"));
+        assert_eq!(replaced["account"]["alias"], "新");
+        assert_eq!(replaced["account"]["priority"], 7);
+        assert_ne!(replaced["account"]["id"], old_id.as_str());
+        assert_eq!(replaced["verification"]["status"], "unverified");
+        let ids: Vec<String> = pool().expect("pool").list().into_iter().map(|v| v.id).collect();
+        assert!(!ids.contains(&old_id), "{ids:?}");
+        // The default login's key is not replaceable this way.
+        let default_id = ids.iter().find(|id| id.as_str() == "default").cloned();
+        if let Some(default_id) = default_id {
+            let refused = handle(ClientRequest::InocodeAccountsUpdate {
+                request_id: RequestId::Integer(4),
+                params: InocodeAccountsUpdateParams {
+                    id: default_id,
+                    alias: None,
+                    api_key: Some("sk-test-FAKE-x".to_string()),
+                    priority: None,
+                },
+            })
+            .await;
+            assert!(refused.is_err());
+        }
+        account_pool::install_global(None);
     }
 }

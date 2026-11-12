@@ -179,6 +179,62 @@ impl CatalogRequestProcessor {
         &self,
         params: ModelListParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        self.model_list_with(
+            params,
+            codex_models_manager::manager::RefreshStrategy::OnlineIfUncached,
+        )
+        .await
+        .map(|response| Some(response.into()))
+    }
+
+    /// `inocode/models/refresh`: the provider's list, read again from the provider.
+    pub(crate) async fn inocode_models_refresh(
+        &self,
+        params: codex_app_server_protocol::InocodeModelsRefreshParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let response = self
+            .model_list_with(
+                ModelListParams {
+                    model_provider: params.model_provider.clone(),
+                    cursor: None,
+                    limit: None,
+                    include_hidden: Some(false),
+                },
+                codex_models_manager::manager::RefreshStrategy::Online,
+            )
+            .await?;
+        let provider = match params.model_provider {
+            Some(provider) => provider,
+            None => self
+                .model_catalog
+                .current()
+                .await
+                .map_err(|err| config_load_error(&err))?
+                .0
+                .model_provider_id
+                .clone(),
+        };
+        Ok(Some(
+            codex_app_server_protocol::InocodeModelsRefreshResponse {
+                model_provider: provider,
+                models: response
+                    .data
+                    .into_iter()
+                    .map(|model| codex_app_server_protocol::InocodeRefreshedModel {
+                        id: model.model,
+                        display_name: model.display_name,
+                    })
+                    .collect(),
+            }
+            .into(),
+        ))
+    }
+
+    async fn model_list_with(
+        &self,
+        params: ModelListParams,
+        strategy: codex_models_manager::manager::RefreshStrategy,
+    ) -> Result<ModelListResponse, JSONRPCErrorError> {
         let (active_config, active_models_manager) = self
             .model_catalog
             .current()
@@ -235,9 +291,8 @@ impl CatalogRequestProcessor {
                 return Err(invalid_request(error.to_string()));
             }
         }
-        self.list_models(params, config, models_manager)
+        self.list_models(params, config, models_manager, strategy)
             .await
-            .map(|response| Some(response.into()))
     }
 
     pub(crate) async fn experimental_feature_list(
@@ -306,6 +361,7 @@ impl CatalogRequestProcessor {
         params: ModelListParams,
         config: Arc<Config>,
         models_manager: codex_models_manager::manager::SharedModelsManager,
+        strategy: codex_models_manager::manager::RefreshStrategy,
     ) -> Result<ModelListResponse, JSONRPCErrorError> {
         let ModelListParams {
             limit,
@@ -319,7 +375,7 @@ impl CatalogRequestProcessor {
             .list_models_from_snapshot(
                 config,
                 models_manager,
-                codex_models_manager::manager::RefreshStrategy::OnlineIfUncached,
+                strategy,
             )
             .await
             .map_err(|err| config_load_error(&err))?;
