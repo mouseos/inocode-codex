@@ -33,3 +33,9 @@ InoCode は openai/codex (Apache-2.0) のスナップショットから独立し
 - 置換以外の変更があるファイル(240 件。追加と削除を除く)は、確認できた範囲(tui、sdk、utils、protocol、exec、config、login、rollout、shell-command、codex-api、model-provider)で、機能のコミット(アカウント、検索、goal、端末の監視、rollout のメモリ予算、強制削除など)に対応。
   core と app-server-protocol の 160 件は、コミット件名の確認まで行っていない(ファイル名の一覧のみ)。無関係な変更は見つかっていない。
 - 上流への影響が大きい点(見直す余地): `.github` の削除 31 ファイル、`core` の snapshot 約 50 ファイルの更新(名前の置換と web search の削除に由来)。
+
+## TUI を含まないサーバー(GUI 用)
+- GUI が起動するのは `inocode-app-server`(`codex-rs/app-server` の bin、tui を含まない)。`inocode.exe`(`codex-cli`、tui を含む)は、見つからないときの代わり。
+  ビルド: `cargo build --profile dev-small -p codex-app-server --bin inocode-app-server`。起動: `inocode-app-server --listen stdio://`(`inocode app-server` と同じ引数、サブコマンドなし)。
+- TUI のコード(`codex-rs/tui`、`codex-cli` の対話モード、`cloud-tasks`)は、そのまま tree に残している。復活・利用は、ふつうの cargo の手順:
+  `cargo build --profile dev-small -p codex-cli --bin inocode`(tui を含む完全な CLI)。feature での切り離しは、差分が大きいので行っていない。
