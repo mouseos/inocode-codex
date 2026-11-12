@@ -16,8 +16,8 @@ Settings:
   text: {"verbosity":"low"}
   tool_choice: "auto"
 -- request 1 (turn) --
-00:additional_tools/developer (2; hash=83f2fe8848cc7baa):
-        - namespace/functions; hash=9125c2c3087bc5de
+00:additional_tools/developer (2; hash=82ca874183ee5df7):
+        - namespace/functions; hash=566bb09f1871b6a3
           - function/exec_command
           - function/write_stdin
           - function/terminal_status
@@ -29,6 +29,7 @@ Settings:
           - function/verify_evidence_document
           - function/search_knowledge
           - function/read_knowledge
+          - function/kb_propose
           - custom/apply_patch
           - function/view_image
         - tool_search: # Tool discovery  Searches over deferred tool metadata with BM25 and exposes matching tools for t...; args=[limit, query]; hash=b573ed69c0b0e6c7
@@ -65,8 +66,8 @@ Settings:
 ## Window 2 (after request 3: input diverged at item 00)
 Settings: same as window 1
 -- request 4 (turn) --
-00:additional_tools/developer (2; hash=f80a060b3438ede1):
-        - namespace/functions; hash=42886db581967f6f
+00:additional_tools/developer (2; hash=bd9beb255ed22a32):
+        - namespace/functions; hash=9e8d9a01378bdcd8
           - function/update_plan
           - function/request_user_input
           - function/request_permissions
@@ -76,6 +77,7 @@ Settings: same as window 1
           - function/verify_evidence_document
           - function/search_knowledge
           - function/read_knowledge
+          - function/kb_propose
           - custom/apply_patch
           - function/view_image
         - tool_search: # Tool discovery  Searches over deferred tool metadata with BM25 and exposes matching tools for t...; args=[limit, query]; hash=b573ed69c0b0e6c7

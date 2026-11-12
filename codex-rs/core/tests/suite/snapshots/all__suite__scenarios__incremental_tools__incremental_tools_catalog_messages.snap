@@ -16,8 +16,8 @@ Settings:
   text: {"verbosity":"low"}
   tool_choice: "auto"
 -- request 1 (turn) --
-00:additional_tools/developer (3; hash=5d4519409e49b006):
-        - namespace/functions; hash=c299b5acafdf9969
+00:additional_tools/developer (3; hash=8517fa2b128337a9):
+        - namespace/functions; hash=8bbc1a8762ecfeda
           - function/exec_command
           - function/write_stdin
           - function/terminal_status
@@ -32,6 +32,7 @@ Settings:
           - function/verify_evidence_document
           - function/search_knowledge
           - function/read_knowledge
+          - function/kb_propose
           - custom/apply_patch
           - function/view_image
         - namespace/multi_agent_v1: Tools for spawning and managing sub-agents.; hash=c1c4fb5cd967cba4

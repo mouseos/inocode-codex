@@ -409,3 +409,79 @@ fn candidates_wait_for_the_user_and_register_on_approval() {
     ok("candidate/approve", json!({ "cwd": cwd, "id": c }));
     assert!(ok("overview/read", json!({ "cwd": cwd }))["text"].as_str().unwrap().contains("小さく直す"));
 }
+
+#[test]
+fn the_model_proposes_and_only_the_user_registers() {
+    let (d, cwd) = project();
+    let root = d.path();
+    let failure = |title: &str, extra: Value| {
+        let mut a = json!({ "kind": "failure", "title": title, "body": "adb shell が失敗した",
+            "conditions": "fastboot の最中だった", "attempted": "adb shell", "outcome": "exit 1: device offline",
+            "avoid": "fastboot の間は adb shell を使わない", "source": "https://example.com/adb", "checked_at": "2026-11-13" });
+        a.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        a
+    };
+    // a failure without conditions, attempted or outcome is refused with a reason
+    let no_cond = propose(root, &failure("x", json!({ "conditions": null })), "model:t");
+    assert_eq!(no_cond["status"], "denied");
+    assert!(no_cond["reason"].as_str().unwrap().contains("conditions"));
+    assert_eq!(propose(root, &json!({ "kind": "failure", "title": "t", "body": "b", "conditions": "x" }), "m")["status"], "denied");
+    assert_eq!(propose(root, &json!({ "kind": "idea", "title": "t", "body": "b" }), "m")["status"], "denied");
+    // a candidate, not a registration
+    let ok = propose(root, &failure("adb shell は fastboot 中に失敗する", json!({})), "model:t");
+    assert_eq!((ok["status"].as_str(), ok["requiresApproval"].as_bool(), ok["kind"].as_str()), (Some("candidate"), Some(true), Some("failureCase")));
+    assert_eq!(ok["id"], "cand-0001");
+    let store = guard_store(&cwd);
+    assert!(store.all(Some(Scope::Project)).iter().all(|r| r.kind != Kind::FailureCase), "nothing is registered yet");
+    // the same proposal again is refused while it waits
+    let again = propose(root, &failure("adb shell は fastboot 中に失敗する", json!({})), "model:t");
+    assert_eq!(again["status"], "denied");
+    assert!(again["reason"].as_str().unwrap().contains("cand-0001"));
+    // "unknown" conditions are accepted and said so
+    let unknown = propose(root, &failure("別の失敗", json!({ "conditions": "unknown", "attempted": "cargo build", "outcome": "OOM" })), "m");
+    assert_eq!(unknown["status"], "candidate");
+    // approval registers the failure case as the user's verified record, with the conditions
+    let done = ok_call("candidate/approve", json!({ "cwd": cwd, "id": "cand-0001" }));
+    assert_eq!(done["status"], "registered");
+    let rec = store.all(Some(Scope::Project)).into_iter().find(|r| r.kind == Kind::FailureCase).unwrap();
+    assert_eq!(rec.conditions.as_deref(), Some("fastboot の最中だった"));
+    assert_eq!(rec.attempted.as_deref(), Some("adb shell"));
+    assert_eq!(rec.status, Status::Verified);
+    assert!(!is_candidate(&rec));
+    assert!(rec.source.as_deref().unwrap().contains("2026-11-13"));
+    // approving the "unknown" one records that the conditions were not established
+    ok_call("candidate/approve", json!({ "cwd": cwd, "id": "cand-0002" }));
+    let unk = store.all(Some(Scope::Project)).into_iter().find(|r| r.title == "別の失敗").unwrap();
+    assert_eq!((unk.conditions_known, unk.conditions), (Some(false), None));
+    // a similar record that exists makes the next proposal an update of it
+    let upd = propose(root, &failure("adb shell は fastboot 中に失敗する", json!({ "outcome": "exit 1 (again)" })), "m");
+    assert_eq!(upd["op"], "update");
+    assert_eq!(upd["updates"], rec.id.as_str());
+    ok_call("candidate/approve", json!({ "cwd": cwd, "id": upd["id"] }));
+    let all: Vec<_> = store.all(Some(Scope::Project)).into_iter().filter(|r| r.title.starts_with("adb shell")).collect();
+    assert!(all.iter().any(|r| r.status == Status::Superseded) && all.iter().any(|r| r.status == Status::Verified && r.outcome.as_deref() == Some("exit 1 (again)")));
+
+    // a page draft and a fact: approved ones become confirmed pages
+    let page = propose(root, &json!({ "kind": "page", "title": "ビルドの手順", "body": "#手順\nlock を取って cargo を 1 本ずつ走らせる" }), "m");
+    assert_eq!(page["kind"], "page");
+    let fact = propose(root, &json!({ "kind": "fact", "title": "ビルドは Windows だけ", "body": "他の OS では確認していない", "source": "AGENTS.md" }), "m");
+    assert_eq!(fact["status"], "candidate");
+    assert_eq!(ok_call("page/list", json!({ "cwd": cwd }))["pages"].as_array().unwrap().len(), 0, "nothing registered yet");
+    ok_call("candidate/approve", json!({ "cwd": cwd, "id": page["id"] }));
+    ok_call("candidate/approve", json!({ "cwd": cwd, "id": fact["id"] }));
+    let pages = ok_call("page/list", json!({ "cwd": cwd }));
+    assert_eq!(pages["pages"].as_array().unwrap().len(), 2);
+    let r = ok_call("page/read", json!({ "cwd": cwd, "title": "ビルドは Windows だけ" }));
+    assert_eq!(r["confirmed"], true);
+    assert!(r["tags"].as_array().unwrap().iter().any(|t| t == "fact"));
+    assert!(r["body"].as_str().unwrap().contains("Source: AGENTS.md"));
+    // a page that exists becomes an update proposal; the approved update keeps the history
+    let again = propose(root, &json!({ "kind": "page", "title": "ビルドの手順", "body": "更新後の本文" }), "m");
+    assert_eq!(again["op"], "update");
+    ok_call("candidate/approve", json!({ "cwd": cwd, "id": again["id"] }));
+    assert_eq!(ok_call("page/read", json!({ "cwd": cwd, "title": "ビルドの手順" }))["revs"].as_array().unwrap().len(), 2);
+}
+
+fn ok_call(method: &str, params: Value) -> Value {
+    ok(method, params)
+}

@@ -630,7 +630,8 @@ fn page_write(p: &Value) -> R {
     }
     meta.title = title.clone();
     meta.by = by.to_string();
-    meta.confirmed = by == "user" && confirm;
+    // The user approving a candidate is the confirmation (approvedBy is set by candidate/approve only).
+    meta.confirmed = (by == "user" && confirm) || str_of(p, "approvedBy") == Some("user");
     meta.updated_at = at.clone();
     let page = Page { meta: meta.clone(), body: body.clone() };
     let rev = page.rev();
@@ -1548,9 +1549,13 @@ fn inbox(dirs: &Dirs) -> PathBuf {
 /// A proposal the model made. Only the user approves or rejects it (the model has no way to).
 /// `kind`: `checklistItem` (payload: role, text, when, check) or `overviewAppend` (payload: text).
 pub fn add_candidate(root: &Path, kind: &str, title: &str, payload: Value, by: &str) -> Result<String, KbError> {
+    add_candidate_op(root, kind, "add", title, payload, by)
+}
+
+fn add_candidate_op(root: &Path, kind: &str, op: &str, title: &str, payload: Value, by: &str) -> Result<String, KbError> {
     let dirs = Dirs { root: root.to_path_buf(), home: crate::inocode_home() };
-    if !matches!(kind, "checklistItem" | "overviewAppend") {
-        return Err(invalid("kind must be checklistItem or overviewAppend"));
+    if !matches!(kind, "checklistItem" | "overviewAppend" | "failureCase" | "page" | "fact") {
+        return Err(invalid("unknown kind of candidate"));
     }
     let existing: Vec<String> = std::fs::read_dir(inbox(&dirs))
         .into_iter()
@@ -1559,7 +1564,7 @@ pub fn add_candidate(root: &Path, kind: &str, title: &str, payload: Value, by: &
         .filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().into_owned()))
         .collect();
     let id = next_number("cand", existing.into_iter());
-    let doc = json!({ "id": id, "kind": kind, "op": "add", "title": title, "by": by, "at": now(), "payload": payload });
+    let doc = json!({ "id": id, "kind": kind, "op": op, "title": title, "by": by, "at": now(), "payload": payload });
     write_text(&inbox(&dirs).join(format!("{id}.json")), &serde_json::to_string_pretty(&doc).unwrap_or_default())?;
     Ok(id)
 }
@@ -1567,6 +1572,8 @@ pub fn add_candidate(root: &Path, kind: &str, title: &str, payload: Value, by: &
 fn candidate_target(kind: &str, payload: &Value) -> Value {
     match kind {
         "checklistItem" => json!({ "tab": "knowledge", "sub": "checklist", "ref": str_of(payload, "role") }),
+        "failureCase" => json!({ "tab": "knowledge", "sub": "failures", "ref": str_of(payload, "title") }),
+        "page" | "fact" => json!({ "tab": "evidence", "sub": "pages", "ref": str_of(payload, "title") }),
         _ => json!({ "tab": "knowledge", "sub": "overview", "ref": null }),
     }
 }
@@ -1645,10 +1652,162 @@ fn candidate_approve(p: &Value) -> R {
             write_text(&dirs.overview(), &format!("{current}{sep}{add}\n"))?;
             ("overview".to_string(), candidate_target(kind, &payload))
         }
+        "failureCase" => {
+            let store = legacy_store(&dirs);
+            let (project_id, _, _, _) = ensure_project(&dirs);
+            let mut rec = match str_of(&payload, "updates").and_then(|old| store.read(Scope::Project, old)) {
+                Some(old) => old,
+                None => crate::record::Record::new(Kind::FailureCase, need_str(&c, "title")?),
+            };
+            rec.title = need_str(&c, "title")?.to_string();
+            rec.status = Status::Verified;
+            rec.created_by = Some("model".to_string());
+            rec.project = project_id;
+            rec.attempted = str_of(&payload, "attempted").map(str::to_string);
+            rec.outcome = str_of(&payload, "outcome").map(str::to_string);
+            rec.symptom = rec.outcome.clone();
+            rec.do_not = str_of(&payload, "avoid").map(str::to_string);
+            rec.cause = str_of(&payload, "cause").map(str::to_string);
+            rec.cause_confidence = rec.cause.as_ref().map(|_| "hypothesis".to_string());
+            let conditions = str_of(&payload, "conditions").unwrap_or("");
+            if payload.get("conditionsKnown").and_then(Value::as_bool) == Some(false) {
+                rec.conditions = None;
+                rec.conditions_known = Some(false);
+                rec.unknown_conditions = vec!["conditions were not established when it failed".to_string()];
+            } else {
+                rec.conditions = Some(conditions.to_string());
+                rec.conditions_known = None;
+            }
+            rec.source = str_of(&payload, "source").map(|s| match str_of(&payload, "checkedAt") {
+                Some(d) => format!("{s} (checked {d})"),
+                None => s.to_string(),
+            });
+            rec.body = str_of(&payload, "body").unwrap_or("").to_string();
+            let new_id = store.write(rec).map_err(io)?;
+            (new_id, candidate_target(kind, &json!({ "title": str_of(&c, "title") })))
+        }
+        "page" | "fact" => {
+            let title = need_str(&c, "title")?.to_string();
+            let mut body = str_of(&payload, "body").unwrap_or("").to_string();
+            if kind == "fact" && !tags_in(&body).iter().any(|t| t == "fact") {
+                body = format!("#fact\n{body}");
+            }
+            if let Some(source) = str_of(&payload, "source") {
+                body.push_str(&format!("\n\nSource: {source}"));
+                if let Some(d) = str_of(&payload, "checkedAt") {
+                    body.push_str(&format!(" (checked {d})"));
+                }
+            }
+            let base = load_page(&page_path(&dirs, &title)).map(|pg| pg.rev());
+            let mut params = json!({
+                "cwd": dirs.root.to_string_lossy(), "title": title, "body": body,
+                "by": "model", "approvedBy": "user",
+            });
+            if let Some(b) = base {
+                params["baseRev"] = json!(b);
+            }
+            page_write(&params)?;
+            (title.clone(), candidate_target(kind, &json!({ "title": title })))
+        }
         _ => return Err(invalid("this kind of candidate cannot be approved yet")),
     };
     finish_candidate(&dirs, id, "approved")?;
     Ok(json!({ "status": "registered", "target": target, "id": new_id }))
+}
+
+fn norm_title(t: &str) -> String {
+    t.chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// The model proposes a record (failure, page draft or fact). It is stored as a candidate that the
+/// user approves; nothing is registered by this call. Always returns the result card: `status` is
+/// `candidate`, or `denied` with a reason the model can fix. A similar record that already exists
+/// turns the proposal into an update of it.
+pub fn propose(root: &Path, args: &Value, by: &str) -> Value {
+    let kind_name = str_of(args, "kind").unwrap_or("");
+    let denied = |reason: &str| {
+        json!({
+            "kind": kind_name, "op": "create", "status": "denied", "requiresApproval": false, "reason": reason,
+        })
+    };
+    let (kind, record_kind) = match kind_name {
+        "failure" => ("failure", "failureCase"),
+        "page" => ("page", "page"),
+        "fact" => ("fact", "fact"),
+        _ => return denied("kind must be failure, page or fact"),
+    };
+    let text = |key: &str| str_of(args, key).map(str::trim).filter(|s| !s.is_empty());
+    let Some(title) = text("title") else { return denied("title is required") };
+    let Some(body) = text("body") else { return denied("body is required") };
+    if title.chars().count() > 200 {
+        return denied("the title must be one short line (200 characters at most)");
+    }
+    let dirs = Dirs { root: root.to_path_buf(), home: crate::inocode_home() };
+    let (project_id, _, _, ready) = ensure_project(&dirs);
+    let Some(project_id) = project_id.filter(|_| ready) else {
+        return denied("the project id could not be created (is the project folder writable?)");
+    };
+    let mut payload = json!({
+        "title": title, "body": body, "projectId": project_id,
+        "source": text("source"), "checkedAt": text("checked_at"),
+    });
+    let mut existing: Option<String> = None;
+    if kind == "failure" {
+        let Some(conditions) = text("conditions") else {
+            return denied("conditions are required: the situation, environment and state it failed in; write `unknown` if you do not know");
+        };
+        let Some(attempted) = text("attempted") else { return denied("attempted is required: what was run") };
+        let Some(outcome) = text("outcome") else { return denied("outcome is required: what happened") };
+        let unknown = matches!(conditions.to_lowercase().as_str(), "unknown" | "条件不明" | "不明");
+        payload["conditions"] = json!(if unknown { "条件不明" } else { conditions });
+        payload["conditionsKnown"] = json!(!unknown);
+        payload["attempted"] = json!(attempted);
+        payload["outcome"] = json!(outcome);
+        payload["avoid"] = json!(text("avoid"));
+        payload["cause"] = json!(text("cause"));
+        let store = legacy_store(&dirs);
+        existing = store
+            .all(Some(Scope::Project))
+            .into_iter()
+            .find(|r| {
+                r.kind == Kind::FailureCase
+                    && r.status.is_live()
+                    && !is_candidate(r)
+                    && (norm_title(&r.title) == norm_title(title)
+                        || (r.attempted.as_deref().map(norm_title) == Some(norm_title(attempted))
+                            && r.conditions.as_deref().map(norm_title) == Some(norm_title(conditions))))
+            })
+            .map(|r| r.id);
+    } else {
+        existing = load_page(&page_path(&dirs, title)).map(|pg| pg.meta.title);
+    }
+    // The same proposal waiting already
+    let waiting = std::fs::read_dir(inbox(&dirs))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        .filter_map(|e| read_text(&e.path()).and_then(|t| serde_json::from_str::<Value>(&t).ok()))
+        .find(|c| str_of(c, "kind") == Some(record_kind) && norm_title(str_of(c, "title").unwrap_or("")) == norm_title(title));
+    if let Some(w) = waiting {
+        return denied(&format!("this was already proposed and waits for the user ({})", str_of(&w, "id").unwrap_or("")));
+    }
+    let op = if existing.is_some() { "update" } else { "add" };
+    if let Some(old) = &existing {
+        payload["updates"] = json!(old);
+    }
+    match add_candidate_op(root, record_kind, op, title, payload.clone(), by) {
+        Ok(id) => json!({
+            "kind": record_kind, "op": if existing.is_some() { "update" } else { "create" }, "id": id, "title": title,
+            "status": "candidate", "requiresApproval": true,
+            "target": candidate_target(record_kind, &json!({ "title": title })),
+            "updates": existing,
+        }),
+        Err(e) => denied(&e.message),
+    }
 }
 
 fn candidate_reject(p: &Value) -> R {

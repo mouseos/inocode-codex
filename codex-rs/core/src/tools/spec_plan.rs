@@ -16,6 +16,7 @@ use crate::tools::handlers::ExecCommandHandlerOptions;
 use crate::tools::handlers::GetContextRemainingHandler;
 use crate::tools::handlers::ReadMessageHandler;
 use crate::tools::handlers::RecordEvidenceHandler;
+use crate::tools::handlers::KbProposeHandler;
 use crate::tools::handlers::ReadKnowledgeHandler;
 use crate::tools::handlers::SearchEvidenceHandler;
 use crate::tools::handlers::SearchKnowledgeHandler;
@@ -1391,6 +1392,7 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
     if codex_inocode_flags::load().knowledge_enabled {
         registry.add(SearchKnowledgeHandler);
         registry.add(ReadKnowledgeHandler);
+        registry.add(KbProposeHandler);
     }
 
     let current_time_reminder_enabled = features.enabled(Feature::CurrentTimeReminder);
