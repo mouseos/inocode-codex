@@ -2257,6 +2257,793 @@ class InitializeParams(BaseModel):
     client_info: Annotated[ClientInfo, Field(alias="clientInfo")]
 
 
+class InocodeAccountKindValue(Enum):
+    chatgpt = "chatgpt"
+    api_key = "apiKey"
+
+
+class InocodeAccountKind(RootModel[InocodeAccountKindValue | Literal["claudeOauth"]]):
+    root: Annotated[
+        InocodeAccountKindValue | Literal["claudeOauth"],
+        Field(
+            description="Which kind of credential an entry holds. Other providers plug in here later."
+        ),
+    ]
+
+
+class InocodeAccountLoginMethodValue(Enum):
+    browser = "browser"
+    device_code = "deviceCode"
+
+
+class InocodeAccountLoginMethod(RootModel[InocodeAccountLoginMethodValue | Literal["oauthCode"]]):
+    root: InocodeAccountLoginMethodValue | Literal["oauthCode"]
+
+
+class InocodeAccountResetGrant(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    clears: Annotated[
+        list[str],
+        Field(
+            description="The windows the grant clears: `five_hour`, `seven_day`, `seven_day_overage_included`."
+        ),
+    ]
+    ends_at: Annotated[
+        int | None,
+        Field(alias="endsAt", description="Unix seconds; `null` when the grant does not expire."),
+    ] = None
+    id: str
+    label: str
+    paused: bool
+    resets_left: Annotated[int, Field(alias="resetsLeft")]
+    resets_total: Annotated[int, Field(alias="resetsTotal")]
+    usable_now: Annotated[bool, Field(alias="usableNow")]
+
+
+class InocodeAccountSelection(Enum):
+    round_robin = "roundRobin"
+    quota = "quota"
+    fill_first = "fillFirst"
+
+
+class InocodeAccountState(Enum):
+    active = "active"
+    cooldown = "cooldown"
+    disabled = "disabled"
+
+
+class InocodeAccountSwitchReason(Enum):
+    threshold = "threshold"
+    limit_reached = "limitReached"
+    manual = "manual"
+
+
+class InocodeAccountUsageWindow(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    resets_at: Annotated[int | None, Field(alias="resetsAt", description="Unix seconds.")] = None
+    used_percent: Annotated[float, Field(alias="usedPercent", description="0-100.")]
+    window_minutes: Annotated[int | None, Field(alias="windowMinutes")] = None
+
+
+class InocodeAccountWindowKindValue(Enum):
+    five_hour = "fiveHour"
+    weekly = "weekly"
+
+
+class InocodeAccountWindowKind(RootModel[InocodeAccountWindowKindValue | Literal["both"]]):
+    root: InocodeAccountWindowKindValue | Literal["both"]
+
+
+class InocodeAccountsLoginCompletedNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    account_id: Annotated[
+        str | None, Field(alias="accountId", description="The new entry's id on success.")
+    ] = None
+    error: str | None = None
+    login_id: Annotated[str, Field(alias="loginId")]
+    success: bool
+
+
+class InocodeAccountsSwitchedNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    from_alias: Annotated[
+        str | None,
+        Field(alias="fromAlias", description="Alias of the account used before; `null` when none."),
+    ] = None
+    reason: InocodeAccountSwitchReason
+    thread_id: Annotated[str | None, Field(alias="threadId")] = None
+    to_alias: Annotated[str, Field(alias="toAlias")]
+
+
+class InocodeAdvisorEventKind(Enum):
+    stall = "stall"
+    advice = "advice"
+    error = "error"
+
+
+class InocodeAdvisorTrigger(Enum):
+    same_failure = "same_failure"
+    repeated_action = "repeated_action"
+    alternation = "alternation"
+    no_progress = "no_progress"
+
+
+class InocodeApiKeyOrder(Enum):
+    after_chatgpt = "afterChatgpt"
+    before_chatgpt = "beforeChatgpt"
+    mixed = "mixed"
+
+
+class InocodeBenchmarkMatch(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    matched_by: Annotated[str, Field(alias="matchedBy", description="`exact` or `normalized_id`.")]
+    source: Annotated[str, Field(description="`llmbenchmark`.")]
+    source_id: Annotated[
+        str,
+        Field(
+            alias="sourceId",
+            description="The model's id in that source (`anthropic/claude-sonnet-5.5`).",
+        ),
+    ]
+
+
+class InocodeCompactionEventKind(Enum):
+    completed = "completed"
+    failed = "failed"
+    breaker_tripped = "breakerTripped"
+
+
+class InocodeCompactionEventNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    auto: bool
+    consecutive_failures: Annotated[int, Field(alias="consecutiveFailures", ge=0)]
+    kind: InocodeCompactionEventKind
+    pinned_rule_ids: Annotated[list[str], Field(alias="pinnedRuleIds")]
+    reason: str
+    reattached_files: Annotated[list[str], Field(alias="reattachedFiles")]
+    thread_id: Annotated[str, Field(alias="threadId")]
+
+
+class InocodeEvidenceClaimEvidence(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    quote: str
+    source_title: Annotated[str, Field(alias="sourceTitle")]
+    span_id: Annotated[str, Field(alias="spanId")]
+
+
+class InocodeEvidenceEdgeKind(Enum):
+    supports = "supports"
+    premise = "premise"
+    cites = "cites"
+
+
+class InocodeEvidenceFindingKind(Enum):
+    quote_missing = "quote_missing"
+    uncited = "uncited"
+    novel_term = "novel_term"
+
+
+class InocodeEvidenceGraphEdge(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    from_: Annotated[str, Field(alias="from")]
+    kind: InocodeEvidenceEdgeKind
+    to: str
+
+
+class InocodeEvidenceNodeKind(Enum):
+    claim = "claim"
+    span = "span"
+    source = "source"
+
+
+class InocodeEvidenceSource(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    hash: str
+    id: str
+    kind: str
+    retrieved_at: Annotated[str, Field(alias="retrievedAt")]
+    title: str
+    version: str | None = None
+
+
+class InocodeEvidenceSpan(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    end: Annotated[int, Field(ge=0)]
+    id: str
+    quote: str
+    source_id: Annotated[str, Field(alias="sourceId")]
+    start: Annotated[
+        int, Field(description="Character offsets into the source text; `end` is exclusive.", ge=0)
+    ]
+
+
+class InocodeEvidenceTextPosition(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    end: Annotated[int, Field(ge=0)]
+    start: Annotated[int, Field(ge=0)]
+
+
+class InocodeGoalEvidenceItem(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    detail: Annotated[str, Field(description="The path, the command line, or the observed text.")]
+    exit_code: Annotated[int | None, Field(alias="exitCode")] = None
+    kind: Annotated[str, Field(description="`file`, `command`, `output` or `other`.")]
+
+
+class InocodeGoalHostFact(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    detail: Annotated[
+        str,
+        Field(
+            description="The command line, or the paths a patch touched, verbatim from the call's arguments."
+        ),
+    ]
+    exit_code: Annotated[
+        int | None,
+        Field(
+            alias="exitCode",
+            description="Null means unknown: the host's outcome carries no exit code today.",
+        ),
+    ] = None
+    kind: Annotated[str, Field(description="`command`, `file_change`, `mcp` or `other`.")]
+    outcome: Annotated[
+        str, Field(description="`completed`, `failed`, `blocked`, `aborted` or `unknown`.")
+    ]
+    success: Annotated[
+        bool | None, Field(description="The tool output's own success marker; null when unknown.")
+    ] = None
+    tool: str
+
+
+class InocodeGoalRequirementReport(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    claim: Annotated[str, Field(description="The model's own claim about it.")]
+    evidence: list[InocodeGoalEvidenceItem]
+    requirement: str
+
+
+class InocodeGuardResult(Enum):
+    blocked = "blocked"
+    warned = "warned"
+
+
+class InocodeKnowledgeConfidence(Enum):
+    high = "high"
+    medium = "medium"
+    low = "low"
+
+
+class InocodeKnowledgeKind(Enum):
+    rule = "rule"
+    failure_case = "failure_case"
+    issue = "issue"
+    decision = "decision"
+    fact = "fact"
+    contract = "contract"
+    procedure = "procedure"
+
+
+class InocodeKnowledgeScope(Enum):
+    project = "project"
+    global_ = "global"
+
+
+class InocodeKnowledgeStatus(Enum):
+    unverified = "unverified"
+    verified = "verified"
+    superseded = "superseded"
+    retracted = "retracted"
+
+
+class InocodeKnowledgeSummary(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    confidence: InocodeKnowledgeConfidence
+    created_by: Annotated[str | None, Field(alias="createdBy")] = None
+    id: str
+    kind: InocodeKnowledgeKind
+    scope: InocodeKnowledgeScope
+    status: InocodeKnowledgeStatus
+    summary: str
+    title: str
+    updated_at: Annotated[str, Field(alias="updatedAt")]
+
+
+class InocodeMeasuredPrice(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    basis: str
+    input: float | None = None
+    n_samples: Annotated[int | None, Field(alias="nSamples", ge=0)] = None
+    observed_at: Annotated[int | None, Field(alias="observedAt")] = None
+    output: float | None = None
+    upper_bound: Annotated[bool, Field(alias="upperBound")]
+
+
+class InocodeMessageConfidence(Enum):
+    high = "high"
+    med = "med"
+    low = "low"
+
+
+class InocodeMessageField(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    key: str
+    value: str
+
+
+class InocodeMessageKind(Enum):
+    ask = "ASK"
+    answer = "ANSWER"
+    blocked = "BLOCKED"
+    result = "RESULT"
+    handoff = "HANDOFF"
+
+
+class InocodeMessageRoleValue(Enum):
+    user = "user"
+    assistant = "assistant"
+    tool = "tool"
+
+
+class InocodeMessageRole(RootModel[InocodeMessageRoleValue | Literal["agent"]]):
+    root: InocodeMessageRoleValue | Literal["agent"]
+
+
+class InocodeMetricsBucket(Enum):
+    hour = "hour"
+    day = "day"
+
+
+class InocodeMetricsCounters(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    clarifications: int
+    false_positives: Annotated[int, Field(alias="falsePositives")]
+    stalls_detected: Annotated[int, Field(alias="stallsDetected")]
+    tokens_in: Annotated[int, Field(alias="tokensIn")]
+    tokens_out: Annotated[int, Field(alias="tokensOut")]
+    wait_agent_calls: Annotated[int, Field(alias="waitAgentCalls")]
+    wall_clock_ms: Annotated[int, Field(alias="wallClockMs")]
+
+
+class InocodeMetricsHistoryBucket(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    counters: InocodeMetricsCounters
+    start_ms: Annotated[int, Field(alias="startMs")]
+
+
+class InocodeMetricsThread(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    counters: InocodeMetricsCounters
+    thread_id: Annotated[str, Field(alias="threadId")]
+
+
+class InocodeModelRef(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    auth_kind: Annotated[
+        str | None,
+        Field(
+            alias="authKind",
+            description="`chatgpt`, `claudeOauth` or `apiKey`: how the model is paid for. Only a display hint.",
+        ),
+    ] = None
+    model_id: Annotated[
+        str,
+        Field(
+            alias="modelId",
+            description="The model id as the provider names it (`claude-sonnet-5-5`).",
+        ),
+    ]
+    provider: Annotated[str, Field(description="InoCode's provider id (`openai`, `claude`, ...).")]
+
+
+class InocodeModelScore(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    board: Annotated[
+        str, Field(description="The benchmark the value comes from (`livebench`, `epoch`, ...).")
+    ]
+    metric: str
+    n_models_in_metric: Annotated[
+        int,
+        Field(
+            alias="nModelsInMetric",
+            description="How many models have a value for this metric.",
+            ge=0,
+        ),
+    ]
+    observed_at: Annotated[str | None, Field(alias="observedAt")] = None
+    rank: Annotated[
+        int,
+        Field(
+            description="1 = best among those models. Only values of one metric are comparable.",
+            ge=0,
+        ),
+    ]
+    setting: Annotated[
+        str | None, Field(description="The measurement condition; for speed, the serving provider.")
+    ] = None
+    source_url: Annotated[str | None, Field(alias="sourceUrl")] = None
+    unit: Annotated[str, Field(description="`ratio`, `points`, `elo`, `count`, `usd`, ...")]
+    use: Annotated[
+        str,
+        Field(
+            description="The use this metric answers. A metric listed under two uses appears once per use."
+        ),
+    ]
+    value: float
+
+
+class InocodeModelSource(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    attribution: Annotated[
+        str | None,
+        Field(description="Show this text where the data is shown (CC BY 4.0 requires it)."),
+    ] = None
+    license: str
+    name: str
+    url: str
+
+
+class InocodeParamKind(Enum):
+    int = "int"
+    float = "float"
+    string = "string"
+    enum = "enum"
+
+
+class InocodeParamValue(RootModel[float | str]):
+    root: float | str
+
+
+class InocodeParsedMessage(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    conf: InocodeMessageConfidence
+    fields: list[InocodeMessageField]
+    kind: InocodeMessageKind
+
+
+class InocodePriceKind(Enum):
+    per_token_list = "per_token_list"
+    unknown = "unknown"
+
+
+class InocodePriceOverride(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    cache_read: Annotated[float | None, Field(alias="cacheRead")] = None
+    cache_write: Annotated[float | None, Field(alias="cacheWrite")] = None
+    input: float | None = None
+    output: float | None = None
+    set_at: Annotated[int, Field(alias="setAt")]
+
+
+class InocodePriceOverrideValue(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    cache_read: Annotated[float | None, Field(alias="cacheRead")] = None
+    cache_write: Annotated[float | None, Field(alias="cacheWrite")] = None
+    input: float | None = None
+    output: float | None = None
+
+
+class InocodePriceSource(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    name: str
+    path: str | None = None
+    url: str
+
+
+class InocodePriceTier(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    above_prompt_tokens: Annotated[int, Field(alias="abovePromptTokens")]
+    cache_read: Annotated[float | None, Field(alias="cacheRead")] = None
+    cache_write: Annotated[float | None, Field(alias="cacheWrite")] = None
+    input: float | None = None
+    output: float | None = None
+
+
+class InocodeProviderWire(Enum):
+    responses = "responses"
+    chat = "chat"
+    anthropic = "anthropic"
+
+
+class InocodeReferencePrice(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    cache_read: Annotated[float | None, Field(alias="cacheRead")] = None
+    cache_write: Annotated[float | None, Field(alias="cacheWrite")] = None
+    fetched_at: Annotated[int | None, Field(alias="fetchedAt", description="Unix seconds.")] = None
+    input: float | None = None
+    kind: InocodePriceKind
+    output: float | None = None
+    reason: Annotated[
+        str | None,
+        Field(
+            description="For `unknown`: `not_fetched`, `not_listed` or `zero_cost_not_free` (a cost of 0 is not free: subscription providers list 0)."
+        ),
+    ] = None
+    reference: Annotated[bool, Field(description="Always true: this is a reference price.")]
+    source: InocodePriceSource | None = None
+    source_data_date: Annotated[
+        str | None,
+        Field(alias="sourceDataDate", description="The model's release date in the source."),
+    ] = None
+    tiers: Annotated[
+        list[InocodePriceTier], Field(description="Prices that apply above a prompt size.")
+    ]
+    unit: Annotated[str, Field(description="`usd_per_1m_tokens`.")]
+
+
+class InocodeResetCreditFailureReason(Enum):
+    not_usable = "notUsable"
+    expired = "expired"
+    cooldown = "cooldown"
+    already_used = "alreadyUsed"
+    network_error = "networkError"
+    auth_failed = "authFailed"
+    rate_limited = "rateLimited"
+    in_progress = "inProgress"
+    unsupported = "unsupported"
+    journal_error = "journalError"
+
+
+class InocodeResetCreditHistoryKind(Enum):
+    expired = "expired"
+    granted = "granted"
+    used = "used"
+    used_elsewhere = "usedElsewhere"
+    quota_reset = "quotaReset"
+    error = "error"
+
+
+class InocodeResetCreditHistorySource(Enum):
+    observed = "observed"
+    journal = "journal"
+    endpoint = "endpoint"
+
+
+class InocodeResetCreditStatus(Enum):
+    ok = "ok"
+    none = "none"
+    unavailable = "unavailable"
+    error = "error"
+
+
+class InocodeRuleEnforcedBy(Enum):
+    prompt = "prompt"
+    hook = "hook"
+    execpolicy = "execpolicy"
+
+
+class InocodeRuleMatch(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    commands: list[str] | None = []
+    content: Annotated[
+        list[str] | None,
+        Field(description="Regexes on the content a file write/edit/patch carries."),
+    ] = None
+    exclude_paths: Annotated[
+        list[str] | None,
+        Field(
+            alias="excludePaths",
+            description="Operations touching a matching path are exempt (globs).",
+        ),
+    ] = None
+    mcp: Annotated[list[str] | None, Field(description="MCP `server` or `server/tool` globs.")] = (
+        None
+    )
+    models: Annotated[list[str] | None, Field(description="Model-name globs.")] = None
+    paths: list[str] | None = []
+    tools: Annotated[
+        list[str] | None, Field(description="Tool-name globs (`apply_patch`, `Write`, `mcp__*`).")
+    ] = None
+
+
+class InocodeRuleSeverity(Enum):
+    block = "block"
+    warn = "warn"
+
+
+class InocodeStatsDailyModel(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    avg_tokens_per_second: Annotated[float | None, Field(alias="avgTokensPerSecond")] = None
+    model: str
+    provider: str
+    quota_primary_percent: Annotated[float, Field(alias="quotaPrimaryPercent")]
+    quota_secondary_percent: Annotated[float, Field(alias="quotaSecondaryPercent")]
+    requests: int
+    tokens: int
+
+
+class InocodeStatsDailyRow(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    date: Annotated[str, Field(description="Local date, `YYYY-MM-DD`.")]
+    models: Annotated[
+        list[InocodeStatsDailyModel],
+        Field(
+            description="Per model, each with its own speed. There is no mixed speed for the day."
+        ),
+    ]
+    quota_primary_percent: Annotated[float, Field(alias="quotaPrimaryPercent")]
+    quota_secondary_percent: Annotated[float, Field(alias="quotaSecondaryPercent")]
+    requests: int
+    tokens: Annotated[int, Field(description="All token kinds (uncached + cached input + output).")]
+
+
+class InocodeStatsHourRow(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    avg_tokens_per_second: Annotated[
+        float | None, Field(alias="avgTokensPerSecond", description="Null when `samples` is 0.")
+    ] = None
+    hour: Annotated[int, Field(description="Local hour of the day, 0–23.")]
+    samples: int
+
+
+class InocodeStatsQuota(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    primary_percent: Annotated[float | None, Field(alias="primaryPercent")] = None
+    secondary_percent: Annotated[float | None, Field(alias="secondaryPercent")] = None
+
+
+class InocodeStatsQuotaPerMillion(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    cached_input: Annotated[InocodeStatsQuota, Field(alias="cachedInput")]
+    output: InocodeStatsQuota
+    uncached_input: Annotated[InocodeStatsQuota, Field(alias="uncachedInput")]
+
+
+class InocodeStatsSeedProgressNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    done: bool
+    files_done: Annotated[int, Field(alias="filesDone")]
+    files_total: Annotated[int, Field(alias="filesTotal")]
+    job_id: Annotated[str, Field(alias="jobId")]
+    samples_added: Annotated[int, Field(alias="samplesAdded")]
+
+
+class InocodeStatsTokenTotals(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    cached_input: Annotated[int, Field(alias="cachedInput")]
+    output: int
+    reasoning: int
+    uncached_input: Annotated[int, Field(alias="uncachedInput")]
+
+
+class InocodeStatsTokens(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    cached_input: Annotated[int, Field(alias="cachedInput")]
+    output: int
+    uncached_input: Annotated[int, Field(alias="uncachedInput")]
+
+
+class InocodeStatsWeekdayRow(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    avg_tokens_per_second: Annotated[float | None, Field(alias="avgTokensPerSecond")] = None
+    samples: int
+    weekday: Annotated[int, Field(description="0 = Monday … 6 = Sunday (local time).")]
+
+
+class InocodeTeamAgentState(Enum):
+    running = "running"
+    waiting = "waiting"
+    blocked = "blocked"
+    done = "done"
+
+
+class InocodeTeamDecision(Enum):
+    single = "single"
+    multi = "multi"
+
+
+class InocodeTeamMessageEdge(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    count: int
+    from_id: Annotated[str | None, Field(alias="fromId")] = None
+    last_delivery: Annotated[
+        str, Field(alias="lastDelivery", description="`send_message` or `followup_task`.")
+    ]
+    last_ts_ms: Annotated[int, Field(alias="lastTsMs")]
+    to_id: Annotated[str | None, Field(alias="toId")] = None
+
+
+class InocodeTeamTask(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    est_seconds: Annotated[float, Field(alias="estSeconds")]
+    name: str
+    write_paths: Annotated[list[str], Field(alias="writePaths")]
+
+
+class InocodeToolOutputItem(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    approx_tokens: Annotated[int, Field(alias="approxTokens")]
+    bytes: int
+    call_id: Annotated[str | None, Field(alias="callId")] = None
+    id: str
+    thread_id: Annotated[str | None, Field(alias="threadId")] = None
+    tool: str | None = None
+    ts_ms: Annotated[int, Field(alias="tsMs")]
+
+
 class InputModality(Enum):
     text = "text"
     image = "image"
@@ -4636,6 +5423,78 @@ class ServerDiagnosticsProcess(BaseModel):
     resident_memory_bytes: Annotated[int | None, Field(alias="residentMemoryBytes", ge=0)] = None
 
 
+class InocodeCompactionEventServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["inocode/compaction/event"],
+        Field(title="Inocode/compaction/eventNotificationMethod"),
+    ]
+    params: InocodeCompactionEventNotification
+
+
+class InocodeStatsSeedProgressServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["inocode/stats/seedProgress"],
+        Field(title="Inocode/stats/seedProgressNotificationMethod"),
+    ]
+    params: InocodeStatsSeedProgressNotification
+
+
+class InocodeAccountsSwitchedServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["inocode/accounts/switched"],
+        Field(title="Inocode/accounts/switchedNotificationMethod"),
+    ]
+    params: InocodeAccountsSwitchedNotification
+
+
+class InocodeAccountsLoginCompletedServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["inocode/accounts/loginCompleted"],
+        Field(title="Inocode/accounts/loginCompletedNotificationMethod"),
+    ]
+    params: InocodeAccountsLoginCompletedNotification
+
+
 class ProjectChangedServerNotification(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -5369,6 +6228,26 @@ class TextRange(BaseModel):
 class ThreadActiveFlag(Enum):
     waiting_on_approval = "waitingOnApproval"
     waiting_on_user_input = "waitingOnUserInput"
+
+
+class ThreadApproveGuardianDeniedActionByIdParams(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    review_id: Annotated[
+        str,
+        Field(
+            alias="reviewId",
+            description="`reviewId` of the denied `item/autoApprovalReview/completed` notification.",
+        ),
+    ]
+    thread_id: Annotated[str, Field(alias="threadId")]
+
+
+class ThreadApproveGuardianDeniedActionByIdResponse(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
 
 
 class ThreadApproveGuardianDeniedActionParams(BaseModel):
@@ -7644,6 +8523,18 @@ class ThreadApproveGuardianDeniedActionRequest(BaseModel):
     params: ThreadApproveGuardianDeniedActionParams
 
 
+class ThreadApproveGuardianDeniedActionByIdRequest(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: RequestId
+    method: Annotated[
+        Literal["thread/approveGuardianDeniedActionById"],
+        Field(title="Thread/approveGuardianDeniedActionByIdRequestMethod"),
+    ]
+    params: ThreadApproveGuardianDeniedActionByIdParams
+
+
 class ThreadRevertRequest(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -9246,6 +10137,614 @@ class HooksListResponse(BaseModel):
     data: list[HooksListEntry]
 
 
+class InocodeAccountPolicy(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    api_key_order: Annotated[InocodeApiKeyOrder, Field(alias="apiKeyOrder")]
+    auto_switch: Annotated[
+        bool,
+        Field(
+            alias="autoSwitch",
+            description="Master switch for threshold/limit-based switching. Default true.",
+        ),
+    ]
+    default_cooldown_seconds: Annotated[
+        int,
+        Field(
+            alias="defaultCooldownSeconds",
+            description="Cooldown in seconds when a limit error carries no reset time. Default 60.",
+        ),
+    ]
+    selection: InocodeAccountSelection
+    threshold_percent: Annotated[
+        float,
+        Field(
+            alias="thresholdPercent",
+            description="Switch before a window would exceed this percentage. 0-100, default 90.",
+        ),
+    ]
+    window: InocodeAccountWindowKind
+
+
+class InocodeAccountResetCredit(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    at_limit: Annotated[
+        bool | None,
+        Field(alias="atLimit", description="The account is at a usage limit right now."),
+    ] = None
+    cooldown_until: Annotated[
+        int | None,
+        Field(
+            alias="cooldownUntil", description="Unix seconds; no reset can be spent before this."
+        ),
+    ] = None
+    eligible: bool | None = None
+    ends_at: Annotated[
+        int | None,
+        Field(
+            alias="endsAt",
+            description="Unix seconds; the soonest end among grants with resets left.",
+        ),
+    ] = None
+    grants: list[InocodeAccountResetGrant] | None = None
+    reason: Annotated[
+        str | None,
+        Field(
+            description="Why, for `none`, `unavailable` and `error`: a short word such as `block_missing`, `block_null`, `block_unreadable`, `grant_query_refused`, `http_404`, `http_403`, `auth_refused`, `rate_limited`, `request_failed`, `timeout`, `token_unavailable`, `api_key`, `not_read`."
+        ),
+    ] = None
+    resets_left: Annotated[
+        int | None,
+        Field(alias="resetsLeft", description="Resets left across the grants that are not paused."),
+    ] = None
+    resets_total: Annotated[int | None, Field(alias="resetsTotal")] = None
+    stale: Annotated[
+        bool | None,
+        Field(
+            description="The fields below are the last good value, kept because the latest read failed."
+        ),
+    ] = None
+    status: InocodeResetCreditStatus
+    usable_now: Annotated[
+        bool | None, Field(alias="usableNow", description="A reset can be spent right now.")
+    ] = None
+
+
+class InocodeAccountUsage(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    five_hour: Annotated[InocodeAccountUsageWindow | None, Field(alias="fiveHour")] = None
+    reset_credit: Annotated[
+        InocodeAccountResetCredit,
+        Field(
+            alias="resetCredit",
+            description="The banked usage-limit resets. Never `null`: `status` says whether they could be read.",
+        ),
+    ]
+    updated_at: Annotated[
+        int | None,
+        Field(
+            alias="updatedAt",
+            description="Unix seconds of the last refresh; `null` when never fetched.",
+        ),
+    ] = None
+    weekly: InocodeAccountUsageWindow | None = None
+
+
+class InocodeAdvisorEvent(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    kind: InocodeAdvisorEventKind
+    model: str | None = None
+    recent_actions: Annotated[list[str] | None, Field(alias="recentActions")] = None
+    signature: str | None = None
+    text: Annotated[
+        str | None, Field(description="Advice text (`advice`) or error text (`error`).")
+    ] = None
+    thread_id: Annotated[str, Field(alias="threadId")]
+    trigger: InocodeAdvisorTrigger | None = None
+    ts_ms: Annotated[int, Field(alias="tsMs")]
+
+
+class InocodeAdvisorEventNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    kind: InocodeAdvisorEventKind
+    model: str | None = None
+    recent_actions: Annotated[list[str] | None, Field(alias="recentActions")] = None
+    signature: str | None = None
+    text: str | None = None
+    thread_id: Annotated[str, Field(alias="threadId")]
+    trigger: InocodeAdvisorTrigger | None = None
+    ts_ms: Annotated[int, Field(alias="tsMs")]
+
+
+class InocodeCompactionEvent(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    auto: bool
+    consecutive_failures: Annotated[int, Field(alias="consecutiveFailures", ge=0)]
+    kind: InocodeCompactionEventKind
+    pinned_rule_ids: Annotated[list[str], Field(alias="pinnedRuleIds")]
+    reason: str
+    reattached_files: Annotated[list[str], Field(alias="reattachedFiles")]
+    thread_id: Annotated[str, Field(alias="threadId")]
+
+
+class InocodeEvidenceClaim(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    confidence: InocodeKnowledgeConfidence
+    created_by: Annotated[str, Field(alias="createdBy")]
+    evidence: Annotated[
+        list[InocodeEvidenceClaimEvidence] | None,
+        Field(
+            description="The quoted text behind each cited span, with its source title.",
+            validate_default=True,
+        ),
+    ] = []
+    id: str
+    premise_ids: Annotated[list[str], Field(alias="premiseIds")]
+    span_ids: Annotated[list[str], Field(alias="spanIds")]
+    status: str
+    text: str
+    type: str
+
+
+class InocodeEvidenceFinding(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    kind: InocodeEvidenceFindingKind
+    position: InocodeEvidenceTextPosition
+    text: str
+
+
+class InocodeEvidenceGraphNode(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: str
+    kind: InocodeEvidenceNodeKind
+    label: str
+    status: str
+    supported: Annotated[
+        bool, Field(description="`false` marks a node with no supporting evidence.")
+    ]
+
+
+class InocodeGoalCompletionEvidence(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    goal_id: Annotated[str, Field(alias="goalId")]
+    host_facts: Annotated[
+        list[InocodeGoalHostFact],
+        Field(
+            alias="hostFacts",
+            description="What the host observed while the goal was active, apart from the model's claims.",
+        ),
+    ]
+    objective: str
+    recorded_at: Annotated[int, Field(alias="recordedAt")]
+    requirements: Annotated[
+        list[InocodeGoalRequirementReport],
+        Field(description="The model's per-requirement claims, as it gave them."),
+    ]
+    thread_id: Annotated[str, Field(alias="threadId")]
+
+
+class InocodeGoalCompletionEvidenceNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    goal_id: Annotated[str, Field(alias="goalId")]
+    host_facts: Annotated[
+        list[InocodeGoalHostFact],
+        Field(
+            alias="hostFacts",
+            description="What the host observed while the goal was active, apart from the model's claims.",
+        ),
+    ]
+    objective: str
+    recorded_at: Annotated[int, Field(alias="recordedAt")]
+    requirements: Annotated[
+        list[InocodeGoalRequirementReport],
+        Field(description="The model's per-requirement claims, as it gave them."),
+    ]
+    thread_id: Annotated[str, Field(alias="threadId")]
+
+
+class InocodeGoalEditRequest(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    current_objective: Annotated[str, Field(alias="currentObjective")]
+    new_objective: Annotated[str, Field(alias="newObjective")]
+    reason: Annotated[str, Field(description="The model's own reason (its claim, not a fact).")]
+    request_id: Annotated[str, Field(alias="requestId")]
+    requested_at: Annotated[int, Field(alias="requestedAt")]
+    status: ThreadGoalStatus
+    thread_id: Annotated[str, Field(alias="threadId")]
+    time_used_seconds: Annotated[int, Field(alias="timeUsedSeconds")]
+    token_budget: Annotated[int | None, Field(alias="tokenBudget")] = None
+    tokens_used: Annotated[int, Field(alias="tokensUsed")]
+
+
+class InocodeGoalEditRequestedNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    current_objective: Annotated[str, Field(alias="currentObjective")]
+    new_objective: Annotated[str, Field(alias="newObjective")]
+    reason: Annotated[str, Field(description="The model's own reason (its claim, not a fact).")]
+    request_id: Annotated[str, Field(alias="requestId")]
+    requested_at: Annotated[int, Field(alias="requestedAt")]
+    status: ThreadGoalStatus
+    thread_id: Annotated[str, Field(alias="threadId")]
+    time_used_seconds: Annotated[int, Field(alias="timeUsedSeconds")]
+    token_budget: Annotated[int | None, Field(alias="tokenBudget")] = None
+    tokens_used: Annotated[int, Field(alias="tokensUsed")]
+
+
+class InocodeGuardEvent(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    reason: str
+    result: InocodeGuardResult
+    rule_id: Annotated[str, Field(alias="ruleId")]
+    rule_title: Annotated[str, Field(alias="ruleTitle")]
+    scope: InocodeKnowledgeScope
+    severity: InocodeRuleSeverity
+    target: Annotated[str, Field(description="The command or the paths the rule matched.")]
+    thread_id: Annotated[str, Field(alias="threadId")]
+    tool: str
+    tool_use_id: Annotated[str | None, Field(alias="toolUseId")] = None
+    ts_ms: Annotated[int, Field(alias="tsMs")]
+    turn_id: Annotated[str | None, Field(alias="turnId")] = None
+
+
+class InocodeGuardFiredNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    reason: str
+    result: InocodeGuardResult
+    rule_id: Annotated[str, Field(alias="ruleId")]
+    rule_title: Annotated[str, Field(alias="ruleTitle")]
+    scope: InocodeKnowledgeScope
+    severity: InocodeRuleSeverity
+    target: str
+    thread_id: Annotated[str, Field(alias="threadId")]
+    tool: str
+    tool_use_id: Annotated[str | None, Field(alias="toolUseId")] = None
+    ts_ms: Annotated[int, Field(alias="tsMs")]
+    turn_id: Annotated[str | None, Field(alias="turnId")] = None
+
+
+class InocodeKnowledgePinnedRule(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: str
+    reason: str | None = None
+    scope: InocodeKnowledgeScope
+    status: InocodeKnowledgeStatus
+    title: str
+
+
+class InocodeKnowledgeRecord(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    applies_to: Annotated[
+        list[str] | None,
+        Field(
+            alias="appliesTo",
+            description="Narrows a rule to these paths (globs, absolute or relative): it applies only when the session cwd or the operation's path matches. Empty/absent = the whole scope.",
+        ),
+    ] = None
+    body: str
+    confidence: InocodeKnowledgeConfidence
+    created_at: Annotated[str, Field(alias="createdAt")]
+    created_by: Annotated[str, Field(alias="createdBy")]
+    do_not: Annotated[str | None, Field(alias="doNot")] = None
+    enforced_by: Annotated[InocodeRuleEnforcedBy | None, Field(alias="enforcedBy")] = None
+    evidence: list[str] | None = None
+    from_failure: Annotated[str | None, Field(alias="fromFailure")] = None
+    id: str
+    kind: InocodeKnowledgeKind
+    match: InocodeRuleMatch | None = None
+    reason: str | None = None
+    root_cause: Annotated[str | None, Field(alias="rootCause")] = None
+    scope: InocodeKnowledgeScope
+    severity: InocodeRuleSeverity | None = None
+    signature: str | None = None
+    source: str | None = None
+    status: InocodeKnowledgeStatus
+    supersedes: str | None = None
+    symptom: str | None = None
+    title: str
+    updated_at: Annotated[str, Field(alias="updatedAt")]
+    what_worked: Annotated[str | None, Field(alias="whatWorked")] = None
+
+
+class InocodeKnowledgeRecordInput(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    applies_to: Annotated[
+        list[str] | None,
+        Field(
+            alias="appliesTo",
+            description="Narrows a rule to these paths (globs, absolute or relative): it applies only when the session cwd or the operation's path matches. Empty/absent = the whole scope.",
+        ),
+    ] = None
+    body: str | None = ""
+    confidence: InocodeKnowledgeConfidence | None = None
+    created_by: Annotated[str | None, Field(alias="createdBy")] = None
+    do_not: Annotated[str | None, Field(alias="doNot")] = None
+    enforced_by: Annotated[InocodeRuleEnforcedBy | None, Field(alias="enforcedBy")] = None
+    evidence: list[str] | None = None
+    from_failure: Annotated[str | None, Field(alias="fromFailure")] = None
+    id: str | None = None
+    kind: InocodeKnowledgeKind
+    match: InocodeRuleMatch | None = None
+    reason: str | None = None
+    root_cause: Annotated[str | None, Field(alias="rootCause")] = None
+    scope: InocodeKnowledgeScope | None = None
+    severity: InocodeRuleSeverity | None = None
+    signature: str | None = None
+    source: str | None = None
+    status: InocodeKnowledgeStatus | None = None
+    supersedes: str | None = None
+    symptom: str | None = None
+    title: str
+    what_worked: Annotated[str | None, Field(alias="whatWorked")] = None
+
+
+class InocodeKnowledgeRecordedNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: str
+    kind: InocodeKnowledgeKind
+    scope: InocodeKnowledgeScope
+    title: str
+
+
+class InocodeMessage(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    delivery: Annotated[
+        str, Field(description="`send_message`, `followup_task`, `spawn`, `final`.")
+    ]
+    from_: Annotated[str, Field(alias="from")]
+    from_thread: Annotated[
+        str | None,
+        Field(
+            alias="fromThread", description="Threads of the sender and the receiver, when known."
+        ),
+    ] = None
+    id: Annotated[
+        str | None,
+        Field(
+            description="Id of the message as an item of the receiver's history (`#<turn>.@<n>`, readable with `inocode/messages/resolve` on `toThread`). Null when it is not in the history yet."
+        ),
+    ] = None
+    parsed: Annotated[
+        InocodeParsedMessage | None,
+        Field(description="Present when the text is a valid telegraphic message."),
+    ] = None
+    reply_thread: Annotated[str | None, Field(alias="replyThread")] = None
+    reply_to: Annotated[
+        str | None,
+        Field(
+            alias="replyTo",
+            description="The message this one answers (`#<turn>.<item>` or `#<turn>.@<n>`) in the history of `replyThread`.",
+        ),
+    ] = None
+    summary: Annotated[
+        str,
+        Field(
+            description="One line for a list: the telegraphic `summary`/`q`/`a`/... value, else the first line."
+        ),
+    ]
+    text: Annotated[str, Field(description="Verbatim text.")]
+    thread_id: Annotated[
+        str,
+        Field(
+            alias="threadId", description="Root thread of the conversation this message belongs to."
+        ),
+    ]
+    to: str
+    to_thread: Annotated[str | None, Field(alias="toThread")] = None
+    ts_ms: Annotated[int, Field(alias="tsMs")]
+
+
+class InocodeMessagesAppendedNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    message: InocodeMessage
+    thread_id: Annotated[str, Field(alias="threadId")]
+
+
+class InocodeModelPrice(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    billing: Annotated[
+        str,
+        Field(
+            description="`plan_included` (a subscription: the reference is what the API would charge), `api`, or `unknown`."
+        ),
+    ]
+    measured: InocodeMeasuredPrice | None = None
+    reference: InocodeReferencePrice
+    user_override: Annotated[InocodePriceOverride | None, Field(alias="userOverride")] = None
+
+
+class InocodeParam(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    default: InocodeParamValue
+    key: str
+    kind: InocodeParamKind
+    options: list[str] | None = None
+    value: InocodeParamValue
+
+
+class InocodeProvider(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    account_count: Annotated[int, Field(alias="accountCount", ge=0)]
+    auth_kinds: Annotated[
+        list[InocodeAccountKind],
+        Field(alias="authKinds", description="Which kinds of account can be added."),
+    ]
+    id: str
+    name: str
+    wire: InocodeProviderWire
+
+
+class InocodeResetCreditFailure(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    detail: Annotated[
+        str | None,
+        Field(
+            description="A fixed word with more detail (for example `not_limited`, `paused`, `exhausted`, `no_grant`, `unknown_grant`, `ineligible`), or `null`."
+        ),
+    ] = None
+    reason: InocodeResetCreditFailureReason
+    retryable: Annotated[
+        bool,
+        Field(
+            description="Resending with the same `operationId` is safe and may succeed (the earlier attempt got no answer). When `false`, nothing was spent, or the answer is final."
+        ),
+    ]
+
+
+class InocodeResetCreditHistoryEntry(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    detail: Annotated[str, Field(description="Display text (Japanese).")]
+    grant_id: Annotated[str | None, Field(alias="grantId")] = None
+    kind: InocodeResetCreditHistoryKind
+    label: str | None = None
+    source: InocodeResetCreditHistorySource
+    ts: Annotated[
+        int,
+        Field(
+            description="Unix seconds: when it happened if known (an expiry is dated by its deadline), otherwise when it was noticed."
+        ),
+    ]
+
+
+class InocodeStatsModel(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    avg_tokens_per_second: Annotated[float | None, Field(alias="avgTokensPerSecond")] = None
+    insufficient: bool
+    model: str
+    provider: str
+    quota_per_million: Annotated[
+        InocodeStatsQuotaPerMillion | None,
+        Field(
+            alias="quotaPerMillion",
+            description="Null while there are too few samples (then `insufficient` is true).",
+        ),
+    ] = None
+    quota_used: Annotated[
+        InocodeStatsQuota,
+        Field(
+            alias="quotaUsed",
+            description="Sum of the differences between neighbouring readings inside one reset window.",
+        ),
+    ]
+    requests: int
+    tokens: InocodeStatsTokenTotals
+
+
+class InocodeStatsSpeedSeries(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    hours: Annotated[list[InocodeStatsHourRow], Field(description="24 rows.")]
+    model: str
+    provider: str
+    weekdays: Annotated[list[InocodeStatsWeekdayRow], Field(description="7 rows, Monday first.")]
+
+
+class InocodeTeamAgent(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    id: str
+    model: Annotated[
+        str | None, Field(description="Model the agent runs on (same as `Thread.model`).")
+    ] = None
+    name: str
+    nickname: Annotated[
+        str | None, Field(description="The agent's nickname (same as `Thread.agentNickname`).")
+    ] = None
+    owned_paths: Annotated[list[str], Field(alias="ownedPaths")]
+    parent_id: Annotated[
+        str | None,
+        Field(alias="parentId", description="Thread id of the agent that spawned this one."),
+    ] = None
+    reasoning_effort: Annotated[
+        str | None,
+        Field(
+            alias="reasoningEffort",
+            description="Reasoning effort of the agent (same as `Thread.reasoningEffort`).",
+        ),
+    ] = None
+    started_at: Annotated[str, Field(alias="startedAt")]
+    state: InocodeTeamAgentState
+    tokens: int
+
+
+class InocodeTeamEstimate(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    cost_multiplier: Annotated[float, Field(alias="costMultiplier")]
+    decision: InocodeTeamDecision
+    reason: str
+    speedup: float
+    tasks: Annotated[
+        list[InocodeTeamTask] | None,
+        Field(description="The work items the estimate was built from."),
+    ] = None
+
+
+class InocodeTeamUpdatedNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    agents: list[InocodeTeamAgent]
+    estimate: InocodeTeamEstimate
+    messages: Annotated[list[InocodeTeamMessageEdge] | None, Field(validate_default=True)] = []
+    thread_id: Annotated[str, Field(alias="threadId")]
+
+
 class ListMcpServerStatusParams(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -9487,6 +10986,13 @@ class Model(BaseModel):
     ]
     is_default: Annotated[bool, Field(alias="isDefault")]
     model: str
+    model_provider: Annotated[
+        str | None,
+        Field(
+            alias="modelProvider",
+            description="The provider this model belongs to (`openai`, `claude`, ...): the id to send as `modelProvider` with this `model` in `thread/start` and `turn/start`.",
+        ),
+    ] = ""
     model_specialty: Annotated[str | None, Field(alias="modelSpecialty")] = None
     multi_agent_version: Annotated[
         MultiAgentVersion | None,
@@ -10094,6 +11600,111 @@ class ThreadAttachmentUpdatedServerNotification(BaseModel):
         Field(title="Thread/attachment/updatedNotificationMethod"),
     ]
     params: ThreadAttachmentUpdatedNotification
+
+
+class InocodeTeamUpdatedServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["inocode/team/updated"], Field(title="Inocode/team/updatedNotificationMethod")
+    ]
+    params: InocodeTeamUpdatedNotification
+
+
+class InocodeGuardFiredServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["inocode/guard/fired"], Field(title="Inocode/guard/firedNotificationMethod")
+    ]
+    params: InocodeGuardFiredNotification
+
+
+class InocodeGoalEditRequestedServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["inocode/goal/editRequested"],
+        Field(title="Inocode/goal/editRequestedNotificationMethod"),
+    ]
+    params: InocodeGoalEditRequestedNotification
+
+
+class InocodeKnowledgeRecordedServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["inocode/knowledge/recorded"],
+        Field(title="Inocode/knowledge/recordedNotificationMethod"),
+    ]
+    params: InocodeKnowledgeRecordedNotification
+
+
+class InocodeAdvisorEventServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["inocode/advisor/event"], Field(title="Inocode/advisor/eventNotificationMethod")
+    ]
+    params: InocodeAdvisorEventNotification
+
+
+class InocodeMessagesAppendedServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["inocode/messages/appended"],
+        Field(title="Inocode/messages/appendedNotificationMethod"),
+    ]
+    params: InocodeMessagesAppendedNotification
 
 
 class ThreadPredictionUpdatedServerNotification(BaseModel):
@@ -10963,6 +12574,12 @@ class WebSearchThreadItem(BaseModel):
         ),
     ] = None
     id: str
+    provider: Annotated[
+        str | None,
+        Field(
+            description="The site searched by `shopping_search` / `media_search` (the tool's `provider` argument). Absent for `web_search`."
+        ),
+    ] = None
     query: str
     results: Annotated[
         list[Any] | None,
@@ -10975,6 +12592,12 @@ class WebSearchThreadItem(BaseModel):
         Field(
             alias="startedAtMs",
             description="Unix timestamp in milliseconds when the item started, if recorded.",
+        ),
+    ] = None
+    tool: Annotated[
+        str | None,
+        Field(
+            description="The search tool that produced this item: `web_search`, `shopping_search` or `media_search`. Absent for items from older rollouts and other producers, which are web searches."
         ),
     ] = None
     type: Annotated[Literal["webSearch"], Field(title="WebSearchThreadItemType")]
@@ -11991,6 +13614,80 @@ class HookCompletedNotification(BaseModel):
     turn_id: Annotated[str | None, Field(alias="turnId")] = None
 
 
+class InocodeAccount(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    alias: Annotated[str, Field(description="User-chosen name.")]
+    cooldown_until: Annotated[
+        int | None,
+        Field(alias="cooldownUntil", description="Unix seconds; set while `state` is `cooldown`."),
+    ] = None
+    email: Annotated[
+        str | None,
+        Field(
+            description="The account's e-mail address, from the sign-in (ChatGPT: ID token; Claude: profile). `null` when unknown. Local only; shown on the account screen."
+        ),
+    ] = None
+    id: str
+    in_use: Annotated[
+        bool, Field(alias="inUse", description="True for the entry used by the next request.")
+    ]
+    is_default: Annotated[
+        bool,
+        Field(
+            alias="isDefault",
+            description="True for the legacy `auth.json` login shown as the default account.",
+        ),
+    ]
+    kind: InocodeAccountKind
+    last_used_at: Annotated[int | None, Field(alias="lastUsedAt", description="Unix seconds.")] = (
+        None
+    )
+    name: Annotated[
+        str | None, Field(description="The owner's display name; `null` when unknown.")
+    ] = None
+    plan: Annotated[
+        str | None,
+        Field(
+            description="Plan name for ChatGPT accounts (for example `plus`, `pro`); `null` for API keys."
+        ),
+    ] = None
+    priority: Annotated[int, Field(description="Larger is used earlier.")]
+    provider: Annotated[
+        str, Field(description="Provider group the entry belongs to: `openai` or `claude`.")
+    ]
+    state: InocodeAccountState
+    usage: Annotated[
+        InocodeAccountUsage | None,
+        Field(description="`null` for API keys (no usage concept) or before the first fetch."),
+    ] = None
+
+
+class InocodeAccountsUpdatedNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    accounts: list[InocodeAccount]
+
+
+class InocodeModelEnrichment(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    benchmark_match: Annotated[
+        InocodeBenchmarkMatch | None,
+        Field(
+            alias="benchmarkMatch",
+            description="How the model was found in the benchmark source; absent when it was not found (then `scores` is empty: unmeasured, not zero).",
+        ),
+    ] = None
+    model_id: Annotated[str, Field(alias="modelId")]
+    price: InocodeModelPrice
+    provider: str
+    scores: list[InocodeModelScore]
+
+
 class ListMcpServerStatusResponse(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -12251,6 +13948,24 @@ class ThreadGoalUpdatedServerNotification(BaseModel):
         Literal["thread/goal/updated"], Field(title="Thread/goal/updatedNotificationMethod")
     ]
     params: ThreadGoalUpdatedNotification
+
+
+class InocodeAccountsUpdatedServerNotification(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    emitted_at_ms: Annotated[
+        int | None,
+        Field(
+            alias="emittedAtMs",
+            description="Unix timestamp (in milliseconds) when app-server emitted this notification.",
+        ),
+    ] = None
+    method: Annotated[
+        Literal["inocode/accounts/updated"],
+        Field(title="Inocode/accounts/updatedNotificationMethod"),
+    ]
+    params: InocodeAccountsUpdatedNotification
 
 
 class ThreadSettingsUpdatedServerNotification(BaseModel):
@@ -13253,7 +14968,7 @@ class Thread(BaseModel):
     source: Annotated[
         SessionSource,
         Field(
-            description="Origin of the thread (CLI, VSCode, codex exec, codex app-server, etc.)."
+            description="Origin of the thread (CLI, VSCode, inocode exec, inocode app-server, etc.)."
         ),
     ]
     status: Annotated[ThreadStatus, Field(description="Current runtime status for the thread.")]
@@ -13684,6 +15399,7 @@ class ClientRequest(
         | ThreadCompactStartRequest
         | ThreadShellCommandRequest
         | ThreadApproveGuardianDeniedActionRequest
+        | ThreadApproveGuardianDeniedActionByIdRequest
         | ThreadRevertRequest
         | ThreadListRequest
         | ThreadSectionListRequest
@@ -13796,6 +15512,7 @@ class ClientRequest(
         | ThreadCompactStartRequest
         | ThreadShellCommandRequest
         | ThreadApproveGuardianDeniedActionRequest
+        | ThreadApproveGuardianDeniedActionByIdRequest
         | ThreadRevertRequest
         | ThreadListRequest
         | ThreadSectionListRequest
@@ -14074,6 +15791,17 @@ class ServerNotification(
         | ThreadSectionChangedServerNotification
         | ThreadAttachmentUpdatedServerNotification
         | ThreadGoalUpdatedServerNotification
+        | InocodeTeamUpdatedServerNotification
+        | InocodeGuardFiredServerNotification
+        | InocodeGoalEditRequestedServerNotification
+        | InocodeKnowledgeRecordedServerNotification
+        | InocodeAdvisorEventServerNotification
+        | InocodeMessagesAppendedServerNotification
+        | InocodeCompactionEventServerNotification
+        | InocodeStatsSeedProgressServerNotification
+        | InocodeAccountsUpdatedServerNotification
+        | InocodeAccountsSwitchedServerNotification
+        | InocodeAccountsLoginCompletedServerNotification
         | ThreadPredictionUpdatedServerNotification
         | ThreadGoalClearedServerNotification
         | ThreadQueueChangedServerNotification
@@ -14163,6 +15891,17 @@ class ServerNotification(
         | ThreadSectionChangedServerNotification
         | ThreadAttachmentUpdatedServerNotification
         | ThreadGoalUpdatedServerNotification
+        | InocodeTeamUpdatedServerNotification
+        | InocodeGuardFiredServerNotification
+        | InocodeGoalEditRequestedServerNotification
+        | InocodeKnowledgeRecordedServerNotification
+        | InocodeAdvisorEventServerNotification
+        | InocodeMessagesAppendedServerNotification
+        | InocodeCompactionEventServerNotification
+        | InocodeStatsSeedProgressServerNotification
+        | InocodeAccountsUpdatedServerNotification
+        | InocodeAccountsSwitchedServerNotification
+        | InocodeAccountsLoginCompletedServerNotification
         | ThreadPredictionUpdatedServerNotification
         | ThreadGoalClearedServerNotification
         | ThreadQueueChangedServerNotification

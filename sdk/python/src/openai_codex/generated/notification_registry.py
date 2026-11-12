@@ -31,6 +31,17 @@ from .v2_all import GatewayOAuthChangedNotification
 from .v2_all import GuardianWarningNotification
 from .v2_all import HookCompletedNotification
 from .v2_all import HookStartedNotification
+from .v2_all import InocodeAccountsLoginCompletedNotification
+from .v2_all import InocodeAccountsSwitchedNotification
+from .v2_all import InocodeAccountsUpdatedNotification
+from .v2_all import InocodeAdvisorEventNotification
+from .v2_all import InocodeCompactionEventNotification
+from .v2_all import InocodeGoalEditRequestedNotification
+from .v2_all import InocodeGuardFiredNotification
+from .v2_all import InocodeKnowledgeRecordedNotification
+from .v2_all import InocodeMessagesAppendedNotification
+from .v2_all import InocodeStatsSeedProgressNotification
+from .v2_all import InocodeTeamUpdatedNotification
 from .v2_all import ItemCompletedNotification
 from .v2_all import ItemGuardianApprovalReviewCompletedNotification
 from .v2_all import ItemGuardianApprovalReviewStartedNotification
@@ -117,6 +128,17 @@ KnownNotificationPayload: TypeAlias = (
     | GuardianWarningNotification
     | HookCompletedNotification
     | HookStartedNotification
+    | InocodeAccountsLoginCompletedNotification
+    | InocodeAccountsSwitchedNotification
+    | InocodeAccountsUpdatedNotification
+    | InocodeAdvisorEventNotification
+    | InocodeCompactionEventNotification
+    | InocodeGoalEditRequestedNotification
+    | InocodeGuardFiredNotification
+    | InocodeKnowledgeRecordedNotification
+    | InocodeMessagesAppendedNotification
+    | InocodeStatsSeedProgressNotification
+    | InocodeTeamUpdatedNotification
     | ItemCompletedNotification
     | ItemGuardianApprovalReviewCompletedNotification
     | ItemGuardianApprovalReviewStartedNotification
@@ -198,6 +220,17 @@ NOTIFICATION_MODELS: dict[str, type[KnownNotificationPayload]] = {
     "guardianWarning": GuardianWarningNotification,
     "hook/completed": HookCompletedNotification,
     "hook/started": HookStartedNotification,
+    "inocode/accounts/loginCompleted": InocodeAccountsLoginCompletedNotification,
+    "inocode/accounts/switched": InocodeAccountsSwitchedNotification,
+    "inocode/accounts/updated": InocodeAccountsUpdatedNotification,
+    "inocode/advisor/event": InocodeAdvisorEventNotification,
+    "inocode/compaction/event": InocodeCompactionEventNotification,
+    "inocode/goal/editRequested": InocodeGoalEditRequestedNotification,
+    "inocode/guard/fired": InocodeGuardFiredNotification,
+    "inocode/knowledge/recorded": InocodeKnowledgeRecordedNotification,
+    "inocode/messages/appended": InocodeMessagesAppendedNotification,
+    "inocode/stats/seedProgress": InocodeStatsSeedProgressNotification,
+    "inocode/team/updated": InocodeTeamUpdatedNotification,
     "item/agentMessage/delta": AgentMessageDeltaNotification,
     "item/autoApprovalReview/completed": ItemGuardianApprovalReviewCompletedNotification,
     "item/autoApprovalReview/started": ItemGuardianApprovalReviewStartedNotification,
@@ -278,6 +311,7 @@ DIRECT_TURN_ID_NOTIFICATION_TYPES: tuple[type[BaseModel], ...] = (
     FileChangePatchUpdatedNotification,
     HookCompletedNotification,
     HookStartedNotification,
+    InocodeGuardFiredNotification,
     ItemCompletedNotification,
     ItemGuardianApprovalReviewCompletedNotification,
     ItemGuardianApprovalReviewStartedNotification,
