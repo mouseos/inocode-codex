@@ -1,3 +1,4 @@
+use crate::record::FailureDetail;
 use crate::record::Kind;
 use crate::record::Record;
 use crate::record::Scope;
@@ -384,6 +385,74 @@ impl Store {
         rec.what_worked = what_worked.map(str::to_string);
         rec.created_by = Some(created_by.to_string());
         self.write(rec)
+    }
+
+    /// A failure case with the conditions that held when it failed. The cause is kept when known.
+    pub fn record_failure_case_with_conditions(
+        &self,
+        signature: &str,
+        symptom: &str,
+        detail: &FailureDetail,
+        created_by: &str,
+    ) -> io::Result<String> {
+        let id = self.record_failure_case(signature, symptom, None, None, None, created_by)?;
+        // Only a case that has no detail yet gets it (a repeat does not overwrite).
+        if let Some(mut rec) = self.read(Scope::Project, &id)
+            && rec.conditions.is_none()
+            && rec.attempted.is_none()
+        {
+            rec.project = detail.project.clone();
+            rec.purpose = detail.purpose.clone();
+            rec.attempted = detail.attempted.clone();
+            rec.outcome = detail.outcome.clone();
+            rec.conditions = detail.conditions.clone();
+            rec.cause = detail.cause.clone();
+            self.save(&rec)?;
+        }
+        Ok(id)
+    }
+
+    /// The call of a failure case succeeded later: the failure depended on the state, so the
+    /// case says so and keeps the conditions of the success. Returns false when the case is gone
+    /// or already marked.
+    pub fn mark_state_dependent(&self, id: &str, works_when: &str) -> io::Result<bool> {
+        let Some(mut rec) = self.read(Scope::Project, id) else {
+            return Ok(false);
+        };
+        if rec.kind != Kind::FailureCase || rec.state_dependent == Some(true) {
+            return Ok(false);
+        }
+        rec.state_dependent = Some(true);
+        rec.works_when = Some(works_when.to_string());
+        rec.updated_at = Self::now();
+        self.save(&rec)?;
+        Ok(true)
+    }
+
+    /// The call `<tool> <args>` succeeded: every live failure case whose signature is that call,
+    /// or starts with it followed by ` exit=`, and that is not marked yet, depends on the state.
+    /// Returns the ids marked.
+    pub fn mark_state_dependent_for_call(
+        &self,
+        call: &str,
+        works_when: &str,
+    ) -> io::Result<Vec<String>> {
+        let with_exit = format!("{call} exit=");
+        let mut marked = Vec::new();
+        for rec in self.all(Some(Scope::Project)) {
+            let Some(signature) = rec.signature.as_deref() else {
+                continue;
+            };
+            if rec.kind == Kind::FailureCase
+                && rec.status.is_live()
+                && rec.state_dependent.is_none()
+                && (signature == call || signature.starts_with(&with_exit))
+                && self.mark_state_dependent(&rec.id, works_when)?
+            {
+                marked.push(rec.id);
+            }
+        }
+        Ok(marked)
     }
 
     pub fn build_handoff_pack(&self, task: &str) -> String {

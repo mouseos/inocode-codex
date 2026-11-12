@@ -10,8 +10,16 @@
 //! implementation). The answer is fed back to the main agent as hypotheses.
 
 mod events;
+mod failure;
 mod readonly;
 
+pub use failure::attempted_text;
+pub use failure::call_conditions;
+pub use failure::call_text;
+pub use failure::failure_symptom;
+pub use failure::outcome_text;
+pub use failure::project_text;
+pub use failure::purpose_text;
 pub use events::AdvisorEvent;
 pub use events::AdvisorEventKind;
 pub use events::append_event;

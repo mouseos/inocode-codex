@@ -184,9 +184,44 @@ pub struct Record {
     pub what_worked: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<Vec<String>>,
+    /// 何のプロジェクトか(リポジトリのパスとブランチ)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    /// 何をしようとしていたか(そのターンのユーザーの依頼の先頭 200 字)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    /// 何を実行したか(コマンドと引数の全文。長ければ先頭と末尾。cwd)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempted: Option<String>,
+    /// どうなったか(終了コード、出力の末尾)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<String>,
+    /// 失敗した時点の条件(直前のコマンド、cwd、終了コード、出力の末尾、使えたツール)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conditions: Option<String>,
+    /// 原因(分かるとき)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<String>,
+    /// 同じ呼び出しが別の状態では成功した: 呼び出し自体の禁止ではなく、状態の条件がある失敗。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_dependent: Option<bool>,
+    /// 成功したときの条件(`state_dependent` のとき)。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub works_when: Option<String>,
     /// Markdown 本文(front-matter の外)。
     #[serde(default)]
     pub body: String,
+}
+
+/// What a failure case records about the failed call besides its signature and symptom.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FailureDetail {
+    pub project: Option<String>,
+    pub purpose: Option<String>,
+    pub attempted: Option<String>,
+    pub outcome: Option<String>,
+    pub conditions: Option<String>,
+    pub cause: Option<String>,
 }
 
 fn default_scope() -> Scope {
@@ -222,6 +257,14 @@ impl Record {
             do_not: None,
             what_worked: None,
             evidence: None,
+            project: None,
+            purpose: None,
+            attempted: None,
+            outcome: None,
+            conditions: None,
+            cause: None,
+            state_dependent: None,
+            works_when: None,
             body: String::new(),
         }
     }

@@ -371,7 +371,12 @@ pub(crate) fn observe_tool_result(
     let summary = format!("{tool} {}", truncate(args, 160));
     let failed = obs.failed();
     let error_text = obs.error.clone().unwrap_or_default();
-    let (stall, tried, last_error) = {
+    let call = codex_inocode_advisor::call_text(&obs);
+    let read_only = obs.read_only;
+    let symptom = codex_inocode_advisor::failure_symptom(&obs);
+    let cwd = crate::compact_inocode::local_cwd(turn);
+    let obs_for_conditions = obs.clone();
+    let (stall, tried, last_error, conditions) = {
         let Ok(mut map) = detectors().lock() else {
             return;
         };
@@ -391,12 +396,18 @@ pub(crate) fn observe_tool_result(
             entry.last_error = error_text;
         }
         let stall = entry.detector.observe(obs);
-        (
-            stall,
-            entry.recent.iter().cloned().collect::<Vec<_>>(),
-            entry.last_error.clone(),
-        )
+        let recent = entry.recent.iter().cloned().collect::<Vec<_>>();
+        let conditions = codex_inocode_advisor::call_conditions(&recent, &cwd, &obs_for_conditions);
+        (stall, recent, entry.last_error.clone(), conditions)
     };
+    // The same call that failed before has now worked: those cases depend on the state.
+    if !failed && !read_only {
+        if let Err(err) =
+            codex_inocode_knowledge::mark_call_failures_state_dependent(&cwd, &call, &conditions)
+        {
+            tracing::warn!("marking failure cases state dependent failed: {err}");
+        }
+    }
     let Some(stall) = stall else { return };
     codex_inocode_advisor::record_global(
         &codex_inocode_flags::inocode_home(),
@@ -415,27 +426,33 @@ pub(crate) fn observe_tool_result(
             },
         );
     }
-    // Failure case (knowledge DB): the repeated failure signature is recorded once; the
-    // store returns the existing id when a live case with the same signature exists.
-    // No-op when `knowledge.enabled` is off.
+    // Failure case (knowledge DB): a call that really failed and keeps failing (a stall of
+    // repeated failure, repetition or alternation) is recorded once per signature, with what it
+    // was for, what was run and what came back. A stall made of looking is not a failure, and
+    // neither is a call that succeeded: no case. No-op when `knowledge.enabled` is off.
+    if stall.trigger != codex_inocode_advisor::Trigger::NoProgress
+        && let Some(symptom) = symptom
+        && let Some(signature) = obs_for_conditions.failure_signature()
     {
-        let symptom = if last_error.is_empty() {
-            tried.last().cloned().unwrap_or_default()
-        } else {
-            last_error.clone()
-        };
-        let cwd = crate::compact_inocode::local_cwd(turn);
-        if let Err(err) = codex_inocode_knowledge::record_failure_case(
-            &cwd,
-            &stall.signature,
-            &symptom,
-            None,
-            None,
-            None,
-            "advisor",
-        ) {
-            tracing::warn!("recording failure case failed: {err}");
-        }
+        let session = Arc::clone(session);
+        let cwd = cwd.clone();
+        let conditions = conditions.clone();
+        tokio::spawn(async move {
+            let request = last_user_text(&session).await;
+            let detail = codex_inocode_knowledge::FailureDetail {
+                project: Some(codex_inocode_advisor::project_text(&cwd)),
+                purpose: Some(codex_inocode_advisor::purpose_text(&request)).filter(|p| !p.is_empty()),
+                attempted: Some(codex_inocode_advisor::attempted_text(&obs_for_conditions, &cwd)),
+                outcome: Some(codex_inocode_advisor::outcome_text(&obs_for_conditions)),
+                conditions: Some(conditions),
+                cause: None,
+            };
+            if let Err(err) = codex_inocode_knowledge::record_failure_case_with_conditions(
+                &cwd, &signature, &symptom, &detail, "advisor",
+            ) {
+                tracing::warn!("recording failure case failed: {err}");
+            }
+        });
     }
     let session = Arc::clone(session);
     let turn = Arc::clone(turn);

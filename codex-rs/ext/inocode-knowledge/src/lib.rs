@@ -16,7 +16,7 @@ pub use events::{
     GuardEvent, GuardOutcome, GuardRuleStats, GuardTarget, guard_stats, KnowledgeRecorded, guard_events_path, list_guard_events,
     record_guard_hits, subscribe_guard, subscribe_recorded,
 };
-pub use record::{Confidence, Kind, MatchSpec, Record, Scope, Severity, Status};
+pub use record::{Confidence, FailureDetail, Kind, MatchSpec, Record, Scope, Severity, Status};
 pub use store::{ListQuery, Store, SummaryRow};
 
 use std::path::{Path, PathBuf};
@@ -97,6 +97,50 @@ pub fn record_failure_case(
     )?;
     events::notify_recorded(&store, &id);
     Ok(Some(id))
+}
+
+/// 失敗した呼び出しの詳細(プロジェクト、目的、実行したこと、結果、条件、原因)つきで失敗例を
+/// 記録する。同じ署名の未撤回の失敗例があればその ID を返す(詳細は上書きしない)。
+pub fn record_failure_case_with_conditions(
+    cwd: &Path,
+    signature: &str,
+    symptom: &str,
+    detail: &FailureDetail,
+    created_by: &str,
+) -> std::io::Result<Option<String>> {
+    if !codex_inocode_flags::load().knowledge_enabled {
+        return Ok(None);
+    }
+    let store = store_for(cwd);
+    let id = store.record_failure_case_with_conditions(signature, symptom, detail, created_by)?;
+    events::notify_recorded(&store, &id);
+    Ok(Some(id))
+}
+
+/// 失敗例の呼び出しがのちに成功した: その失敗例に `stateDependent: true` と、成功時の条件
+/// (`worksWhen`)を付ける。付けたら true。
+pub fn mark_failure_state_dependent(
+    cwd: &Path,
+    id: &str,
+    works_when: &str,
+) -> std::io::Result<bool> {
+    if !codex_inocode_flags::load().knowledge_enabled {
+        return Ok(false);
+    }
+    store_for(cwd).mark_state_dependent(id, works_when)
+}
+
+/// 呼び出し `<tool> <args>` が成功した: signature がその呼び出しそのもの、または
+/// `その呼び出し + " exit="` で始まる未撤回で未設定の失敗例に `stateDependent` を付ける。
+pub fn mark_call_failures_state_dependent(
+    cwd: &Path,
+    call: &str,
+    works_when: &str,
+) -> std::io::Result<Vec<String>> {
+    if !codex_inocode_flags::load().knowledge_enabled {
+        return Ok(Vec::new());
+    }
+    store_for(cwd).mark_state_dependent_for_call(call, works_when)
 }
 
 /// PreToolUse ガード用: cwd のプロジェクトと共通領域の rule に照合する。
@@ -182,6 +226,89 @@ mod event_tests {
         let pack = build_handoff_pack(cwd.path(), "cargo test");
         assert!(pack.contains("引き継ぎパック"));
         assert!(pack.contains("same_failure:cargo test") || pack.contains(&id));
+    }
+
+    #[test]
+    fn a_failure_case_keeps_its_detail_and_learns_it_depends_on_the_state() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let store = Store::new(Some(cwd.path().to_path_buf()), home.path().to_path_buf());
+        let detail = FailureDetail {
+            project: Some("/repo (main)".into()),
+            purpose: Some("flash the device".into()),
+            attempted: Some("exec_command: adb shell
+cwd: /repo".into()),
+            outcome: Some("exit code: 1
+output tail: error: no devices".into()),
+            conditions: Some("latest calls: fastboot flash ; adb shell".into()),
+            cause: None,
+        };
+        let id = store
+            .record_failure_case_with_conditions(
+                "adb shell exit=1 | error: no devices",
+                "error: no devices/emulators found",
+                &detail,
+                "advisor",
+            )
+            .unwrap();
+        let rec = store.read(Scope::Project, &id).unwrap();
+        assert_eq!(rec.project.as_deref(), Some("/repo (main)"));
+        assert_eq!(rec.purpose.as_deref(), Some("flash the device"));
+        assert_eq!(rec.attempted.as_deref(), Some("exec_command: adb shell
+cwd: /repo"));
+        assert_eq!(rec.outcome.as_deref(), Some("exit code: 1
+output tail: error: no devices"));
+        assert_eq!(rec.conditions.as_deref(), Some("latest calls: fastboot flash ; adb shell"));
+        assert_eq!(rec.state_dependent, None);
+        // A repeat does not overwrite the detail.
+        let other = FailureDetail { conditions: Some("other".into()), ..Default::default() };
+        let again = store
+            .record_failure_case_with_conditions(
+                "adb shell exit=1 | error: no devices",
+                "x",
+                &other,
+                "advisor",
+            )
+            .unwrap();
+        assert_eq!(again, id);
+        assert_eq!(
+            store.read(Scope::Project, &id).unwrap().conditions.as_deref(),
+            Some("latest calls: fastboot flash ; adb shell")
+        );
+        // The same call worked later, in another state.
+        assert!(store.mark_state_dependent(&id, "latest calls: adb reboot ; adb shell").unwrap());
+        let rec = store.read(Scope::Project, &id).unwrap();
+        assert_eq!(rec.state_dependent, Some(true));
+        assert_eq!(rec.works_when.as_deref(), Some("latest calls: adb reboot ; adb shell"));
+        // Marking twice, or a missing case, does nothing.
+        assert!(!store.mark_state_dependent(&id, "again").unwrap());
+        assert!(!store.mark_state_dependent("failure_case-9999", "x").unwrap());
+    }
+
+    #[test]
+    fn a_later_success_marks_the_cases_of_that_call_only() {
+        let home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let store = Store::new(Some(cwd.path().to_path_buf()), home.path().to_path_buf());
+        let rec = |sig: &str| {
+            store
+                .record_failure_case_with_conditions(sig, "s", &FailureDetail::default(), "advisor")
+                .unwrap()
+        };
+        let hit_exit = rec("exec_command {\"cmd\":\"adb shell\"} exit=1 | error: no devices");
+        let hit_plain = rec("exec_command {\"cmd\":\"adb shell\"}");
+        let other_args = rec("exec_command {\"cmd\":\"adb shell ls\"} exit=1 | x");
+        let other_tool = rec("shell {\"cmd\":\"adb shell\"} exit=1 | x");
+        let marked = store
+            .mark_state_dependent_for_call("exec_command {\"cmd\":\"adb shell\"}", "after reboot")
+            .unwrap();
+        assert_eq!(marked.len(), 2);
+        for id in [&hit_exit, &hit_plain] {
+            assert_eq!(store.read(Scope::Project, id).unwrap().state_dependent, Some(true));
+        }
+        for id in [&other_args, &other_tool] {
+            assert_eq!(store.read(Scope::Project, id).unwrap().state_dependent, None);
+        }
     }
 
     #[test]
