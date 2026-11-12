@@ -244,6 +244,8 @@ pub(crate) async fn run_pre_tool_use_hooks(
         let mut action =
             codex_inocode_knowledge::action_from_tool_input(tool_name.name(), tool_input);
         action.model = Some(turn_context.model_info().slug.clone());
+        // Relaxations ("this request", "this session") are tied to the thread they were said in.
+        action.thread_id = Some(sess.thread_id.to_string());
         let verdict = codex_inocode_knowledge::guard_check(guard_cwd.as_path(), &action);
         codex_inocode_knowledge::record_guard_hits(
             &verdict,
