@@ -47,7 +47,7 @@ impl Store {
     }
 
     /// 規則の `appliesTo` に照らして、この場所(セッションの cwd と `extra_paths`)で効くか。
-    pub(crate) fn applies(&self, rec: &Record, extra_paths: &[String]) -> bool {
+    pub fn applies(&self, rec: &Record, extra_paths: &[String]) -> bool {
         if rec.applies_to.is_empty() {
             return true;
         }

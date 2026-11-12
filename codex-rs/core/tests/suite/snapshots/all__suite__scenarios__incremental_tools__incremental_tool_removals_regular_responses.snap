@@ -31,6 +31,8 @@ Settings:
           - function/record_evidence
           - function/search_evidence
           - function/verify_evidence_document
+          - function/search_knowledge
+          - function/read_knowledge
           - custom/apply_patch
           - function/view_image
         - namespace/multi_agent_v1: Tools for spawning and managing sub-agents.; hash=715404652052c8e8

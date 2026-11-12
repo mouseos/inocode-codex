@@ -27,6 +27,8 @@ Settings:
           - function/record_evidence
           - function/search_evidence
           - function/verify_evidence_document
+          - function/search_knowledge
+          - function/read_knowledge
           - custom/apply_patch
           - function/view_image
         - tool_search: # Tool discovery  Searches over deferred tool metadata with BM25 and exposes matching tools for t...; args=[limit, query]; hash=b573ed69c0b0e6c7
@@ -72,6 +74,8 @@ Settings: same as window 1
           - function/record_evidence
           - function/search_evidence
           - function/verify_evidence_document
+          - function/search_knowledge
+          - function/read_knowledge
           - custom/apply_patch
           - function/view_image
         - tool_search: # Tool discovery  Searches over deferred tool metadata with BM25 and exposes matching tools for t...; args=[limit, query]; hash=b573ed69c0b0e6c7

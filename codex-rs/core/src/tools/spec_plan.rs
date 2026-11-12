@@ -16,7 +16,9 @@ use crate::tools::handlers::ExecCommandHandlerOptions;
 use crate::tools::handlers::GetContextRemainingHandler;
 use crate::tools::handlers::ReadMessageHandler;
 use crate::tools::handlers::RecordEvidenceHandler;
+use crate::tools::handlers::ReadKnowledgeHandler;
 use crate::tools::handlers::SearchEvidenceHandler;
+use crate::tools::handlers::SearchKnowledgeHandler;
 use crate::tools::handlers::VerifyEvidenceDocumentHandler;
 use crate::tools::handlers::ListAvailablePluginsToInstallHandler;
 use crate::tools::handlers::ListMcpResourceTemplatesHandler;
@@ -1382,6 +1384,13 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
         registry.add(RecordEvidenceHandler);
         registry.add(SearchEvidenceHandler);
         registry.add(VerifyEvidenceDocumentHandler);
+    }
+
+    // Knowledge database, read only: the model looks up rules, failure cases and facts when it
+    // needs them (the first turn already lists the blocking rules).
+    if codex_inocode_flags::load().knowledge_enabled {
+        registry.add(SearchKnowledgeHandler);
+        registry.add(ReadKnowledgeHandler);
     }
 
     let current_time_reminder_enabled = features.enabled(Feature::CurrentTimeReminder);
