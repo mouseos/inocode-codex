@@ -15,7 +15,7 @@ Settings:
   stream: true
   text: {"verbosity":"low"}
   tool_choice: "auto"
-  tools (16; hash=27347a59e60712b2):
+  tools (16; hash=6968843bfb72c4e0):
     - custom/exec: Run JavaScript code to orchestrate/compose tool calls - Evaluates the provided JavaScript code in...; hash=fa7605135cd358f2
     - function/wait: Waits on a yielded `exec` cell and returns new output or completion. - Use `wait` only after `exe...; args=[cell_id, max_tokens, terminate, yield_time_ms]; hash=6692d8f6c55be489
     - function/exec_command: Runs a command in a PTY, returning output or a session ID for ongoing interaction.  exec tool dec...; args=[additional_permissions, cmd, justification, login, max_output_tokens, prefix_rule, sandbox_permissions, shell, tty, workdir, yield_time_ms]; hash=aa589375135b8809
@@ -27,8 +27,8 @@ Settings:
     - function/record_evidence: Record a fact you found, together with its source, in the evidence database. Use it whenever you ...; args=[claim, claim_type, confidence, quote, source_text, source_title, source_url, status]; hash=86432a707c9b223a
     - function/search_evidence: Search the evidence database for facts recorded earlier with `record_evidence`, including in othe...; args=[limit, query, status]; hash=778ca84ff85864a8
     - function/verify_evidence_document: Check a document you wrote against recorded sources. It reports, and does not change anything: qu...; args=[source_ids, text]; hash=916682f3676e1237
-    - function/search_knowledge: Search this project's knowledge database: the rules about what must not be done, past failure cas...; args=[include_inactive, kind, limit, query]; hash=9d97f9d2c023e3bb
-    - function/read_knowledge: Read one knowledge record in full: its text, reason, what to avoid, what worked, where it came fr...; args=[id]; hash=977b343c8fb39740
+    - function/search_knowledge: Search this project's knowledge database: the rules about what must not be done, past failure cas...; args=[include_inactive, kind, limit, query]; hash=b5e692d7e88007ba
+    - function/read_knowledge: Read one knowledge record in full: its text, reason, what to avoid, what worked, where it came fr...; args=[id]; hash=aed60cb6faf4c1a7
     - custom/apply_patch: The `apply_patch` tool can be used to edit files. This is a FREEFORM tool, so do not wrap the pat...; hash=11c5b5ed4fb972e8
     - function/view_image: View a local image file from the filesystem when visual inspection is needed. Use this for images...; args=[path]; hash=0e7abbd0a5b17fb9
     - tool_search: # Tool discovery  Searches over deferred tool metadata with BM25 and exposes matching tools for t...; args=[limit, query]; hash=b573ed69c0b0e6c7
@@ -52,7 +52,7 @@ Settings:
 ## Window 2 (after request 2)
 Settings: relative to window 1
   model: "updated-tools-model"
-  tools (16; hash=7c17c1626b0d0c44):
+  tools (16; hash=d6c06725bb884c46):
     ~ custom/exec: Updated execution instructions.  Some deferred nested tools may be omitted from this description....; hash=779a6774cc86a6be
 -- request 3 (turn) --
 00:message/developer:
