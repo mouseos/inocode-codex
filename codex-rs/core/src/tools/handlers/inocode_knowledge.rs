@@ -82,8 +82,11 @@ failure cases and what worked, decisions, known facts, open issues, contracts an
 Check it before an action that could be forbidden or that may have gone wrong before, for example \
 before deleting or force-pushing, touching a protected file, or retrying something that failed. \
 The first turn only lists the blocking rules; this finds the rest. Each result has the id, kind, \
-status, title and a short summary; use `read_knowledge` with the id for the full text. It only \
-reads: it cannot add or change rules.",
+status, title and a short summary; use `read_knowledge` with the id for the full text. A failure \
+case is not a ban: it says under which conditions something failed (`whenItFailed`). Compare those \
+conditions with the situation now and avoid the action only when they match; when they do not \
+match, it may be used. A case marked `stateDependent` has also succeeded under other conditions \
+(`worksWhen`). It only reads: it cannot add or change rules.",
         properties,
         &[],
     )
@@ -97,8 +100,9 @@ pub(crate) fn create_read_knowledge_tool() -> ToolSpec {
     tool(
         READ_KNOWLEDGE_TOOL_NAME,
         "Read one knowledge record in full: its text, reason, what to avoid, what worked, where it \
-came from and how it is enforced. Use it on an id from `search_knowledge` when the summary is not \
-enough to decide what to do.",
+came from and how it is enforced. For a failure case it gives the conditions it failed under \
+(`whenItFailed`); avoid the action only if the situation now matches them. Use it on an id from \
+`search_knowledge` when the summary is not enough to decide what to do.",
         properties,
         &["id"],
     )
@@ -119,6 +123,43 @@ fn as_str<T: serde::Serialize>(value: &T) -> Option<String> {
     serde_json::to_value(value)
         .ok()
         .and_then(|v| v.as_str().map(str::to_string))
+}
+
+/// A failure case that records no failure: a call that succeeded, or a stall made only of reading
+/// and searching. Kept in the database, never returned as a failure.
+fn not_a_failure(r: &Record) -> bool {
+    if r.kind != Kind::FailureCase {
+        return false;
+    }
+    let symptom = r.symptom.as_deref().unwrap_or("").trim();
+    symptom.ends_with("-> ok") || symptom.starts_with("[built-in search output]")
+}
+
+/// "Under these conditions it failed ..." with the conditions first. Not a prohibition.
+fn when_it_failed(r: &Record) -> Option<String> {
+    if r.kind != Kind::FailureCase {
+        return None;
+    }
+    let mut out = String::new();
+    match r.conditions.as_deref().filter(|c| !c.trim().is_empty()) {
+        Some(c) => out.push_str(&format!("When: {c}. ")),
+        None => out.push_str("When: the conditions were not recorded. "),
+    }
+    if let Some(s) = r.symptom.as_deref().filter(|s| !s.trim().is_empty()) {
+        out.push_str(&format!("It failed with: {s}. "));
+    }
+    if let Some(c) = r.cause.as_deref().filter(|c| !c.trim().is_empty()) {
+        out.push_str(&format!("Cause: {c}. "));
+    }
+    if r.state_dependent == Some(true) {
+        out.push_str("The same call has also succeeded");
+        match r.works_when.as_deref().filter(|w| !w.trim().is_empty()) {
+            Some(w) => out.push_str(&format!(" when: {w}. ")),
+            None => out.push_str(" under other conditions. "),
+        }
+    }
+    out.push_str("This is not a ban: avoid it only if the situation now matches these conditions.");
+    Some(out)
 }
 
 #[derive(Debug, Deserialize)]
@@ -156,6 +197,7 @@ fn search(store: &Store, args: SearchArgs) -> Result<serde_json::Value, String> 
         .into_iter()
         .filter(|row| {
             (include_inactive || row.record.status.is_live())
+                && !not_a_failure(&row.record)
                 && (row.record.kind != Kind::Rule || store.applies(&row.record, &[]))
         })
         .take(limit)
@@ -169,6 +211,8 @@ fn search(store: &Store, args: SearchArgs) -> Result<serde_json::Value, String> 
                 "title": r.title,
                 "severity": r.severity.as_ref().and_then(as_str),
                 "summary": row.summary,
+                "whenItFailed": when_it_failed(&r),
+                "stateDependent": r.state_dependent,
                 "doNot": r.do_not,
                 "whatWorked": r.what_worked,
             })
@@ -191,6 +235,15 @@ fn full(r: &Record) -> serde_json::Value {
             m.remove(key);
         }
         m.insert("kind".to_string(), json!(r.kind.as_str()));
+        if let Some(text) = when_it_failed(r) {
+            m.insert("whenItFailed".to_string(), json!(text));
+        }
+        if not_a_failure(r) {
+            m.insert(
+                "note".to_string(),
+                json!("This record is not a failure (the call succeeded, or it only read and searched)."),
+            );
+        }
     }
     v
 }
@@ -363,6 +416,45 @@ mod tests {
         assert!(rec.get("createdBy").is_none());
         let err = read(&s, ReadArgs { id: "rule-9999".into() }).unwrap_err();
         assert!(err.contains("search_knowledge"));
+    }
+
+    #[test]
+    fn failure_cases_come_back_with_conditions_and_not_as_a_ban() {
+        let (_d, s) = store();
+        let mut f = Record::new(Kind::FailureCase, "失敗: adb shell");
+        f.symptom = Some("adb: device offline".into());
+        f.conditions = Some("fastboot の最中だった(直前: fastboot flash boot)".into());
+        f.state_dependent = Some(true);
+        f.works_when = Some("通常起動のあと".into());
+        s.write(f).unwrap();
+        let mut ok = Record::new(Kind::FailureCase, "失敗: list_events {}");
+        ok.symptom = Some("list_events {} -> ok".into());
+        s.write(ok).unwrap();
+        let mut search_only = Record::new(Kind::FailureCase, "失敗: 8 tool calls");
+        search_only.symptom = Some("[built-in search output]".into());
+        s.write(search_only).unwrap();
+        let q = |q: &str| SearchArgs { query: Some(q.into()), kind: None, include_inactive: None, limit: None };
+        let found = search(&s, q("adb")).unwrap();
+        assert_eq!(found["count"], 1);
+        let text = found["results"][0]["whenItFailed"].as_str().unwrap();
+        assert!(text.starts_with("When: fastboot の最中だった"));
+        assert!(text.contains("通常起動のあと") && text.contains("not a ban"));
+        assert_eq!(found["results"][0]["stateDependent"], true);
+        // a success and a read-only stall are not returned as failures
+        assert_eq!(search(&s, q("list_events")).unwrap()["count"], 0);
+        assert_eq!(search(&s, q("tool calls")).unwrap()["count"], 0);
+        let all = search(&s, SearchArgs { query: None, kind: Some("failure_case".into()), include_inactive: None, limit: None }).unwrap();
+        assert_eq!(all["count"], 1);
+        // a failure without recorded conditions says so
+        let mut bare = Record::new(Kind::FailureCase, "失敗: x");
+        bare.symptom = Some("boom".into());
+        let id = s.write(bare).unwrap();
+        let got = read(&s, ReadArgs { id }).unwrap();
+        assert!(got["records"][0]["whenItFailed"].as_str().unwrap().contains("not recorded"));
+        // read by id still shows a success record, with a note
+        let rid = s.all(None).iter().find(|r| r.title.contains("list_events")).unwrap().id.clone();
+        let got = read(&s, ReadArgs { id: rid }).unwrap();
+        assert!(got["records"][0]["note"].is_string());
     }
 
     #[test]
