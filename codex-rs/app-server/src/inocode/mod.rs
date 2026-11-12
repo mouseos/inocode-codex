@@ -6,6 +6,7 @@
 
 pub(crate) mod accounts;
 mod advisor;
+mod checkpoint;
 mod compaction;
 mod evidence;
 mod flags;
@@ -52,6 +53,7 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
         Some("knowledge") => knowledge::handle(request).await,
         Some("evidence") => evidence::handle(request).await,
         Some("team") => team::handle(request).await,
+        Some("checkpoint") => checkpoint::handle(request).await,
         Some("advisor") => advisor::handle(request).await,
         Some("stats") => stats::handle(request).await,
         Some("messages") => messages::handle(request).await,

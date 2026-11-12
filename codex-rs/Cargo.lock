@@ -2231,7 +2231,9 @@ dependencies = [
  "codex-http-client",
  "codex-image-generation-extension",
  "codex-inocode-advisor",
+ "codex-inocode-checkpoint",
  "codex-inocode-compaction",
+ "codex-inocode-deepai",
  "codex-inocode-evidence",
  "codex-inocode-flags",
  "codex-inocode-knowledge",
@@ -3161,7 +3163,9 @@ dependencies = [
  "codex-http-client",
  "codex-image-generation-extension",
  "codex-inocode-advisor",
+ "codex-inocode-checkpoint",
  "codex-inocode-compaction",
+ "codex-inocode-deepai",
  "codex-inocode-evidence",
  "codex-inocode-flags",
  "codex-inocode-knowledge",
@@ -4134,6 +4138,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-inocode-checkpoint"
+version = "0.0.0"
+dependencies = [
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+]
+
+[[package]]
 name = "codex-inocode-compaction"
 version = "0.0.0"
 dependencies = [
@@ -4141,6 +4156,22 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "tokio",
+]
+
+[[package]]
+name = "codex-inocode-deepai"
+version = "0.0.0"
+dependencies = [
+ "pretty_assertions",
+ "rand 0.9.3",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tiny_http",
+ "tokio",
+ "url",
+ "wiremock",
 ]
 
 [[package]]
@@ -4628,6 +4659,7 @@ dependencies = [
  "codex-features",
  "codex-feedback",
  "codex-http-client",
+ "codex-inocode-deepai",
  "codex-keyring-store",
  "codex-login",
  "codex-model-provider-info",

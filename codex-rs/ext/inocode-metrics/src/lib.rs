@@ -37,6 +37,10 @@ pub enum MetricEvent {
     LedgerRepresented { full: u64, marked: u64 },
     /// Old tool outputs were offloaded to files before a compaction.
     ObservationsOffloaded { count: u64, bytes: u64 },
+    /// A restore point was made. `bytes_written` is what the store newly took (shared content is free).
+    CheckpointMade { files: u64, bytes_written: u64, millis: u64 },
+    /// A restore point was left out because it would have taken longer than the time budget.
+    CheckpointOmitted,
     /// The agent asked the user something and waited (`question_kind`: `request_user_input`, `approval`,
     /// `permissions`). `wait_ms` is the time from the question to its answer.
     UserQuestion { question_kind: String, wait_ms: u64 },
@@ -72,6 +76,16 @@ pub struct MetricCounters {
     pub observations_offloaded: u64,
     #[serde(default)]
     pub observation_bytes_offloaded: u64,
+    #[serde(default)]
+    pub checkpoints_made: u64,
+    #[serde(default)]
+    pub checkpoint_files: u64,
+    #[serde(default)]
+    pub checkpoint_bytes_written: u64,
+    #[serde(default)]
+    pub checkpoint_millis: u64,
+    #[serde(default)]
+    pub checkpoints_omitted: u64,
     /// Questions put to the user (input requests, approvals, permission requests).
     #[serde(default)]
     pub user_questions: u64,
@@ -104,6 +118,17 @@ impl MetricCounters {
                 self.observations_offloaded += count;
                 self.observation_bytes_offloaded += bytes;
             }
+            MetricEvent::CheckpointMade {
+                files,
+                bytes_written,
+                millis,
+            } => {
+                self.checkpoints_made += 1;
+                self.checkpoint_files += files;
+                self.checkpoint_bytes_written += bytes_written;
+                self.checkpoint_millis += millis;
+            }
+            MetricEvent::CheckpointOmitted => self.checkpoints_omitted += 1,
             MetricEvent::UserQuestion {
                 question_kind,
                 wait_ms,

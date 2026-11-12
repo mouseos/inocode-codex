@@ -78,6 +78,13 @@ pub const PARAMS: &[ParamSpec] = &[
     // Provisional default (10), no evidence behind the value: tool outputs older than this many
     // calls are offloaded to files before a compaction.
     int("compaction.keep_recent_observations", 10),
+    // Provisional defaults taken from the Codex snapshot code (no measurement of ours behind them):
+    // files of this size or more are not saved in a restore point.
+    int("checkpoint.max_file_bytes", 10_485_760),
+    // An untracked directory with this many files or more is not saved.
+    int("checkpoint.max_untracked_dir_files", 200),
+    // A restore point that would take longer than this many seconds is not made.
+    int("checkpoint.budget_secs", 240),
     // 0 = follow the history truncation budget; otherwise bytes above which a tool output is spilled out of the rollout.
     int("rollout.large_output_bytes", 0),
     // 0 = a quarter of physical memory (counted as 3x the bytes read) is the most one load may hold.

@@ -10505,6 +10505,17 @@
             "null"
           ]
         },
+        "deepai": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InocodeAccountDeepAi"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "DeepAI entries only: the sign-in's identity and the Theos balance. Absent for other providers."
+        },
         "email": {
           "description": "The account's e-mail address, from the sign-in (ChatGPT: ID token; Claude: profile). `null` when unknown. Local only; shown on the account screen.",
           "type": [
@@ -10581,6 +10592,93 @@
         "priority",
         "provider",
         "state"
+      ],
+      "type": "object"
+    },
+    "InocodeAccountDeepAi": {
+      "description": "The DeepAI side of an account: which key it is (never the key), and the Theos balance read from `GET /theos`. Amounts are decimal strings, as the server writes them.",
+      "properties": {
+        "balance": {
+          "default": null,
+          "description": "Theos left.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "balanceStatus": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/InocodeDeepAiBalanceStatus"
+            }
+          ],
+          "description": "`ok`: the balance below is the last read. `notRead`: no read has happened yet. `error`: the last read failed (`error*` say how; a balance, if any, is the last good one)."
+        },
+        "enabled": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "error": {
+          "default": null,
+          "description": "Display text (Japanese) of the last failure, naming the code and the HTTP status.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "errorCode": {
+          "default": null,
+          "description": "`error.code` of the last failure, when the server gave one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "errorStatus": {
+          "default": null,
+          "description": "HTTP status of the last failure; `0` when there was no answer.",
+          "format": "uint16",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "granted": {
+          "default": null,
+          "description": "Theos the day grants.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "isPro": {
+          "default": null,
+          "description": "`null` until it is known (the sign-in answers it; a pasted key learns it on the first usage read).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "keyId": {
+          "description": "The first 12 hex characters of `sha256(api_key)`: a way to tell keys apart on screen.",
+          "type": "string"
+        },
+        "refreshAt": {
+          "default": null,
+          "description": "When the allowance comes back, as the server wrote it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "balanceStatus",
+        "keyId"
       ],
       "type": "object"
     },
@@ -11191,6 +11289,94 @@
       ],
       "type": "object"
     },
+    "InocodeCheckpointItem": {
+      "description": "One restore point: the files that were about to change when a tool call ran.",
+      "properties": {
+        "bytesWritten": {
+          "description": "Bytes newly written to the store (content already stored costs nothing).",
+          "format": "int64",
+          "type": "integer"
+        },
+        "callId": {
+          "type": "string"
+        },
+        "files": {
+          "description": "Files whose content was saved.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "`applyPatch`, `shell`, or `safety` (made by a restore, from the state it replaced).",
+          "type": "string"
+        },
+        "millis": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "paths": {
+          "description": "Paths that were saved (relative to `root`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "root": {
+          "description": "The folder the paths are relative to.",
+          "type": "string"
+        },
+        "skipped": {
+          "description": "Paths left out, each with the reason.",
+          "items": {
+            "$ref": "#/definitions/InocodeCheckpointSkipped"
+          },
+          "type": "array"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "tsMs": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "turnId": {
+          "description": "The turn the change belongs to (`turn/start`'s turn id).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "bytesWritten",
+        "callId",
+        "files",
+        "id",
+        "kind",
+        "millis",
+        "paths",
+        "root",
+        "skipped",
+        "threadId",
+        "tsMs",
+        "turnId"
+      ],
+      "type": "object"
+    },
+    "InocodeCheckpointSkipped": {
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "reason"
+      ],
+      "type": "object"
+    },
     "InocodeCompactionEvent": {
       "properties": {
         "auto": {
@@ -11286,6 +11472,14 @@
       ],
       "title": "InocodeCompactionEventNotification",
       "type": "object"
+    },
+    "InocodeDeepAiBalanceStatus": {
+      "enum": [
+        "ok",
+        "notRead",
+        "error"
+      ],
+      "type": "string"
     },
     "InocodeEvidenceClaim": {
       "properties": {
@@ -11947,6 +12141,62 @@
       ],
       "type": "string"
     },
+    "InocodeKeyVerification": {
+      "description": "The result of the check made when an API key is added (one light authenticated read).",
+      "properties": {
+        "httpStatus": {
+          "default": null,
+          "description": "HTTP status of the provider's answer, when there was one.",
+          "format": "uint16",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "models": {
+          "description": "The models the key can use, when the provider listed them. Use them for the picker.",
+          "items": {
+            "$ref": "#/definitions/InocodeVerifiedModel"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "default": null,
+          "description": "Display text (Japanese) for `unverified`: why the check could not be made.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/InocodeKeyVerificationStatus"
+        }
+      },
+      "required": [
+        "models",
+        "status"
+      ],
+      "type": "object"
+    },
+    "InocodeKeyVerificationStatus": {
+      "oneOf": [
+        {
+          "description": "The provider accepted the key.",
+          "enum": [
+            "verified"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "The check could not be made (no connection, a timeout, an error status): the key was stored anyway and may or may not work.",
+          "enum": [
+            "unverified"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "InocodeKnowledgeConfidence": {
       "enum": [
         "high",
@@ -12401,10 +12651,19 @@
       "type": "object"
     },
     "InocodeMeasuredPrice": {
-      "description": "A price estimated from the user's own usage. Never mixed with the reference price. For a subscription it is an upper bound (other devices' usage is included). Reserved: the usage statistics fill it; until then it is absent.",
+      "description": "A price from the user's own recorded usage: the tokens of this app's live requests (the last 30 days) priced at the reference price. Never mixed with the reference price. For a subscription (`billing: plan_included`) it is an upper bound. Absent when the model has no reference price or no request was recorded.",
       "properties": {
         "basis": {
           "type": "string"
+        },
+        "cachedInputTokens": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "input": {
           "default": null,
@@ -12436,6 +12695,33 @@
           "format": "double",
           "type": [
             "number",
+            "null"
+          ]
+        },
+        "outputTokens": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "totalCostUsd": {
+          "default": null,
+          "description": "What the counted requests would cost at the reference price, in USD (the sum of recorded tokens times the listed prices; not a bill).",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "uncachedInputTokens": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
             "null"
           ]
         },
@@ -12716,6 +13002,17 @@
             "$ref": "#/definitions/InocodeModelScore"
           },
           "type": "array"
+        },
+        "theos": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InocodeModelTheos"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "DeepAI models only: whether the model is free and what a request costs in Theos."
         }
       },
       "required": [
@@ -12881,6 +13178,32 @@
         "license",
         "name",
         "url"
+      ],
+      "type": "object"
+    },
+    "InocodeModelTheos": {
+      "description": "How a DeepAI model is paid for. Read from the live catalog, never guessed.",
+      "properties": {
+        "isFree": {
+          "description": "`theosPerRequest` is `\"0\"` and the model is not `premier`.",
+          "type": "boolean"
+        },
+        "premier": {
+          "description": "The catalog's `premier` mark (the older sign of a Theos-consuming model).",
+          "type": "boolean"
+        },
+        "theosPerRequest": {
+          "default": null,
+          "description": "Theos one request consumes, as the catalog writes it (`\"0\"`, `\"3\"`, `\"10\"`); absent when the catalog gives none for this model.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "isFree",
+        "premier"
       ],
       "type": "object"
     },
@@ -14183,6 +14506,24 @@
         "bytes",
         "id",
         "tsMs"
+      ],
+      "type": "object"
+    },
+    "InocodeVerifiedModel": {
+      "properties": {
+        "displayName": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
       ],
       "type": "object"
     },

@@ -612,6 +612,27 @@ async fn execute_prepared_patch(
     tracker: Option<&SharedTurnDiffTracker>,
     tool_ctx: ToolCtx,
 ) -> Result<String, FunctionCallError> {
+    // Restore point: the files this patch touches, saved before it changes them.
+    {
+        let mut paths: Vec<PathBuf> = Vec::new();
+        for (path, change) in request.action.changes() {
+            paths.push(path.to_path_buf());
+            if let ApplyPatchFileChange::Update {
+                move_path: Some(dest),
+                ..
+            } = change
+            {
+                paths.push(dest.to_path_buf());
+            }
+        }
+        crate::inocode_checkpoint::before_apply_patch(
+            tool_ctx.session.as_ref(),
+            tool_ctx.step_context.turn.as_ref(),
+            &tool_ctx.call_id,
+            paths,
+        )
+        .await;
+    }
     let emitter = ToolEmitter::apply_patch_for_environment(
         request.changes.as_ref().clone(),
         matches!(

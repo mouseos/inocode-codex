@@ -1538,6 +1538,13 @@ impl UnifiedExecProcessManager {
             call_id: context.call_id.clone(),
             tool_name: ToolName::plain("exec_command"),
         };
+        // Restore point: what is already changed or untracked, saved before the command runs.
+        crate::inocode_checkpoint::before_shell(
+            context.session.as_ref(),
+            context.step_context.turn.as_ref(),
+            &context.call_id,
+        )
+        .await;
         let result = orchestrator
             .run(&mut runtime, &req, &tool_ctx)
             .await

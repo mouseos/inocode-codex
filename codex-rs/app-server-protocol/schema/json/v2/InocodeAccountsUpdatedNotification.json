@@ -16,6 +16,17 @@
             "null"
           ]
         },
+        "deepai": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/InocodeAccountDeepAi"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "DeepAI entries only: the sign-in's identity and the Theos balance. Absent for other providers."
+        },
         "email": {
           "description": "The account's e-mail address, from the sign-in (ChatGPT: ID token; Claude: profile). `null` when unknown. Local only; shown on the account screen.",
           "type": [
@@ -92,6 +103,93 @@
         "priority",
         "provider",
         "state"
+      ],
+      "type": "object"
+    },
+    "InocodeAccountDeepAi": {
+      "description": "The DeepAI side of an account: which key it is (never the key), and the Theos balance read from `GET /theos`. Amounts are decimal strings, as the server writes them.",
+      "properties": {
+        "balance": {
+          "default": null,
+          "description": "Theos left.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "balanceStatus": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/InocodeDeepAiBalanceStatus"
+            }
+          ],
+          "description": "`ok`: the balance below is the last read. `notRead`: no read has happened yet. `error`: the last read failed (`error*` say how; a balance, if any, is the last good one)."
+        },
+        "enabled": {
+          "default": null,
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "error": {
+          "default": null,
+          "description": "Display text (Japanese) of the last failure, naming the code and the HTTP status.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "errorCode": {
+          "default": null,
+          "description": "`error.code` of the last failure, when the server gave one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "errorStatus": {
+          "default": null,
+          "description": "HTTP status of the last failure; `0` when there was no answer.",
+          "format": "uint16",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "granted": {
+          "default": null,
+          "description": "Theos the day grants.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "isPro": {
+          "default": null,
+          "description": "`null` until it is known (the sign-in answers it; a pasted key learns it on the first usage read).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "keyId": {
+          "description": "The first 12 hex characters of `sha256(api_key)`: a way to tell keys apart on screen.",
+          "type": "string"
+        },
+        "refreshAt": {
+          "default": null,
+          "description": "When the allowance comes back, as the server wrote it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "balanceStatus",
+        "keyId"
       ],
       "type": "object"
     },
@@ -328,6 +426,14 @@
         "usedPercent"
       ],
       "type": "object"
+    },
+    "InocodeDeepAiBalanceStatus": {
+      "enum": [
+        "ok",
+        "notRead",
+        "error"
+      ],
+      "type": "string"
     },
     "InocodeResetCreditStatus": {
       "oneOf": [

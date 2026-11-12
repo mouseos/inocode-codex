@@ -606,6 +606,18 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeTeamStatusResponse,
     },
+    #[experimental("inocode/checkpoint/list")]
+    InocodeCheckpointList => "inocode/checkpoint/list" {
+        params: v2::InocodeCheckpointListParams,
+        serialization: None,
+        response: v2::InocodeCheckpointListResponse,
+    },
+    #[experimental("inocode/checkpoint/restore")]
+    InocodeCheckpointRestore => "inocode/checkpoint/restore" {
+        params: v2::InocodeCheckpointRestoreParams,
+        serialization: None,
+        response: v2::InocodeCheckpointRestoreResponse,
+    },
     #[experimental("inocode/metrics/summary")]
     InocodeMetricsSummary => "inocode/metrics/summary" {
         params: v2::InocodeMetricsSummaryParams,

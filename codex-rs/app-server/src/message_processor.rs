@@ -1225,6 +1225,8 @@ impl MessageProcessor {
             | ClientRequest::InocodeEvidenceGraph { .. }
             | ClientRequest::InocodeEvidenceVerifyDocument { .. }
             | ClientRequest::InocodeTeamStatus { .. }
+            | ClientRequest::InocodeCheckpointList { .. }
+            | ClientRequest::InocodeCheckpointRestore { .. }
             | ClientRequest::InocodeMetricsSummary { .. }
             | ClientRequest::InocodeMetricsHistory { .. }
             | ClientRequest::InocodeStatsSummary { .. }

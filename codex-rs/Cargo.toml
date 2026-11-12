@@ -79,12 +79,13 @@ members = [
     "ext/inocode-ledger",
     "ext/inocode-evidence",
     "ext/inocode-knowledge",
+    "ext/inocode-checkpoint",
     "ext/inocode-advisor",
     "ext/inocode-compaction",
     "ext/inocode-metrics",
     "ext/inocode-model-catalog",
-    "ext/inocode-stats",
     "ext/inocode-deepai",
+    "ext/inocode-stats",
     "ext/inocode-protocol",
     "ext/inocode-team",
     "ext/inocode-tool-output",
@@ -269,12 +270,13 @@ codex-inocode-ledger = { path = "ext/inocode-ledger" }
 codex-inocode-evidence = { path = "ext/inocode-evidence" }
 codex-inocode-knowledge = { path = "ext/inocode-knowledge" }
 codex-inocode-advisor = { path = "ext/inocode-advisor" }
+codex-inocode-checkpoint = { path = "ext/inocode-checkpoint" }
 codex-inocode-compaction = { path = "ext/inocode-compaction" }
 codex-inocode-metrics = { path = "ext/inocode-metrics" }
 codex-inocode-model-catalog = { path = "ext/inocode-model-catalog" }
+codex-inocode-deepai = { path = "ext/inocode-deepai" }
 codex-inocode-stats = { path = "ext/inocode-stats" }
 codex-inocode-protocol = { path = "ext/inocode-protocol" }
-codex-inocode-deepai = { path = "ext/inocode-deepai" }
 codex-inocode-team = { path = "ext/inocode-team" }
 codex-inocode-tool-output = { path = "ext/inocode-tool-output" }
 codex-external-agent-migration = { path = "external-agent-migration" }

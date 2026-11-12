@@ -16,7 +16,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 /// All flag keys, in contract order.
-pub const FLAG_KEYS: [&str; 13] = [
+pub const FLAG_KEYS: [&str; 14] = [
     "metrics.enabled",
     "wait.event_driven",
     "knowledge.enabled",
@@ -30,6 +30,7 @@ pub const FLAG_KEYS: [&str; 13] = [
     "evidence.enabled",
     "read_message.enabled",
     "model_enrichment.fetch",
+    "checkpoint.enabled",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +49,8 @@ pub struct InocodeFlags {
     pub read_message_enabled: bool,
     /// Read public benchmark and price sources for the model picker (off: cache only).
     pub model_enrichment_fetch: bool,
+    /// Restore points for file changes in the working folder.
+    pub checkpoint_enabled: bool,
 }
 
 impl Default for InocodeFlags {
@@ -66,6 +69,7 @@ impl Default for InocodeFlags {
             evidence_enabled: true,
             read_message_enabled: true,
             model_enrichment_fetch: true,
+            checkpoint_enabled: true,
         }
     }
 }
@@ -143,6 +147,7 @@ impl InocodeFlags {
             "evidence.enabled" => self.evidence_enabled,
             "read_message.enabled" => self.read_message_enabled,
             "model_enrichment.fetch" => self.model_enrichment_fetch,
+            "checkpoint.enabled" => self.checkpoint_enabled,
             _ => return None,
         })
     }
@@ -163,6 +168,7 @@ impl InocodeFlags {
             "evidence.enabled" => &mut self.evidence_enabled,
             "read_message.enabled" => &mut self.read_message_enabled,
             "model_enrichment.fetch" => &mut self.model_enrichment_fetch,
+            "checkpoint.enabled" => &mut self.checkpoint_enabled,
             _ => return false,
         };
         *slot = value;
@@ -250,7 +256,7 @@ mod tests {
         let f = InocodeFlags::load_from(dir.path());
         assert_eq!(f, InocodeFlags::default());
         assert!(f.entries().iter().all(|(_, v)| *v));
-        assert_eq!(f.entries().len(), 13);
+        assert_eq!(f.entries().len(), 14);
     }
 
     #[test]

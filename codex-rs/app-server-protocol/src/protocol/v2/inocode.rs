@@ -2010,3 +2010,90 @@ pub struct InocodeGoalCompletionEvidenceResponse {
     #[ts(optional = nullable)]
     pub evidence: Option<InocodeGoalCompletionEvidence>,
 }
+
+// --------------------------------------------------------------- checkpoint
+
+/// One restore point: the files that were about to change when a tool call ran.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeCheckpointItem {
+    pub id: String,
+    pub thread_id: String,
+    /// The turn the change belongs to (`turn/start`'s turn id).
+    pub turn_id: String,
+    pub call_id: String,
+    pub ts_ms: i64,
+    /// `applyPatch`, `shell`, or `safety` (made by a restore, from the state it replaced).
+    pub kind: String,
+    /// The folder the paths are relative to.
+    pub root: String,
+    /// Files whose content was saved.
+    pub files: i64,
+    /// Bytes newly written to the store (content already stored costs nothing).
+    pub bytes_written: i64,
+    pub millis: i64,
+    /// Paths that were saved (relative to `root`).
+    pub paths: Vec<String>,
+    /// Paths left out, each with the reason.
+    pub skipped: Vec<InocodeCheckpointSkipped>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeCheckpointSkipped {
+    pub path: String,
+    pub reason: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeCheckpointListParams {
+    pub thread_id: String,
+    /// Only the points of this turn.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub turn_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeCheckpointListResponse {
+    /// Oldest first.
+    pub items: Vec<InocodeCheckpointItem>,
+}
+
+/// Puts the files of the working folder back as they were before a turn (or before one restore
+/// point). Give `turnId` or `pointId`. The state that is replaced is saved first as a `safety`
+/// point. Only file changes inside the working folder come back: nothing outside it, no processes,
+/// no network or account operations. The conversation is rolled back separately (`thread/rollback`).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeCheckpointRestoreParams {
+    pub thread_id: String,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub turn_id: Option<String>,
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub point_id: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeCheckpointRestoreResponse {
+    pub restored: Vec<String>,
+    pub removed: Vec<String>,
+    /// Left as they are: too large, symlinks, or no saved copy.
+    pub skipped: Vec<String>,
+    /// Restoring this point undoes the restore.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub safety_point_id: Option<String>,
+    pub from_points: Vec<String>,
+}

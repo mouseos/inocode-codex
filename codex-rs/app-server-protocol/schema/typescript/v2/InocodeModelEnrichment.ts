@@ -4,10 +4,15 @@
 import type { InocodeBenchmarkMatch } from "./InocodeBenchmarkMatch";
 import type { InocodeModelPrice } from "./InocodeModelPrice";
 import type { InocodeModelScore } from "./InocodeModelScore";
+import type { InocodeModelTheos } from "./InocodeModelTheos";
 
 export type InocodeModelEnrichment = { provider: string, modelId: string,
 /**
  * How the model was found in the benchmark source; absent when it was not found (then
  * `scores` is empty: unmeasured, not zero).
  */
-benchmarkMatch?: InocodeBenchmarkMatch | null, scores: Array<InocodeModelScore>, price: InocodeModelPrice, };
+benchmarkMatch?: InocodeBenchmarkMatch | null, scores: Array<InocodeModelScore>, price: InocodeModelPrice,
+/**
+ * DeepAI models only: whether the model is free and what a request costs in Theos.
+ */
+theos?: InocodeModelTheos | null, };

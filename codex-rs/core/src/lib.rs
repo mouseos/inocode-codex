@@ -43,6 +43,7 @@ pub use thread_input::InputWaitOutcome;
 mod turn_extension_data;
 pub use turn_extension_data::WithTurnExtensionData;
 mod compact_inocode;
+mod inocode_checkpoint;
 mod inocode_unattended;
 mod inocode_team;
 mod compact_model_fallback;
