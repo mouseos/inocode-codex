@@ -134,6 +134,7 @@ Set status to `complete` only when the objective has actually been achieved and 
 Set status to `blocked` only when the same blocking condition has repeated for at least three consecutive goal turns, counting the original/user-triggered turn and any automatic continuations, and the agent cannot make meaningful progress without user input or an external-state change.
 If the user resumes a goal that was previously marked `blocked`, treat the resumed run as a fresh blocked audit. If the same blocking condition then repeats for at least three consecutive resumed goal turns, set status to `blocked` again.
 Once the blocked threshold is satisfied, do not keep reporting that you are still blocked while leaving the goal active; set status to `blocked`.
+Requirements that only a person can satisfy (their own action, approval, permission or credentials, or a check on their real device) count as that kind of blocker once everything you can do is done; a turn that only waits for or asks the person again counts toward the three turns.
 Do not use `blocked` merely because the work is hard, slow, uncertain, incomplete, or would benefit from clarification.
 Do not mark a goal complete merely because its budget is nearly exhausted or because you are stopping work.
 You cannot use this tool to resume, budget-limit, or usage-limit a goal; those status changes are controlled by the user or system.

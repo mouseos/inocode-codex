@@ -46,6 +46,7 @@ Blocked audit:
 - Only use status "blocked" when the same blocking condition has repeated for at least three consecutive goal turns, counting the original/user-triggered turn and any automatic goal continuations.
 - If the user resumes a goal that was previously marked "blocked", treat the resumed run as a fresh blocked audit. If the same blocking condition then repeats for at least three consecutive resumed goal turns, call update_goal with status "blocked" again.
 - Use status "blocked" only when you are truly at an impasse and cannot make meaningful progress without user input or an external-state change.
+- Remaining requirements that only a person can satisfy (their own action, approval, permission, or credentials; a check on their real device) are such a blocker. Do all the work you can first. After that, a turn that only waits for or asks the person again counts toward the three turns. Do not restate the same request each turn: on the third such turn, call update_goal with status "blocked" and give the reason in your message.
 - Once the blocked threshold is satisfied, do not keep reporting that you are still blocked while leaving the goal active; call update_goal with status "blocked".
 - Never use status "blocked" merely because the work is hard, slow, uncertain, incomplete, or would benefit from clarification.
 
