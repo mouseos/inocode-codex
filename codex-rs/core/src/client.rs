@@ -2107,6 +2107,7 @@ impl ResponsesHttpExecutor<'_> {
             } else {
                 None
             };
+            let is_deepai = deepai_attempt.is_some();
             let stream_result = if let Some(attempt) = deepai_attempt {
                 let provider = attempt.provider.clone();
                 let result = if attempt.responses {
@@ -2182,12 +2183,12 @@ impl ResponsesHttpExecutor<'_> {
                 }
                 // DeepAI says "session busy": wait for the time it names and send the same request
                 // again, until the user stops the turn.
-                Err(err) if crate::deepai_client::busy_wait(&err).is_some() => {
+                Err(err) if is_deepai && crate::deepai_client::busy_wait(&err).is_some() => {
                     let wait = crate::deepai_client::busy_wait(&err).unwrap_or_default();
                     tokio::time::sleep(wait).await;
                     continue;
                 }
-                Err(err) if crate::deepai_client::user_error(&err).is_some() => {
+                Err(err) if is_deepai && crate::deepai_client::user_error(&err).is_some() => {
                     let response_debug_context =
                         extract_response_debug_context_from_api_error(&err);
                     let shown = crate::deepai_client::user_error(&err)
