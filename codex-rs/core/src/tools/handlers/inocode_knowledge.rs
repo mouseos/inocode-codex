@@ -134,7 +134,10 @@ fn not_a_failure(r: &Record) -> bool {
         return false;
     }
     let symptom = r.symptom.as_deref().unwrap_or("").trim();
-    symptom.ends_with("-> ok") || symptom.starts_with("[built-in search output]")
+    // The advisor's automatic records are candidates (doc 60): kept, not offered to the model.
+    codex_inocode_knowledge::kb::is_candidate(r)
+        || symptom.ends_with("-> ok")
+        || symptom.starts_with("[built-in search output]")
 }
 
 /// "Under these conditions it failed ..." with the conditions first. Not a prohibition.
@@ -480,6 +483,12 @@ mod tests {
         assert!(text.starts_with("When: fastboot の最中だった"));
         assert!(text.contains("通常起動のあと") && text.contains("not a ban"));
         assert_eq!(found["results"][0]["stateDependent"], true);
+        // the advisor's automatic records are candidates, not returned
+        let mut cand = Record::new(Kind::FailureCase, "失敗: cand");
+        cand.symptom = Some("candidate boom".into());
+        cand.created_by = Some("advisor".into());
+        s.write(cand).unwrap();
+        assert_eq!(search(&s, q("candidate")).unwrap()["count"], 0);
         // a success and a read-only stall are not returned as failures
         assert_eq!(search(&s, q("list_events")).unwrap()["count"], 0);
         assert_eq!(search(&s, q("tool calls")).unwrap()["count"], 0);

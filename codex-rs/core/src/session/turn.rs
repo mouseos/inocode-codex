@@ -306,6 +306,9 @@ pub(crate) async fn run_turn(
     }
 
     let user_input = turn_user_input(&input);
+    // What the user typed, for the ledger: a scheduled heartbeat is a user-role input too, but
+    // nobody typed it.
+    let typed_input = typed_user_input(&input);
     let allow_plugin_mentions =
         !crate::guardian::is_basic_session_source(&turn_context.session_source);
     let McpStartupRequirements {
@@ -489,7 +492,7 @@ pub(crate) async fn run_turn(
     sess.merge_connector_selection(explicitly_enabled_connectors.clone())
         .await;
     let inocode_extra_items =
-        crate::compact_inocode::turn_extras(&sess, &turn_context, &user_input).await;
+        crate::compact_inocode::turn_extras(&sess, &turn_context, &user_input, &typed_input).await;
     sess.set_previous_turn_settings(Some(PreviousTurnSettings {
         model: turn_context.model_info().slug.clone(),
         cyber_access_program: turn_context.cyber_access_program,
@@ -1139,6 +1142,21 @@ fn is_uploaded_audio_file(input: &UserInput) -> bool {
             audio: AudioReference::File { .. }
         }
     )
+}
+
+/// The user input the user typed: `turn_user_input` without the inputs a schedule submitted.
+pub(crate) fn typed_user_input(input: &[TurnInput]) -> Vec<UserInput> {
+    input
+        .iter()
+        .filter_map(|item| match item {
+            TurnInput::UserInput {
+                content, metadata, ..
+            } if metadata.origin.is_user() => Some(content.as_slice()),
+            _ => None,
+        })
+        .flatten()
+        .cloned()
+        .collect()
 }
 
 pub(crate) fn turn_user_input(input: &[TurnInput]) -> Vec<UserInput> {

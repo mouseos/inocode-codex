@@ -526,9 +526,10 @@ pub(crate) async fn turn_extras(
     sess: &crate::session::session::Session,
     turn: &crate::session::turn_context::TurnContext,
     user_input: &[codex_protocol::user_input::UserInput],
+    typed_input: &[codex_protocol::user_input::UserInput],
 ) -> Vec<ResponseItem> {
     let mut items = Vec::new();
-    ledger_record(&sess.thread_id.to_string(), &turn.session_source, user_input);
+    ledger_record(&sess.thread_id.to_string(), &turn.session_source, typed_input);
     let flags = codex_inocode_flags::InocodeFlags::load();
     if flags.team_auto_select {
         let text: String = user_input
@@ -742,5 +743,64 @@ mod tests {
         let listed = saved_outputs_text(&results, "mine").unwrap();
         assert_eq!(listed.matches("exec_command, 500 bytes").count(), 1);
         assert!(saved_outputs_text(&results, "nobody").is_none());
+    }
+
+    /// The ledger holds what the user typed and nothing else. Only `TurnInput::UserInput` whose
+    /// origin is the user reaches it (`typed_user_input`); a Stop-hook continuation, a goal
+    /// continuation, a notification and a message from another agent arrive as response items or
+    /// inter-agent messages, a scheduled heartbeat is marked, and a sub-agent's own input is skipped
+    /// at the door.
+    #[test]
+    fn only_what_the_user_typed_reaches_the_ledger() {
+        use crate::session::TurnInput;
+        use codex_history::ResponseItemEnvelope;
+        use codex_history::UserInputOrigin;
+        use codex_protocol::models::ContentItem;
+        use codex_protocol::user_input::UserInput;
+        let text = |t: &str| vec![UserInput::Text { text: t.into(), text_elements: Vec::new() }];
+        let user = |origin: UserInputOrigin, t: &str| TurnInput::UserInput {
+            content: text(t),
+            client_id: None,
+            metadata: crate::session::UserInputMetadata { origin, ..Default::default() },
+        };
+        let synthetic = |role: &str, t: &str| {
+            TurnInput::ResponseItem(ResponseItemEnvelope::new(ResponseItem::Message {
+                status: None,
+                encrypted_content: None,
+                id: None,
+                role: role.to_owned(),
+                content: vec![ContentItem::InputText { text: t.to_owned() }],
+                phase: None,
+                internal_chat_message_metadata_passthrough: None,
+            }))
+        };
+        // Stop-hook continuation prompt, goal continuation (user or developer role), a
+        // notification, a scheduled heartbeat: none of them is typed.
+        let not_typed = vec![
+            synthetic("user", "Stop hook: keep going"),
+            synthetic("developer", "Continue working toward the active thread goal."),
+            synthetic("user", "<notification>build finished</notification>"),
+            user(UserInputOrigin::Heartbeat, "scheduled check-in"),
+        ];
+        assert!(crate::session::turn::typed_user_input(&not_typed).is_empty());
+        // Only the typed input comes through, with its text.
+        let mixed: Vec<TurnInput> = not_typed
+            .into_iter()
+            .chain([user(UserInputOrigin::User, "止めないで")])
+            .collect();
+        let typed = crate::session::turn::typed_user_input(&mixed);
+        assert_eq!(typed, text("止めないで"));
+        // A sub-agent (its start text comes from the parent agent) never records, whatever it is given.
+        let id = "t-ledger-synthetic-subagent";
+        for source in [
+            codex_protocol::protocol::SubAgentSource::Review,
+            codex_protocol::protocol::SubAgentSource::Compact,
+        ] {
+            ledger_record(id, &codex_protocol::protocol::SessionSource::SubAgent(source), &typed);
+        }
+        assert!(codex_inocode_ledger::entries_at(&codex_inocode_ledger::inocode_home(), id).is_empty());
+        // Empty input records nothing either (an internal continuation has no user input).
+        ledger_record(id, &codex_protocol::protocol::SessionSource::Cli, &[]);
+        assert!(codex_inocode_ledger::entries_at(&codex_inocode_ledger::inocode_home(), id).is_empty());
     }
 }
