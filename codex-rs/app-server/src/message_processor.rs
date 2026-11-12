@@ -1214,6 +1214,28 @@ impl MessageProcessor {
             }
             ClientRequest::ServerDiagnostics { .. } => Ok(Some(read_server_diagnostics().into())),
             request @ (ClientRequest::InocodeKnowledgeList { .. }
+            | ClientRequest::InocodeKbProjectGet { .. }
+            | ClientRequest::InocodeKbOverviewRead { .. }
+            | ClientRequest::InocodeKbOverviewWrite { .. }
+            | ClientRequest::InocodeKbIndexGet { .. }
+            | ClientRequest::InocodeKbPageList { .. }
+            | ClientRequest::InocodeKbPageRead { .. }
+            | ClientRequest::InocodeKbPageWrite { .. }
+            | ClientRequest::InocodeKbPageDelete { .. }
+            | ClientRequest::InocodeKbTagList { .. }
+            | ClientRequest::InocodeKbProhibitionList { .. }
+            | ClientRequest::InocodeKbProhibitionWrite { .. }
+            | ClientRequest::InocodeKbProhibitionRetract { .. }
+            | ClientRequest::InocodeKbRelaxationAdd { .. }
+            | ClientRequest::InocodeKbRelaxationRevoke { .. }
+            | ClientRequest::InocodeKbLedgerList { .. }
+            | ClientRequest::InocodeKbLedgerGet { .. }
+            | ClientRequest::InocodeKbChecklistList { .. }
+            | ClientRequest::InocodeKbChecklistWrite { .. }
+            | ClientRequest::InocodeKbChecklistSetDone { .. }
+            | ClientRequest::InocodeKbLegacyRules { .. }
+            | ClientRequest::InocodeKbLegacyMigrate { .. }
+            | ClientRequest::InocodeKbLegacyFailureCases { .. }
             | ClientRequest::InocodeKnowledgeRead { .. }
             | ClientRequest::InocodeKnowledgeWrite { .. }
             | ClientRequest::InocodeKnowledgeSetStatus { .. }

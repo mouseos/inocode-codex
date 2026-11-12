@@ -2142,3 +2142,54 @@ pub struct InocodeCheckpointRestoreResponse {
     pub safety_point_id: Option<String>,
     pub from_points: Vec<String>,
 }
+
+// ---------------------------------------------------------------- kb (knowledge redesign, stage 1)
+// Contract: ref/docs/61-knowledge-redesign-contract.md and ref/contract-fixtures/kb-*.json. The fields
+// of each method are free-form JSON objects (see the fixtures); the server checks them.
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeKbParams {
+    #[serde(default, flatten)]
+    pub fields: HashMap<String, serde_json::Value>,
+}
+
+macro_rules! kb_responses {
+    ($($name:ident),* $(,)?) => {
+        $(
+            #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+            #[serde(rename_all = "camelCase")]
+            #[ts(export_to = "v2/")]
+            pub struct $name {
+                #[serde(default, flatten)]
+                pub fields: HashMap<String, serde_json::Value>,
+            }
+        )*
+    };
+}
+
+kb_responses!(
+    InocodeKbProjectGetResponse,
+    InocodeKbOverviewReadResponse,
+    InocodeKbOverviewWriteResponse,
+    InocodeKbIndexGetResponse,
+    InocodeKbPageListResponse,
+    InocodeKbPageReadResponse,
+    InocodeKbPageWriteResponse,
+    InocodeKbPageDeleteResponse,
+    InocodeKbTagListResponse,
+    InocodeKbProhibitionListResponse,
+    InocodeKbProhibitionWriteResponse,
+    InocodeKbProhibitionRetractResponse,
+    InocodeKbRelaxationAddResponse,
+    InocodeKbRelaxationRevokeResponse,
+    InocodeKbLedgerListResponse,
+    InocodeKbLedgerGetResponse,
+    InocodeKbChecklistListResponse,
+    InocodeKbChecklistWriteResponse,
+    InocodeKbChecklistSetDoneResponse,
+    InocodeKbLegacyRulesResponse,
+    InocodeKbLegacyMigrateResponse,
+    InocodeKbLegacyFailureCasesResponse,
+);

@@ -12,6 +12,7 @@ mod evidence;
 mod flags;
 pub(crate) mod goal_review;
 mod guard;
+mod kb;
 mod knowledge;
 mod messages;
 mod metrics;
@@ -51,6 +52,7 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
     match method.strip_prefix("inocode/").and_then(|m| m.split('/').next()) {
         Some("accounts" | "providers") => accounts::handle(request).await,
         Some("knowledge") => knowledge::handle(request).await,
+        Some("kb") => kb::handle(request).await,
         Some("evidence") => evidence::handle(request).await,
         Some("team") => team::handle(request).await,
         Some("checkpoint") => checkpoint::handle(request).await,

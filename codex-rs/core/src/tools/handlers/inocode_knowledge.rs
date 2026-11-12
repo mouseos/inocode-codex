@@ -17,7 +17,6 @@ use crate::tools::registry::ToolExecutor;
 use codex_inocode_knowledge::Kind;
 use codex_inocode_knowledge::ListQuery;
 use codex_inocode_knowledge::Record;
-use codex_inocode_knowledge::Status;
 use codex_inocode_knowledge::Store;
 use codex_tools::JsonSchema;
 use codex_tools::ResponsesApiTool;
@@ -366,6 +365,7 @@ impl CoreToolRuntime for ReadKnowledgeHandler {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_inocode_knowledge::Status;
     use codex_inocode_knowledge::Severity;
 
     fn name_and_description(spec: ToolSpec) -> (String, String) {

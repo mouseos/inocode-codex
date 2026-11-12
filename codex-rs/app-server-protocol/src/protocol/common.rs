@@ -564,6 +564,138 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeKnowledgePromoteResponse,
     },
+    #[experimental("inocode/kb/project/get")]
+    InocodeKbProjectGet => "inocode/kb/project/get" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbProjectGetResponse,
+    },
+    #[experimental("inocode/kb/overview/read")]
+    InocodeKbOverviewRead => "inocode/kb/overview/read" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbOverviewReadResponse,
+    },
+    #[experimental("inocode/kb/overview/write")]
+    InocodeKbOverviewWrite => "inocode/kb/overview/write" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbOverviewWriteResponse,
+    },
+    #[experimental("inocode/kb/index/get")]
+    InocodeKbIndexGet => "inocode/kb/index/get" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbIndexGetResponse,
+    },
+    #[experimental("inocode/kb/page/list")]
+    InocodeKbPageList => "inocode/kb/page/list" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbPageListResponse,
+    },
+    #[experimental("inocode/kb/page/read")]
+    InocodeKbPageRead => "inocode/kb/page/read" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbPageReadResponse,
+    },
+    #[experimental("inocode/kb/page/write")]
+    InocodeKbPageWrite => "inocode/kb/page/write" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbPageWriteResponse,
+    },
+    #[experimental("inocode/kb/page/delete")]
+    InocodeKbPageDelete => "inocode/kb/page/delete" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbPageDeleteResponse,
+    },
+    #[experimental("inocode/kb/tag/list")]
+    InocodeKbTagList => "inocode/kb/tag/list" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbTagListResponse,
+    },
+    #[experimental("inocode/kb/prohibition/list")]
+    InocodeKbProhibitionList => "inocode/kb/prohibition/list" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbProhibitionListResponse,
+    },
+    #[experimental("inocode/kb/prohibition/write")]
+    InocodeKbProhibitionWrite => "inocode/kb/prohibition/write" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbProhibitionWriteResponse,
+    },
+    #[experimental("inocode/kb/prohibition/retract")]
+    InocodeKbProhibitionRetract => "inocode/kb/prohibition/retract" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbProhibitionRetractResponse,
+    },
+    #[experimental("inocode/kb/relaxation/add")]
+    InocodeKbRelaxationAdd => "inocode/kb/relaxation/add" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbRelaxationAddResponse,
+    },
+    #[experimental("inocode/kb/relaxation/revoke")]
+    InocodeKbRelaxationRevoke => "inocode/kb/relaxation/revoke" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbRelaxationRevokeResponse,
+    },
+    #[experimental("inocode/kb/ledger/list")]
+    InocodeKbLedgerList => "inocode/kb/ledger/list" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbLedgerListResponse,
+    },
+    #[experimental("inocode/kb/ledger/get")]
+    InocodeKbLedgerGet => "inocode/kb/ledger/get" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbLedgerGetResponse,
+    },
+    #[experimental("inocode/kb/checklist/list")]
+    InocodeKbChecklistList => "inocode/kb/checklist/list" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbChecklistListResponse,
+    },
+    #[experimental("inocode/kb/checklist/write")]
+    InocodeKbChecklistWrite => "inocode/kb/checklist/write" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbChecklistWriteResponse,
+    },
+    #[experimental("inocode/kb/checklist/setDone")]
+    InocodeKbChecklistSetDone => "inocode/kb/checklist/setDone" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbChecklistSetDoneResponse,
+    },
+    #[experimental("inocode/kb/legacy/rules")]
+    InocodeKbLegacyRules => "inocode/kb/legacy/rules" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbLegacyRulesResponse,
+    },
+    #[experimental("inocode/kb/legacy/migrate")]
+    InocodeKbLegacyMigrate => "inocode/kb/legacy/migrate" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbLegacyMigrateResponse,
+    },
+    #[experimental("inocode/kb/legacy/failureCases")]
+    InocodeKbLegacyFailureCases => "inocode/kb/legacy/failureCases" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbLegacyFailureCasesResponse,
+    },
     #[experimental("inocode/knowledge/search")]
     InocodeKnowledgeSearch => "inocode/knowledge/search" {
         params: v2::InocodeKnowledgeSearchParams,
