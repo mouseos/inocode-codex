@@ -338,14 +338,21 @@ impl Store {
     pub fn pinned_rules(&self) -> Vec<Record> {
         self.live_rules()
             .into_iter()
-            .filter(|r| r.severity == Some(Severity::Block) && self.applies(r, &[]))
+            .filter(|r| {
+                r.severity == Some(Severity::Block)
+                    && r.irreversible != Some(false)
+                    && self.applies(r, &[])
+            })
             .collect()
     }
 
     pub fn pinned_rules_text(&self) -> String {
         let mut lines = Vec::new();
         for r in self.live_rules() {
-            if r.severity != Some(Severity::Block) || !self.applies(&r, &[]) {
+            if r.severity != Some(Severity::Block)
+                || r.irreversible == Some(false)
+                || !self.applies(&r, &[])
+            {
                 continue;
             }
             let reason = r.reason.as_deref().filter(|s| !s.is_empty()).unwrap_or("");
@@ -779,6 +786,34 @@ mod tests {
     }
 
     #[test]
+    fn only_irreversible_block_rules_are_in_the_fixed_list_but_all_still_guard() {
+        let (_d, s) = store();
+        let mut undoable = rule("方針の規則", Severity::Block, &["re:^make deploy-preview"], &[]);
+        undoable.irreversible = Some(false);
+        s.write(undoable).unwrap();
+        s.write(rule("リセット券の消費", Severity::Block, &["re:resetCredit/consume"], &[])).unwrap();
+        let mut explicit = rule("明示の不可逆", Severity::Block, &["re:^drop database"], &[]);
+        explicit.irreversible = Some(true);
+        s.write(explicit).unwrap();
+        let text = s.pinned_rules_text();
+        // Unmarked (as before) and explicitly irreversible rules are listed; an undoable one is not.
+        assert!(text.contains("リセット券の消費") && text.contains("明示の不可逆"));
+        assert!(!text.contains("方針の規則"));
+        assert_eq!(s.pinned_rules().len(), 2);
+        // The guard still blocks the undoable one, with its id and reason in the message.
+        let v = check_action(
+            &s,
+            &GuardAction { command: Some("make deploy-preview".into()), ..Default::default() },
+        );
+        assert_eq!(v.blocked.len(), 1);
+        let msg = guard_message(&v).unwrap();
+        assert!(msg.contains("rule-0001") && msg.contains("方針の規則") && msg.contains("理由"));
+        // The field survives the file round trip.
+        let back = s.read(Scope::Project, "rule-0001").unwrap();
+        assert_eq!(back.irreversible, Some(false));
+    }
+
+    #[test]
     fn project_rules_reach_sessions_under_the_folder_only() {
         let d = tempfile::tempdir().unwrap();
         let home = d.path().join("home");
@@ -788,6 +823,7 @@ mod tests {
         std::fs::create_dir_all(&repo).unwrap();
         std::fs::create_dir_all(&other).unwrap();
         // The rule is written from the workspace folder (parent of the repositories).
+        std::fs::create_dir_all(ws.join(".inocode").join("knowledge")).unwrap();
         let at_ws = store_at(&ws, &home);
         let mut r = rule("名前でプロセスを止めない", Severity::Block, &["re:taskkill\\s+/IM"], &[]);
         r.status = Status::Verified;
@@ -818,6 +854,7 @@ mod tests {
         let cli = ws.join("cli").join("inocode");
         std::fs::create_dir_all(&gui).unwrap();
         std::fs::create_dir_all(&cli).unwrap();
+        std::fs::create_dir_all(ws.join(".inocode").join("knowledge")).unwrap();
         let mut r = rule("GUI だけ", Severity::Block, &["re:npm\\s+publish"], &[]);
         r.applies_to = vec!["gui/inocode-desktop".into()];
         let id = store_at(&ws, &home).write(r).unwrap();

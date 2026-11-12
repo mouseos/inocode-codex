@@ -171,6 +171,11 @@ pub struct Record {
     /// セッションの cwd かこの操作のパスがどれかに合うときだけ効く。空なら scope の範囲全体。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub applies_to: Vec<String>,
+    /// rule: `false` when the thing it stops can be undone. Such a rule is not put into the first
+    /// turn's fixed list; the model learns it from the block or warning text when it is hit.
+    /// Absent means the rule is treated as irreversible (listed), as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub irreversible: Option<bool>,
     // failure_case
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
@@ -262,6 +267,7 @@ impl Record {
             enforced_by: None,
             from_failure: None,
             applies_to: Vec::new(),
+            irreversible: None,
             signature: None,
             symptom: None,
             root_cause: None,
