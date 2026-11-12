@@ -24,9 +24,13 @@ else
 fi
 unset _ino_root
 
-# cargo, then remove stale copies/old executables (files in use are skipped). Use instead of plain cargo.
+# cargo under the shared lock (scripts/ino-lock.ps1; a dead owner's lock is removed automatically),
+# then remove stale copies/old executables. Use instead of plain cargo.
 ino-cargo() {
+  local me; me=$(cat /proc/$$/winpid 2>/dev/null || echo 0)
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INO_ROOT/scripts/ino-lock.ps1" -Action Acquire -OwnerPid "$me" || return $?
   cargo "$@"; local rc=$?
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INO_ROOT/scripts/ino-clean.ps1" >/dev/null 2>&1
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INO_ROOT/scripts/ino-lock.ps1" -Action Release -OwnerPid "$me" >/dev/null 2>&1
   return $rc
 }

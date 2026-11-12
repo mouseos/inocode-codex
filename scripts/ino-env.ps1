@@ -21,10 +21,15 @@ if ($Gui) {
     $env:CARGO_TARGET_DIR = "$root\codex-rs\target-win"
 }
 
-# cargo, then remove stale copies/old executables (files in use are skipped). Use instead of plain cargo.
+# cargo under the shared lock (scripts\ino-lock.ps1; a dead owner's lock is removed automatically),
+# then remove stale copies/old executables. Use instead of plain cargo.
 function ino-cargo {
-    & cargo @args
-    $rc = $LASTEXITCODE
-    & "$root\scripts\ino-clean.ps1" | Out-Null
-    $global:LASTEXITCODE = $rc
+    & "$root\scripts\ino-lock.ps1" -Action Acquire -OwnerPid $PID
+    if ($LASTEXITCODE -ne 0) { return }
+    try {
+        & cargo @args
+        $rc = $LASTEXITCODE
+        & "$root\scripts\ino-clean.ps1" | Out-Null
+        $global:LASTEXITCODE = $rc
+    } finally { & "$root\scripts\ino-lock.ps1" -Action Release -OwnerPid $PID }
 }
