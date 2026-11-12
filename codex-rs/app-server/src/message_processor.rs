@@ -1232,6 +1232,7 @@ impl MessageProcessor {
             | ClientRequest::InocodeStatsSummary { .. }
             | ClientRequest::InocodeStatsHourly { .. }
             | ClientRequest::InocodeStatsDaily { .. }
+            | ClientRequest::InocodeStatsTurns { .. }
             | ClientRequest::InocodeStatsEstimate { .. }
             | ClientRequest::InocodeStatsSeedFromCodexHistory { .. }
             | ClientRequest::InocodeMetricsMarkFalsePositive { .. }
@@ -1260,8 +1261,8 @@ impl MessageProcessor {
             | ClientRequest::InocodeAccountsAddApiKey { .. }
             | ClientRequest::InocodeAccountsRemove { .. }
             | ClientRequest::InocodeAccountsRename { .. }
-            | ClientRequest::InocodeAccountsSetPriority { .. }
             | ClientRequest::InocodeAccountsUpdate { .. }
+            | ClientRequest::InocodeAccountsSetPriority { .. }
             | ClientRequest::InocodeAccountsSetEnabled { .. }
             | ClientRequest::InocodeAccountsUse { .. }
             | ClientRequest::InocodeAccountsLoginStart { .. }
@@ -1816,10 +1817,10 @@ impl MessageProcessor {
             ClientRequest::ModelList { params, .. } => {
                 self.catalog_processor.model_list(params).await
             }
-            ClientRequest::ExperimentalFeatureList { params, .. } => {
             ClientRequest::InocodeModelsRefresh { params, .. } => {
                 self.catalog_processor.inocode_models_refresh(params).await
             }
+            ClientRequest::ExperimentalFeatureList { params, .. } => {
                 self.catalog_processor
                     .experimental_feature_list(params)
                     .await

@@ -315,13 +315,13 @@ pub(super) async fn model_catalog_refresh_requests(
     if multi_agent_version == MultiAgentVersion::V1 {
         assert!(
         description.contains(
-            "Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents, delegation, or parallel agent work."
+            "Spawn sub-agents on your own when part of the work can run in parallel with yours or can be handed off without blocking your next step; the user does not need to ask."
         ),
         "expected explicit authorization rule in spawn_agent description: {description:?}"
     );
         assert!(
         description.contains(
-            "Requests for depth, thoroughness, research, investigation, or detailed codebase analysis do not count as permission to spawn."
+            "Keep work local when briefing a sub-agent would take longer than doing it."
         ) && description.contains("### When to delegate vs. do the subtask yourself"),
         "expected delegation decision guidance in spawn_agent description: {description:?}"
     );

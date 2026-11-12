@@ -343,7 +343,7 @@ pub struct Summary {
 }
 
 /// Output tokens divided by generation seconds, summed over the measured records.
-fn avg_speed<'a>(it: impl Iterator<Item = &'a RequestRecord>) -> (Option<f64>, u64) {
+pub(crate) fn avg_speed<'a>(it: impl Iterator<Item = &'a RequestRecord>) -> (Option<f64>, u64) {
     let (mut out, mut secs, mut n) = (0.0, 0.0, 0u64);
     for r in it {
         if let (Some(ms), Some(_)) = (r.gen_ms, r.tok_per_s) {

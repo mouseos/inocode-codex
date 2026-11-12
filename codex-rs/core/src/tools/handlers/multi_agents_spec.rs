@@ -762,7 +762,7 @@ fn spawn_agent_tool_description(
     let agent_role_usage_hint = if model_catalog_in_context {
         ""
     } else if available_models_description.is_some() {
-        "\nAgent-role guidance below only helps choose which agent to use after spawning is already authorized; it never authorizes spawning by itself."
+        "\nAgent-role guidance below helps choose which agent to use."
     } else {
         "\n"
     };
@@ -771,8 +771,8 @@ fn spawn_agent_tool_description(
         {tool_description}
 This spawn_agent tool provides you access to sub-agents that inherit your current model by default. Do not set the `model` field unless the user explicitly asks for a different model. You should follow the rules and guidelines below to use this tool.
 
-Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents, delegation, or parallel agent work.
-Requests for depth, thoroughness, research, investigation, or detailed codebase analysis do not count as permission to spawn.{agent_role_usage_hint}
+Spawn sub-agents on your own when part of the work can run in parallel with yours or can be handed off without blocking your next step; the user does not need to ask.
+Keep work local when briefing a sub-agent would take longer than doing it.{agent_role_usage_hint}
 
 ### When to delegate vs. do the subtask yourself
 - First, quickly analyze the overall user task and form a succinct high-level plan. Identify which tasks are immediate blockers on the critical path, and which tasks are sidecar tasks that are needed but can run in parallel without blocking the next local step. As part of that plan, explicitly decide what immediate task you should do locally right now. Do this planning step before delegating to agents so you do not hand off the immediate blocking task to a submodel and then waste time waiting on it.
@@ -911,8 +911,12 @@ fn spawn_agent_models_description(
             };
             let model_slug = &model.model;
             let description = &model.description;
+            // Benchmarks and list price from the model catalog, when it has been read.
+            let hint_suffix = codex_inocode_advisor::model_hint(model_slug)
+                .map(|hint| format!(" {hint}"))
+                .unwrap_or_default();
             format!(
-                "- `{model_slug}`: {description}{reasoning_efforts_suffix}{service_tiers_suffix}"
+                "- `{model_slug}`: {description}{reasoning_efforts_suffix}{service_tiers_suffix}{hint_suffix}"
             )
         })
         .collect::<Vec<_>>()

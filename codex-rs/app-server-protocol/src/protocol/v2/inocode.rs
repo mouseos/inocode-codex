@@ -1670,6 +1670,51 @@ pub struct InocodeStatsDailyResponse {
     pub days: Vec<InocodeStatsDailyRow>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsTurnsParams {
+    pub thread_id: String,
+    /// The newest turns only; all of them when absent.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub limit: Option<i64>,
+}
+
+/// One past turn. Where it began and ended comes from the thread's rollout; what was generated
+/// and how fast comes from the request records inside it. A value the records do not hold is
+/// null, never estimated.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsTurn {
+    pub turn_id: String,
+    /// Unix seconds; null when the rollout has no such line.
+    pub started_at: Option<i64>,
+    pub completed_at: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub time_to_first_token_ms: Option<i64>,
+    /// Requests of the thread that finished inside the turn.
+    pub requests: i64,
+    pub output_tokens: i64,
+    /// Output tokens over the generation seconds of the measured requests; null when none of
+    /// the turn's requests was measured (an older record, or a response too short to measure).
+    pub avg_tokens_per_second: Option<f64>,
+    /// Requests that had a measured speed.
+    pub speed_samples: i64,
+    /// The model of most of the turn's requests.
+    pub model: Option<String>,
+    pub provider: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeStatsTurnsResponse {
+    /// Oldest first.
+    pub turns: Vec<InocodeStatsTurn>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]

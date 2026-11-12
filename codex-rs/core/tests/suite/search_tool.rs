@@ -937,7 +937,7 @@ async fn tool_search_returns_deferred_v1_multi_agent_tools() -> Result<()> {
         .and_then(Value::as_str)
         .expect("spawn_agent description should be present");
     assert!(description.contains(
-        "Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents, delegation, or parallel agent work."
+        "Spawn sub-agents on your own when part of the work can run in parallel with yours or can be handed off without blocking your next step; the user does not need to ask."
     ));
     assert!(description.contains("### Designing delegated subtasks"));
     assert!(description.contains("### When to delegate vs. do the subtask yourself"));

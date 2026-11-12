@@ -2831,7 +2831,7 @@ async fn turn_start_ignores_deprecated_multi_agent_mode() -> Result<()> {
         .message_input_texts("developer");
     assert!(developer_texts.iter().any(|text| {
         text.contains(
-            "Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents",
+            "Spawn sub-agents on your own when part of the work can run in parallel with yours",
         )
     }));
     assert!(
@@ -2904,7 +2904,7 @@ async fn thread_start_ignores_deprecated_multi_agent_mode() -> Result<()> {
     assert!(developer_texts.iter().any(|text| {
         text.contains(MULTI_AGENT_MODE_OPEN_TAG)
             && text.contains(
-                "Do not spawn sub-agents unless the user or applicable AGENTS.md/skill instructions explicitly ask for sub-agents",
+                "Spawn sub-agents on your own when part of the work can run in parallel with yours",
             )
     }));
     assert!(

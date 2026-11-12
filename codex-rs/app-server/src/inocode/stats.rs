@@ -23,6 +23,9 @@ use codex_app_server_protocol::InocodeStatsSpeedSeries;
 use codex_app_server_protocol::InocodeStatsSummaryParams;
 use codex_app_server_protocol::InocodeStatsSummaryResponse;
 use codex_app_server_protocol::InocodeStatsTokenTotals;
+use codex_app_server_protocol::InocodeStatsTurn;
+use codex_app_server_protocol::InocodeStatsTurnsParams;
+use codex_app_server_protocol::InocodeStatsTurnsResponse;
 use codex_app_server_protocol::InocodeStatsWeekdayRow;
 use codex_inocode_stats::HourlyRow;
 use codex_inocode_stats::ModelStats;
@@ -272,8 +275,81 @@ pub(crate) fn spawn_notifier(
     });
 }
 
+/// The rollout of a thread: `sessions/<yyyy>/<mm>/<dd>/rollout-<time>-<thread id>.jsonl`.
+fn find_rollout(sessions: &std::path::Path, thread_id: &str) -> Option<std::path::PathBuf> {
+    let suffix = format!("-{thread_id}.jsonl");
+    let mut stack = vec![sessions.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(&suffix))
+            {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// Past turns of a thread with their speed: turn bounds from the rollout, speed from the
+/// records inside each turn. A thread without a rollout has no turns.
+pub(crate) fn turns_in(
+    store: &StatsStore,
+    sessions: &std::path::Path,
+    params: &InocodeStatsTurnsParams,
+) -> InocodeStatsTurnsResponse {
+    let Some(text) = find_rollout(sessions, &params.thread_id)
+        .and_then(|path| std::fs::read_to_string(path).ok())
+    else {
+        return InocodeStatsTurnsResponse { turns: Vec::new() };
+    };
+    let bounds = codex_inocode_stats::parse_turns(&text);
+    let records: Vec<_> = store
+        .read_since(0)
+        .into_iter()
+        .filter(|r| r.thread_id == params.thread_id)
+        .collect();
+    let mut turns: Vec<InocodeStatsTurn> = codex_inocode_stats::turn_speeds(&bounds, &records)
+        .into_iter()
+        .map(|t| InocodeStatsTurn {
+            turn_id: t.turn_id,
+            started_at: t.started_at,
+            completed_at: t.completed_at,
+            duration_ms: t.duration_ms.map(num),
+            time_to_first_token_ms: t.time_to_first_token_ms.map(num),
+            requests: num(t.requests),
+            output_tokens: num(t.output_tokens),
+            avg_tokens_per_second: t.avg_tok_per_s,
+            speed_samples: num(t.speed_samples),
+            model: t.model,
+            provider: t.provider,
+        })
+        .collect();
+    if let Some(limit) = params.limit.and_then(|l| usize::try_from(l).ok()) {
+        let skip = turns.len().saturating_sub(limit);
+        turns.drain(..skip);
+    }
+    InocodeStatsTurnsResponse { turns }
+}
+
 pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
     match request {
+        ClientRequest::InocodeStatsTurns { params, .. } => Ok(Some(
+            turns_in(
+                &StatsStore::from_env(),
+                &codex_inocode_flags::inocode_home().join("sessions"),
+                &params,
+            )
+            .into(),
+        )),
         ClientRequest::InocodeStatsSummary { params, .. } => {
             Ok(Some(summary_in(&StatsStore::from_env(), &params).into()))
         }
@@ -301,6 +377,52 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn past_turns_come_from_the_rollout_and_the_records_of_the_thread() {
+        let home = tempfile::tempdir().unwrap();
+        let day = home.path().join("sessions").join("2026").join("11").join("12");
+        std::fs::create_dir_all(&day).unwrap();
+        std::fs::write(
+            day.join("rollout-2026-11-12T00-00-00-thread-1.jsonl"),
+            concat!(
+                r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"a","started_at":1000}}"#,
+                "\n",
+                r#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"a","started_at":1000,"completed_at":1010,"duration_ms":10000,"time_to_first_token_ms":500}}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        let store = StatsStore::at(home.path());
+        let mut mine = record(0, 0.0);
+        mine.thread_id = "thread-1".into();
+        mine.ts_ms = 1_004_000;
+        mine.output = 200;
+        mine.gen_ms = Some(2_000);
+        mine.tok_per_s = codex_inocode_stats::RequestRecord::speed(200, Some(2_000));
+        let mut other = mine.clone();
+        other.thread_id = "thread-2".into();
+        store.append_all(&[mine, other]).unwrap();
+        let sessions = home.path().join("sessions");
+        let response = turns_in(
+            &store,
+            &sessions,
+            &InocodeStatsTurnsParams { thread_id: "thread-1".into(), limit: None },
+        );
+        assert_eq!(response.turns.len(), 1);
+        let turn = &response.turns[0];
+        assert_eq!(turn.requests, 1);
+        assert_eq!(turn.output_tokens, 200);
+        assert_eq!(turn.avg_tokens_per_second.map(|v| v.round() as i64), Some(100));
+        assert_eq!(turn.time_to_first_token_ms, Some(500));
+        // A thread without a rollout has no turns.
+        let none = turns_in(
+            &store,
+            &sessions,
+            &InocodeStatsTurnsParams { thread_id: "missing".into(), limit: None },
+        );
+        assert!(none.turns.is_empty());
+    }
     use codex_inocode_stats::LimitSample;
     use codex_inocode_stats::RequestRecord;
 

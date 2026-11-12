@@ -7,6 +7,7 @@
 mod agg;
 mod record;
 mod seed;
+mod turns;
 
 pub use agg::DailyRow;
 pub use agg::EstimateResult;
@@ -27,6 +28,10 @@ pub use record::RequestRecord;
 pub use record::StatsStore;
 pub use record::classify_window;
 pub use record::now_ms;
+pub use turns::TurnBounds;
+pub use turns::TurnSpeed;
+pub use turns::parse_turns;
+pub use turns::turn_speeds;
 pub use seed::SeedProgress;
 pub use seed::SeedReport;
 pub use seed::default_sessions_dir;

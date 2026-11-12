@@ -13586,6 +13586,21 @@
       ],
       "type": "object"
     },
+    "InocodeRefreshedModel": {
+      "properties": {
+        "displayName": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "displayName",
+        "id"
+      ],
+      "type": "object"
+    },
     "InocodeResetCreditFailure": {
       "properties": {
         "detail": {
@@ -14223,6 +14238,85 @@
         "cachedInput",
         "output",
         "uncachedInput"
+      ],
+      "type": "object"
+    },
+    "InocodeStatsTurn": {
+      "description": "One past turn. Where it began and ended comes from the thread's rollout; what was generated and how fast comes from the request records inside it. A value the records do not hold is null, never estimated.",
+      "properties": {
+        "avgTokensPerSecond": {
+          "description": "Output tokens over the generation seconds of the measured requests; null when none of the turn's requests was measured (an older record, or a response too short to measure).",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "completedAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "durationMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "model": {
+          "description": "The model of most of the turn's requests.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outputTokens": {
+          "format": "int64",
+          "type": "integer"
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requests": {
+          "description": "Requests of the thread that finished inside the turn.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "speedSamples": {
+          "description": "Requests that had a measured speed.",
+          "format": "int64",
+          "type": "integer"
+        },
+        "startedAt": {
+          "description": "Unix seconds; null when the rollout has no such line.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "timeToFirstTokenMs": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "outputTokens",
+        "requests",
+        "speedSamples",
+        "turnId"
       ],
       "type": "object"
     },

@@ -345,6 +345,7 @@ export type { InocodePriceTier } from "./InocodePriceTier";
 export type { InocodeProvider } from "./InocodeProvider";
 export type { InocodeProviderWire } from "./InocodeProviderWire";
 export type { InocodeReferencePrice } from "./InocodeReferencePrice";
+export type { InocodeRefreshedModel } from "./InocodeRefreshedModel";
 export type { InocodeResetCreditFailure } from "./InocodeResetCreditFailure";
 export type { InocodeResetCreditFailureReason } from "./InocodeResetCreditFailureReason";
 export type { InocodeResetCreditHistoryEntry } from "./InocodeResetCreditHistoryEntry";
@@ -364,6 +365,7 @@ export type { InocodeStatsSeedProgressNotification } from "./InocodeStatsSeedPro
 export type { InocodeStatsSpeedSeries } from "./InocodeStatsSpeedSeries";
 export type { InocodeStatsTokenTotals } from "./InocodeStatsTokenTotals";
 export type { InocodeStatsTokens } from "./InocodeStatsTokens";
+export type { InocodeStatsTurn } from "./InocodeStatsTurn";
 export type { InocodeStatsWeekdayRow } from "./InocodeStatsWeekdayRow";
 export type { InocodeTeamAgent } from "./InocodeTeamAgent";
 export type { InocodeTeamAgentState } from "./InocodeTeamAgentState";

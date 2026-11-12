@@ -11,8 +11,11 @@
 
 mod events;
 mod failure;
+mod model_hints;
 mod readonly;
 
+pub use model_hints::model_hint;
+pub use model_hints::set_model_hint;
 pub use failure::attempted_text;
 pub use failure::call_conditions;
 pub use failure::call_text;
