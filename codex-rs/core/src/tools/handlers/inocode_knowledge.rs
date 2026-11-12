@@ -86,7 +86,10 @@ status, title and a short summary; use `read_knowledge` with the id for the full
 case is not a ban: it says under which conditions something failed (`whenItFailed`). Compare those \
 conditions with the situation now and avoid the action only when they match; when they do not \
 match, it may be used. A case marked `stateDependent` has also succeeded under other conditions \
-(`worksWhen`). It only reads: it cannot add or change rules.",
+(`worksWhen`). When the conditions are unknown (it failed once without the state being checked), \
+do a cheap read-only check of the state first if there is one, then try once; if you do not know \
+how to check, just try. If the same result keeps coming in the same state, think of another way. \
+It only reads: it cannot add or change rules.",
         properties,
         &[],
     )
@@ -136,20 +139,35 @@ fn not_a_failure(r: &Record) -> bool {
 }
 
 /// "Under these conditions it failed ..." with the conditions first. Not a prohibition.
+/// An old record with none of the detail fields says so.
 fn when_it_failed(r: &Record) -> Option<String> {
     if r.kind != Kind::FailureCase {
         return None;
     }
+    let has = |v: &Option<String>| v.as_deref().is_some_and(|x| !x.trim().is_empty());
+    let no_detail = !(has(&r.project)
+        || has(&r.purpose)
+        || has(&r.attempted)
+        || has(&r.outcome)
+        || has(&r.conditions)
+        || has(&r.cause)
+        || !r.unknown_conditions.is_empty());
     let mut out = String::new();
-    match r.conditions.as_deref().filter(|c| !c.trim().is_empty()) {
-        Some(c) => out.push_str(&format!("When: {c}. ")),
-        None => out.push_str("When: the conditions were not recorded. "),
+    if no_detail {
+        out.push_str("No detail (recorded automatically). ");
+    }
+    let unknown = r.conditions_known == Some(false) || !has(&r.conditions);
+    if has(&r.conditions) && r.conditions_known != Some(false) {
+        out.push_str(&format!("When: {}. ", r.conditions.as_deref().unwrap_or("").trim()));
     }
     if let Some(s) = r.symptom.as_deref().filter(|s| !s.trim().is_empty()) {
         out.push_str(&format!("It failed with: {s}. "));
     }
     if let Some(c) = r.cause.as_deref().filter(|c| !c.trim().is_empty()) {
-        out.push_str(&format!("Cause: {c}. "));
+        out.push_str(&format!(
+            "Cause (a hypothesis, {}): {c}. ",
+            r.cause_confidence.as_deref().unwrap_or("not confirmed")
+        ));
     }
     if r.state_dependent == Some(true) {
         out.push_str("The same call has also succeeded");
@@ -157,10 +175,25 @@ fn when_it_failed(r: &Record) -> Option<String> {
             Some(w) => out.push_str(&format!(" when: {w}. ")),
             None => out.push_str(" under other conditions. "),
         }
+    } else if unknown {
+        out.push_str("It failed once without the state being checked");
+        if r.unknown_conditions.is_empty() {
+            out.push_str(". ");
+        } else {
+            out.push_str(&format!(" (not known: {}). ", r.unknown_conditions.join(", ")));
+        }
+        if r.unknown_conditions.is_empty() {
+            out.push_str("Try it; if a cheap read-only check of the state is at hand, do it first. ");
+        } else {
+            out.push_str("A cheap read-only check of those first, then one try. ");
+        }
     }
     out.push_str("This is not a ban: avoid it only if the situation now matches these conditions.");
     Some(out)
 }
+
+/// Only the first few failure cases of a result carry the full "when it failed" text.
+const DETAILED_FAILURES: usize = 3;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -201,7 +234,14 @@ fn search(store: &Store, args: SearchArgs) -> Result<serde_json::Value, String> 
                 && (row.record.kind != Kind::Rule || store.applies(&row.record, &[]))
         })
         .take(limit)
-        .map(|row| {
+        .scan(0usize, |failures, row| {
+            let detailed = row.record.kind != Kind::FailureCase || {
+                *failures += 1;
+                *failures <= DETAILED_FAILURES
+            };
+            Some((row, detailed))
+        })
+        .map(|(row, detailed)| {
             let r = row.record;
             json!({
                 "id": r.id,
@@ -211,7 +251,7 @@ fn search(store: &Store, args: SearchArgs) -> Result<serde_json::Value, String> 
                 "title": r.title,
                 "severity": r.severity.as_ref().and_then(as_str),
                 "summary": row.summary,
-                "whenItFailed": when_it_failed(&r),
+                "whenItFailed": if detailed { when_it_failed(&r) } else { None },
                 "stateDependent": r.state_dependent,
                 "doNot": r.do_not,
                 "whatWorked": r.what_worked,
@@ -450,11 +490,55 @@ mod tests {
         bare.symptom = Some("boom".into());
         let id = s.write(bare).unwrap();
         let got = read(&s, ReadArgs { id }).unwrap();
-        assert!(got["records"][0]["whenItFailed"].as_str().unwrap().contains("not recorded"));
+        assert!(got["records"][0]["whenItFailed"].as_str().unwrap().contains("No detail"));
         // read by id still shows a success record, with a note
         let rid = s.all(None).iter().find(|r| r.title.contains("list_events")).unwrap().id.clone();
         let got = read(&s, ReadArgs { id: rid }).unwrap();
         assert!(got["records"][0]["note"].is_string());
+    }
+
+    #[test]
+    fn unknown_conditions_and_old_records_are_said_plainly() {
+        let (_d, s) = store();
+        // An old automatic record: nothing but a signature and a symptom.
+        let mut old = Record::new(Kind::FailureCase, "失敗: adb shell");
+        old.symptom = Some("adb: device offline".into());
+        s.write(old).unwrap();
+        // A record that says what could not be checked, with a hypothesis for the cause.
+        let mut unknown = Record::new(Kind::FailureCase, "失敗: flash boot");
+        unknown.symptom = Some("flash failed".into());
+        unknown.attempted = Some("fastboot flash boot".into());
+        unknown.conditions_known = Some(false);
+        unknown.unknown_conditions = vec!["端末の状態".into(), "直前の状態確認の有無".into()];
+        unknown.cause = Some("ブートローダーが閉じていた".into());
+        s.write(unknown).unwrap();
+        let q = |q: &str| SearchArgs { query: Some(q.into()), kind: None, include_inactive: None, limit: None };
+        let a = search(&s, q("adb")).unwrap();
+        let text = a["results"][0]["whenItFailed"].as_str().unwrap();
+        assert!(text.starts_with("No detail (recorded automatically)."), "{text}");
+        assert!(text.contains("without the state being checked"));
+        let f = search(&s, q("flash")).unwrap();
+        let text = f["results"][0]["whenItFailed"].as_str().unwrap();
+        assert!(!text.contains("No detail"));
+        assert!(text.contains("端末の状態, 直前の状態確認の有無"), "{text}");
+        assert!(text.contains("a hypothesis") && text.contains("not a ban"));
+        // The tool description tells what to do when the conditions are unknown.
+        let (_, d) = name_and_description(create_search_knowledge_tool());
+        assert!(d.contains("cheap read-only check") && d.contains("just try"));
+    }
+
+    #[test]
+    fn only_the_first_few_failures_carry_the_long_text() {
+        let (_d, s) = store();
+        for i in 0..5 {
+            let mut f = Record::new(Kind::FailureCase, &format!("失敗: cmd{i}"));
+            f.symptom = Some(format!("boom{i}"));
+            s.write(f).unwrap();
+        }
+        let all = search(&s, SearchArgs { query: None, kind: Some("failure_case".into()), include_inactive: None, limit: None }).unwrap();
+        let longs = all["results"].as_array().unwrap().iter().filter(|r| r["whenItFailed"].is_string()).count();
+        assert_eq!(longs, 3);
+        assert_eq!(all["count"], 5);
     }
 
     #[test]

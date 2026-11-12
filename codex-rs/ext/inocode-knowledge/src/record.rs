@@ -208,6 +208,17 @@ pub struct Record {
     /// 成功したときの条件(`state_dependent` のとき)。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub works_when: Option<String>,
+    /// `false`: the conditions at the time of the failure could not be established. Absent while
+    /// nothing was said about it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conditions_known: Option<bool>,
+    /// What could not be checked when it failed (for example the state of the device, or whether
+    /// the state was checked before the call). Also the candidates for a read-only check next time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unknown_conditions: Vec<String>,
+    /// How sure `cause` is. A cause is a hypothesis unless it says otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause_confidence: Option<String>,
     /// Markdown 本文(front-matter の外)。
     #[serde(default)]
     pub body: String,
@@ -265,6 +276,9 @@ impl Record {
             cause: None,
             state_dependent: None,
             works_when: None,
+            conditions_known: None,
+            unknown_conditions: Vec::new(),
+            cause_confidence: None,
             body: String::new(),
         }
     }
