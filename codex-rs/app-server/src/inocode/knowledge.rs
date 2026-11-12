@@ -253,6 +253,9 @@ mod tests {
     #[tokio::test]
     async fn write_then_list_and_read() {
         let dir = tempfile::tempdir().unwrap();
+        // The project folder is the first ancestor that already has `.inocode/knowledge`. Give the
+        // temp dir its own, or a temp dir inside a repository writes into that repository's rules.
+        std::fs::create_dir_all(dir.path().join(".inocode").join("knowledge")).unwrap();
         let cwd = dir.path().to_string_lossy().into_owned();
         let input: InocodeKnowledgeRecordInput = serde_json::from_value(serde_json::json!({
             "kind": "rule",
