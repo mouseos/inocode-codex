@@ -4204,7 +4204,9 @@ name = "codex-inocode-knowledge"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "codex-inocode-evidence",
  "codex-inocode-flags",
+ "codex-inocode-ledger",
  "globset",
  "pretty_assertions",
  "regex",
@@ -4676,6 +4678,7 @@ dependencies = [
  "http 1.4.0",
  "pretty_assertions",
  "rcgen",
+ "reqwest 0.12.28",
  "rustls",
  "serde",
  "serde_json",

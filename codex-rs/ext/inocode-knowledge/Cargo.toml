@@ -14,7 +14,9 @@ workspace = true
 
 [dependencies]
 chrono = { workspace = true }
+codex-inocode-evidence = { workspace = true }
 codex-inocode-flags = { workspace = true }
+codex-inocode-ledger = { workspace = true }
 globset = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

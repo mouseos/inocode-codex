@@ -18,6 +18,8 @@ pub struct GuardAction {
     pub model: Option<String>,
     /// 書き込む内容(ファイルの書き込み・編集・パッチの本文)。
     pub content: Option<String>,
+    /// 操作が走るスレッド。緩和の「この依頼の間」「このセッション」の判定に使う。
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,7 +70,7 @@ pub fn check_action(store: &Store, action: &GuardAction) -> GuardVerdict {
 
 /// 条件の組(commands/paths、tools、mcp、models、content)は、書かれているものが全部合うこと(AND)。
 /// commands と paths は従来どおり、どちらかが合えばよい(OR)。
-fn spec_matches(spec: &crate::record::MatchSpec, action: &GuardAction) -> bool {
+pub(crate) fn spec_matches(spec: &crate::record::MatchSpec, action: &GuardAction) -> bool {
     if !spec.has_criteria() {
         return false;
     }

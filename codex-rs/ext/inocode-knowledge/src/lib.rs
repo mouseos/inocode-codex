@@ -8,6 +8,7 @@
 
 mod events;
 mod guard;
+pub mod kb;
 mod record;
 mod store;
 
@@ -38,8 +39,15 @@ pub fn store_for(cwd: &Path) -> Store {
 pub fn project_root_for(cwd: &Path, home: &Path) -> PathBuf {
     let global = home.join("knowledge");
     for dir in cwd.ancestors() {
-        let candidate = dir.join(".inocode").join("knowledge");
-        if candidate != global && candidate.is_dir() {
+        let inocode = dir.join(".inocode");
+        if inocode == *home {
+            continue;
+        }
+        let candidate = inocode.join("knowledge");
+        if (candidate != global && candidate.is_dir())
+            || inocode.join("kb").is_dir()
+            || inocode.join("project.json").is_file()
+        {
             return dir.to_path_buf();
         }
     }
@@ -149,6 +157,43 @@ pub fn guard_check(cwd: &Path, action: &GuardAction) -> GuardVerdict {
     guard_check_with(&codex_inocode_flags::load(), &store_for(cwd), action)
 }
 
+/// 新しい禁止事項(`.inocode/kb/prohibitions`)の照合。緩和(原文参照つき)が効いているものは、
+/// 無効なら外し、警告にするなら警告へ、「この条件の行為だけ許す」なら条件に合う行為だけ外す。
+/// 禁止の本文は変えない。判定はホストの決定的な処理で、モデルの文面は見ない。
+fn add_prohibition_hits(root: &Path, action: &GuardAction, verdict: &mut GuardVerdict) {
+    for x in kb::active_prohibitions(root) {
+        let rule = kb::prohibition_rule(&x);
+        let Some(spec) = &rule.match_spec else { continue };
+        if !guard::spec_matches(spec, action) {
+            continue;
+        }
+        let mut severity = rule.severity.unwrap_or(Severity::Warn);
+        let mut allowed = false;
+        for r in kb::active_relaxations(root, &x.id, action.thread_id.as_deref()) {
+            match r.effect.as_str() {
+                "disable" => allowed = true,
+                "warnOnly" => severity = Severity::Warn,
+                "allowOnly" if kb::allow_matches(&r, action) => allowed = true,
+                _ => {}
+            }
+        }
+        if allowed {
+            continue;
+        }
+        let hit = GuardHit {
+            id: x.id.clone(),
+            title: x.title.clone(),
+            severity,
+            reason: if x.reason.is_empty() { x.title.clone() } else { x.reason.clone() },
+            scope: Scope::Project,
+        };
+        match severity {
+            Severity::Block => verdict.blocked.push(hit),
+            Severity::Warn => verdict.warnings.push(hit),
+        }
+    }
+}
+
 /// フラグと Store を明示するガード(テスト用に分離)。
 pub fn guard_check_with(
     flags: &codex_inocode_flags::InocodeFlags,
@@ -159,11 +204,25 @@ pub fn guard_check_with(
         return GuardVerdict::default();
     }
     let mut verdict = check_action(store, action);
+    if let Some(root) = store.project_root() {
+        add_prohibition_hits(root, action, &mut verdict);
+    }
     let home = inocode_home();
     if codex_inocode_flags::guard_protect_self_from(&home) {
         verdict.blocked.extend(guard::builtin_check(action, &home));
     }
     verdict
+}
+
+/// One INOCODE_HOME for every test of the crate (the environment is process-wide, so two
+/// modules with their own homes would trample each other's files).
+#[cfg(test)]
+pub(crate) fn test_home() -> PathBuf {
+    static H: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    let d = H.get_or_init(|| tempfile::tempdir().unwrap());
+    // SAFETY: the value never changes.
+    unsafe { std::env::set_var("INOCODE_HOME", d.path()) };
+    d.path().to_path_buf()
 }
 
 #[cfg(test)]
@@ -172,10 +231,7 @@ mod event_tests {
 
     /// 全テストで同じ INOCODE_HOME を使う(環境変数はプロセス共通)。
     fn shared_home() {
-        static H: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
-        let d = H.get_or_init(|| tempfile::tempdir().unwrap());
-        // SAFETY: 値は常に同じ。
-        unsafe { std::env::set_var("INOCODE_HOME", d.path()) };
+        crate::test_home();
     }
 
     #[test]
@@ -225,7 +281,8 @@ mod event_tests {
         assert_eq!(note.kind, Kind::FailureCase);
         let pack = build_handoff_pack(cwd.path(), "cargo test");
         assert!(pack.contains("引き継ぎパック"));
-        assert!(pack.contains("same_failure:cargo test") || pack.contains(&id));
+        // The advisor's automatic record is a candidate: kept, but never injected.
+        assert!(!pack.contains("same_failure:cargo test") && !pack.contains(&id));
     }
 
     #[test]

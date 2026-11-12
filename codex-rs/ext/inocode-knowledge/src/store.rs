@@ -327,10 +327,22 @@ impl Store {
         (rows, has_more)
     }
 
+    /// The project folder this store reads and writes.
+    pub fn project_root(&self) -> Option<&Path> {
+        self.project_root.as_deref()
+    }
+
     pub fn live_rules(&self) -> Vec<Record> {
+        // A rule the user has already decided on in the new screen (migrated, or set aside) is
+        // handled there; until then the old rule keeps guarding.
+        let migrated = self
+            .project_root
+            .as_deref()
+            .map(crate::kb::migrated_rule_ids)
+            .unwrap_or_default();
         self.all(None)
             .into_iter()
-            .filter(|r| r.kind == Kind::Rule && r.status.is_live())
+            .filter(|r| r.kind == Kind::Rule && r.status.is_live() && !migrated.contains(&r.id))
             .collect()
     }
 
@@ -360,6 +372,18 @@ impl Store {
                 lines.push(format!("- [{}] {}", r.id, r.title));
             } else {
                 lines.push(format!("- [{}] {} (理由: {})", r.id, r.title, reason));
+            }
+        }
+        if let Some(root) = self.project_root.as_deref() {
+            for x in crate::kb::active_prohibitions(root) {
+                if x.strength != "block" || x.irreversible == Some(false) {
+                    continue;
+                }
+                if x.reason.is_empty() {
+                    lines.push(format!("- [{}] {}", x.id, x.title));
+                } else {
+                    lines.push(format!("- [{}] {} (理由: {})", x.id, x.title, x.reason));
+                }
             }
         }
         if lines.is_empty() {
@@ -505,7 +529,7 @@ impl Store {
         section(&mut out, "直近の決定", decisions);
         let mut fails: Vec<&Record> = all
             .iter()
-            .filter(|r| r.kind == Kind::FailureCase && related(r))
+            .filter(|r| r.kind == Kind::FailureCase && !crate::kb::is_candidate(r) && related(r))
             .collect();
         fails.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
         fails.truncate(5);
