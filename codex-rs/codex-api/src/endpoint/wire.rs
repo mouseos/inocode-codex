@@ -471,7 +471,7 @@ async fn pump(
 }
 
 /// A call to the function that stands for the deferred-tool search becomes a search call again.
-fn search_call(
+pub(crate) fn search_call(
     item: codex_protocol::models::ResponseItem,
     custom: &std::collections::HashSet<String>,
 ) -> codex_protocol::models::ResponseItem {

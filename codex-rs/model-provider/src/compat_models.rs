@@ -39,6 +39,10 @@ const TIMEOUT: Duration = Duration::from_secs(8);
 
 /// A provider this manager is for: it has its own base URL, is not one of the built-in kinds and
 /// brings no catalog URL of its own.
+pub fn is_custom_provider(info: &ModelProviderInfo) -> bool {
+    applies_to(info)
+}
+
 pub(crate) fn applies_to(info: &ModelProviderInfo) -> bool {
     info.base_url.is_some()
         && info.model_catalog_url.is_none()
@@ -162,10 +166,12 @@ pub(crate) fn model_info(listed: &Listed, priority: i32, wire: WireApi) -> Model
         info.context_window = Some(context);
         info.max_context_window = info.context_window;
     }
+    // Function tools only: the freeform tool and the deferred-tool search go as functions
+    // (the chat wire's adapter, and for Responses the request bridge in `codex-api`), so the
+    // third-party tools are loaded on demand instead of being declared on every request.
+    info.apply_patch_tool_type = Some(ApplyPatchToolType::Freeform);
+    info.supports_search_tool = true;
     if wire == WireApi::ChatCompletions {
-        // Function tools only; the freeform tool and the deferred-tool search go as functions.
-        info.apply_patch_tool_type = Some(ApplyPatchToolType::Freeform);
-        info.supports_search_tool = true;
         info.supports_reasoning_summary_parameter = false;
     }
     info

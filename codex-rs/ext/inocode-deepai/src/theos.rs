@@ -93,6 +93,9 @@ pub struct TheosClient {
     version: Option<String>,
     started: Instant,
     accounts: Mutex<HashMap<String, Account>>,
+    /// Where the check-ins are kept between runs (`deepai-checkin.json`), once it is set.
+    state_file: Mutex<Option<std::path::PathBuf>>,
+    loaded: std::sync::atomic::AtomicBool,
 }
 
 /// An answer of the server: the result, and whether its body carried a check-in.
@@ -105,6 +108,116 @@ impl TheosClient {
             version: Some(inocode_version.to_string()),
             started: Instant::now(),
             accounts: Mutex::new(HashMap::new()),
+            state_file: Mutex::new(None),
+            loaded: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Keeps the check-ins in `file` between runs. A check-in that is still valid when the app
+    /// starts again is carried on instead of starting a new one: the server counts how often a
+    /// check-in is started (a new one without a valid nonce) per day and refuses past a limit
+    /// (HTTP 403 `check_in_refused`), so a restart must not start another one needlessly.
+    pub fn set_state_file(&self, file: std::path::PathBuf) {
+        *self
+            .state_file
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(file);
+    }
+
+    fn state_path(&self) -> Option<std::path::PathBuf> {
+        self.state_file
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Reads the kept check-ins once (those still valid).
+    fn load_once(&self) {
+        use std::sync::atomic::Ordering;
+        let Some(path) = self.state_path() else {
+            return;
+        };
+        if self.loaded.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&text) else {
+            return;
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let mut accounts = self.lock();
+        for (id, entry) in map {
+            let nonce = entry.get("nonce").and_then(Value::as_str).unwrap_or_default();
+            let seconds = entry.get("seconds").and_then(Value::as_u64).unwrap_or(0);
+            let at = entry.get("receivedAt").and_then(Value::as_u64).unwrap_or(0);
+            let age = now.saturating_sub(at);
+            if nonce.len() != 32 || seconds == 0 || age >= seconds {
+                continue;
+            }
+            let account = accounts.entry(id).or_default();
+            if account.check_in.is_none() {
+                account.check_in = Some(CheckIn {
+                    nonce: nonce.to_string(),
+                    seconds,
+                    received: Instant::now()
+                        .checked_sub(Duration::from_secs(age))
+                        .unwrap_or_else(Instant::now),
+                });
+            }
+        }
+    }
+
+    fn save(&self) {
+        let Some(path) = self.state_path() else {
+            return;
+        };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let entries: serde_json::Map<String, Value> = self
+            .lock()
+            .iter()
+            .filter_map(|(id, account)| {
+                let check_in = account.check_in.as_ref()?;
+                Some((
+                    id.clone(),
+                    serde_json::json!({
+                        "nonce": check_in.nonce,
+                        "seconds": check_in.seconds,
+                        "receivedAt": now.saturating_sub(check_in.received.elapsed().as_secs()),
+                    }),
+                ))
+            })
+            .collect();
+        if let Ok(text) = serde_json::to_string(&Value::Object(entries)) {
+            let temp = path.with_extension("json.tmp");
+            if std::fs::write(&temp, text).is_ok() {
+                let _ = std::fs::rename(&temp, &path);
+            }
+        }
+    }
+
+    /// Whether this key has a check-in that is still valid: a read then continues it instead of
+    /// starting a new one.
+    pub fn has_valid_check_in(&self, api_key: &str) -> bool {
+        self.load_once();
+        self.lock()
+            .get(&crate::display_id(api_key))
+            .and_then(|account| account.check_in.as_ref())
+            .is_some_and(|check_in| check_in.received.elapsed().as_secs() < check_in.seconds)
+    }
+
+    /// The endpoint in use: the one given, or (for the process-wide client) the real one, or the
+    /// loopback test origin, looked up at each request.
+    fn base(&self) -> String {
+        if self.base_url.is_empty() {
+            crate::base_url()
+        } else {
+            self.base_url.clone()
         }
     }
 
@@ -159,6 +272,7 @@ impl TheosClient {
     /// failure); a read the user asks for (`manual`) is at least 5 seconds apart. Inside the
     /// interval the earlier answer is returned and nothing is sent.
     pub async fn read(&self, api_key: &str, manual: bool) -> Result<Balance, DeepAiError> {
+        self.load_once();
         let id = crate::display_id(api_key);
         let held = {
             let accounts = self.lock();
@@ -190,6 +304,7 @@ impl TheosClient {
     /// afterwards. A failed read still lets the call go ahead when the earlier check-in is valid
     /// and the failure is no answer at all, a 5xx, or an answer that carried a check-in.
     pub async fn ensure_checked_in(&self, api_key: &str) -> Result<(), DeepAiError> {
+        self.load_once();
         let id = crate::display_id(api_key);
         let state = |client: &Self| {
             let accounts = client.lock();
@@ -238,6 +353,7 @@ impl TheosClient {
         let mut accounts = self.lock();
         let account = accounts.entry(id).or_default();
         account.last_attempt = Some(Instant::now());
+        let kept = new_check_in.is_some();
         if let Some(new_check_in) = new_check_in {
             account.check_in = Some(new_check_in);
         } else if legacy {
@@ -254,6 +370,10 @@ impl TheosClient {
                 account.last_error = Some(error.clone());
             }
         }
+        drop(accounts);
+        if kept {
+            self.save();
+        }
         (result, carried)
     }
 
@@ -267,7 +387,7 @@ impl TheosClient {
             Err(error) => return (Err(DeepAiError::unreachable(&error)), None),
         };
         let mut request = client
-            .get(format!("{}/theos", self.base_url))
+            .get(format!("{}/theos", self.base()))
             .timeout(Duration::from_secs(30))
             .header(crate::headers::API_KEY, api_key)
             .header("Content-Type", "application/json");
@@ -379,11 +499,16 @@ pub async fn is_pro(origin: &str, api_key: &str) -> Option<bool> {
     value.get("is_pro").and_then(Value::as_bool)
 }
 
+/// Keeps the check-ins under `dir` (`deepai-checkin.json`) between runs; call once at start-up.
+pub fn set_state_dir(dir: &std::path::Path) {
+    global().set_state_file(dir.join("deepai-checkin.json"));
+}
+
 /// The process-wide client, aimed at the real endpoint.
 pub fn global() -> &'static TheosClient {
     static CLIENT: OnceLock<TheosClient> = OnceLock::new();
     CLIENT.get_or_init(|| {
-        let mut client = TheosClient::new(&crate::base_url(), "");
+        let mut client = TheosClient::new("", "");
         client.version = None;
         client
     })
@@ -578,6 +703,54 @@ mod tests {
         assert!(is_older_lane(&serde_json::json!({"enabled": true, "lane_version": 3})));
         assert!(!is_older_lane(&serde_json::json!({"enabled": true, "lane_version": 4})));
         assert!(!is_older_lane(&serde_json::json!({"balance": "1"})));
+    }
+
+    #[tokio::test]
+    async fn a_valid_check_in_survives_a_restart_and_is_carried_on_instead_of_starting_a_new_one() {
+        let server = MockServer::start().await;
+        let nonce = "0123456789abcdef0123456789abcdef";
+        // The second client must present the first one's nonce (no new check-in is started).
+        Mock::given(method("GET"))
+            .and(path("/theos"))
+            .and(header("X-DeepAI-Code-Check-In", nonce))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "enabled": true, "lane_version": 4, "balance": "1", "granted": "2",
+                "check_in": {"nonce": "fedcba9876543210fedcba9876543210", "seconds": 600}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/theos"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "enabled": true, "lane_version": 4, "balance": "1", "granted": "2",
+                "check_in": {"nonce": nonce, "seconds": 600}
+            })))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().expect("dir");
+        let file = dir.path().join("deepai-checkin.json");
+        let first = TheosClient::new(&server.uri(), "1");
+        first.set_state_file(file.clone());
+        assert!(!first.has_valid_check_in("k"));
+        first.read("k", true).await.expect("first run");
+        assert!(file.exists(), "the check-in is kept");
+        assert!(!std::fs::read_to_string(&file).expect("text").contains("\"k\""), "no key in the file");
+        // A new process: it knows the check-in and continues it.
+        let second = TheosClient::new(&server.uri(), "1");
+        second.set_state_file(file.clone());
+        assert!(second.has_valid_check_in("k"));
+        second.read("k", true).await.expect("second run carries the nonce");
+        // An expired check-in is not carried on.
+        std::fs::write(
+            &file,
+            serde_json::json!({crate::display_id("k"): {"nonce": nonce, "seconds": 600, "receivedAt": 1}}).to_string(),
+        )
+        .expect("write");
+        let third = TheosClient::new(&server.uri(), "1");
+        third.set_state_file(file);
+        assert!(!third.has_valid_check_in("k"));
     }
 
     #[test]

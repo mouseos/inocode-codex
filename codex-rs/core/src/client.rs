@@ -2139,13 +2139,21 @@ impl ResponsesHttpExecutor<'_> {
             } else {
             match self.client.state.provider.info().wire_api {
                 WireApi::Responses => {
+                    let bridged =
+                        codex_model_provider::is_custom_provider(self.client.state.provider.info());
                     let client = ApiResponsesClient::new(
                         transport,
                         client_setup.api_provider,
                         client_setup.api_auth,
                     )
                     .with_telemetry(Some(request_telemetry), Some(sse_telemetry));
-                    client.stream_request(request, options).await
+                    if bridged {
+                        // Not OpenAI: namespaces, the tool search and freeform tools travel as
+                        // plain functions (see `codex_api::compat_bridge`).
+                        client.stream_request_bridged(request, options).await
+                    } else {
+                        client.stream_request(request, options).await
+                    }
                 }
                 WireApi::AnthropicMessages => {
                     // No key of its own: sign in through the pool's Claude group.

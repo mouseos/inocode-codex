@@ -96,6 +96,40 @@ impl<T: HttpTransport> ResponsesClient<T> {
             .await
     }
 
+    /// Like [`Self::stream_request`], for a provider that is not OpenAI: the request is made to
+    /// fit what such a server takes and the response is mapped back (see `compat_bridge`).
+    pub async fn stream_request_bridged(
+        &self,
+        request: ResponsesApiRequest,
+        options: ResponsesOptions,
+    ) -> Result<ResponseStream, ApiError> {
+        let ResponsesOptions {
+            session_id,
+            thread_id,
+            session_source,
+            extra_headers,
+            compression,
+            turn_state,
+        } = options;
+        let mut value = serde_json::to_value(&request)
+            .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
+        let bridge = crate::endpoint::compat_bridge::apply(&mut value);
+        let body = EncodedJsonBody::encode(&value)
+            .map_err(|e| ApiError::Stream(format!("failed to encode responses request: {e}")))?;
+        let mut headers = extra_headers;
+        if let Some(ref thread_id) = thread_id {
+            insert_header(&mut headers, "x-client-request-id", thread_id);
+        }
+        headers.extend(build_session_headers(session_id, thread_id));
+        if let Some(subagent) = subagent_header(&session_source) {
+            insert_header(&mut headers, "x-openai-subagent", &subagent);
+        }
+        let stream = self
+            .stream_encoded(body, headers, compression, turn_state)
+            .await?;
+        Ok(bridge.wrap(stream))
+    }
+
     #[instrument(
         name = "responses.stream",
         level = "info",

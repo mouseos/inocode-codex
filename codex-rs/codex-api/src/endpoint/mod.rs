@@ -1,3 +1,4 @@
+pub mod compat_bridge;
 pub(crate) mod images;
 pub(crate) mod memories;
 pub(crate) mod models;

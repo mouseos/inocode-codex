@@ -242,6 +242,8 @@ pub(crate) fn start(
         return;
     }
     let claude_env = inputs.env.clone();
+    // DeepAI's check-in is kept between runs (a restart must not start a new one needlessly).
+    codex_inocode_deepai::theos::set_state_dir(&inputs.env.codex_home);
     handle.spawn(async move {
         let pool = open_with(inputs, auth_manager).await;
         let claude = AccountPool::open_group(claude_env.clone(), CLAUDE, CLAUDE_DIR).await;
@@ -1521,6 +1523,22 @@ async fn refresh_deepai(manual: bool) {
             continue;
         };
         let theos = codex_inocode_deepai::theos::global();
+        // An automatic read only continues a check-in that is still valid. Starting a new one
+        // is counted by DeepAI per day (HTTP 403 `check_in_refused` past a limit), so it is left
+        // to a model call or to the user's own refresh.
+        if !manual && !theos.has_valid_check_in(&key) {
+            // (`deepai_state_of` takes the same lock, so the entry is made before it is held.)
+            let mut entry = deepai_state_of(&view.id);
+            entry.key_id = codex_inocode_deepai::display_id(&key);
+            let mut states = deepai_states()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !states.contains_key(&view.id) {
+                states.insert(view.id.clone(), entry);
+                changed = true;
+            }
+            continue;
+        }
         let result = theos.read(&key, manual).await;
         let previous = deepai_state_of(&view.id);
         let is_pro = match previous.is_pro {
@@ -1827,6 +1845,8 @@ mod tests {
 
     /// Tests that install the process-wide OpenAI pool take turns.
     static OPENAI_POOL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    /// Tests that install the process-wide DeepAI pool take turns too.
+    static DEEPAI_POOL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     #[test]
     fn policy_round_trips_through_the_wire_type() {
@@ -1982,6 +2002,7 @@ mod tests {
         use wiremock::matchers::method;
         use wiremock::matchers::path;
 
+        let _turn = DEEPAI_POOL.lock().await;
         let server = MockServer::start().await;
         // SAFETY: set before the first DeepAI request of this process; nothing else reads it.
         unsafe { std::env::set_var("INOCODE_DEEPAI_TEST_ORIGIN", server.uri()) };
@@ -2161,5 +2182,33 @@ mod tests {
             assert!(refused.is_err());
         }
         account_pool::install_global(None);
+    }
+
+    #[tokio::test]
+    async fn an_automatic_balance_read_without_a_valid_check_in_sends_nothing_and_does_not_hang() {
+        let _turn = DEEPAI_POOL.lock().await;
+        let home = tempfile::tempdir().expect("tempdir");
+        let env = PoolEnv {
+            codex_home: home.path().to_path_buf(),
+            mode: codex_login::AuthCredentialsStoreMode::File,
+            keyring: Default::default(),
+            chatgpt_base_url: None,
+            auth_route_config: codex_login::test_support::transport_default_auth_route_config(),
+        };
+        let pool = AccountPool::open_group(env, DEEPAI, DEEPAI_DIR).await;
+        pool.add_api_key("DeepAI", "auto-read-key-FAKE", None)
+            .await
+            .expect("added");
+        account_pool::install_global_for(DEEPAI, Some(pool));
+        // No valid check-in is known for this key: the read is left alone (nothing is sent, so
+        // no server is needed), and the account is listed with its key identity and no balance.
+        tokio::time::timeout(Duration::from_secs(20), refresh_deepai(/*manual*/ false))
+            .await
+            .expect("the automatic read must finish");
+        let id = pool_of(DEEPAI).expect("pool").list()[0].id.clone();
+        let state = deepai_state_of(&id);
+        assert_eq!(state.key_id, codex_inocode_deepai::display_id("auto-read-key-FAKE"));
+        assert_eq!(state.balance_status, InocodeDeepAiBalanceStatus::NotRead);
+        account_pool::install_global_for(DEEPAI, None);
     }
 }

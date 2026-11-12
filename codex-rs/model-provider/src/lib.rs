@@ -5,6 +5,7 @@ mod capabilities;
 mod catalog_factory;
 mod claude_models;
 mod compat_models;
+pub use compat_models::is_custom_provider;
 mod deepai_models;
 mod chatgpt_base_url;
 mod client_auth;
