@@ -184,6 +184,9 @@ pub(crate) struct CostRow {
     /// `(above_prompt_tokens, input, output, cache_read, cache_write)`.
     pub tiers: Vec<(i64, Option<f64>, Option<f64>, Option<f64>, Option<f64>)>,
     pub release_date: Option<String>,
+    /// `limit.context`: the context window in tokens (absent in a cache written before this).
+    #[serde(default)]
+    pub context: Option<i64>,
 }
 
 pub(crate) type CostTable = BTreeMap<String, BTreeMap<String, CostRow>>;
@@ -253,6 +256,11 @@ fn reduce(body: &serde_json::Value) -> CostTable {
                         .get("release_date")
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_string),
+                    context: model
+                        .get("limit")
+                        .and_then(|limit| limit.get("context"))
+                        .and_then(serde_json::Value::as_i64)
+                        .filter(|tokens| *tokens > 0),
                 },
             );
         }
@@ -290,6 +298,18 @@ fn unknown(reason: &str, fetched_at: Option<i64>) -> ReferencePrice {
         source_data_date: None,
         reason: Some(reason.to_string()),
     }
+}
+
+/// The context window models.dev lists for the model (found the same way as its price).
+pub(crate) fn context_for(table: Option<&CostTable>, model: &ModelRef) -> Option<i64> {
+    let table = table?;
+    let resolved = crate::resolve::resolve(model, &|provider| {
+        table
+            .get(provider)
+            .map(|rows| rows.keys().cloned().collect())
+            .unwrap_or_default()
+    })?;
+    table.get(&resolved.provider)?.get(&resolved.model)?.context
 }
 
 pub(crate) fn reference_for(
@@ -429,5 +449,37 @@ mod measure_tests {
         let mut missing = reference(1.0, 1.0, None);
         missing.output = None;
         assert!(measure(&missing, &[usage(1, 1, 1)], "api").is_none());
+    }
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+
+    #[test]
+    fn the_context_window_is_read_from_the_limit_and_found_like_the_price() {
+        let body = serde_json::json!({
+            "xiaomi": {"models": {"mimo-v2.6-flash": {
+                "cost": {"input": 0.1, "output": 0.3},
+                "limit": {"context": 262144, "output": 32768}
+            }}},
+            "openai": {"models": {"gpt-x": {"cost": {"input": 1.0, "output": 2.0}}}}
+        });
+        let table = reduce(&body);
+        let by = |provider: &str, id: &str| {
+            context_for(
+                Some(&table),
+                &ModelRef {
+                    provider: provider.to_string(),
+                    model_id: id.to_string(),
+                    auth_kind: None,
+                },
+            )
+        };
+        assert_eq!(by("deepai", "mimo-2.6-flash"), Some(262_144));
+        assert_eq!(by("xiaomi", "mimo-v2.6-flash"), Some(262_144));
+        assert_eq!(by("openai", "gpt-x"), None, "no limit listed");
+        assert_eq!(by("deepai", "glyph-cluster"), None);
+        assert_eq!(context_for(None, &ModelRef { provider: "x".into(), model_id: "y".into(), auth_kind: None }), None);
     }
 }

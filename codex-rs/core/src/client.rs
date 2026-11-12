@@ -2112,6 +2112,12 @@ impl ResponsesHttpExecutor<'_> {
             };
             let is_deepai = deepai_attempt.is_some();
             let stream_result = if let Some(attempt) = deepai_attempt {
+                // The picker offers the Codex ladder; DeepAI knows four levels.
+                if let Some(reasoning) = request.reasoning.as_mut()
+                    && let Some(effort) = reasoning.effort.take()
+                {
+                    reasoning.effort = Some(crate::deepai_client::clamp_effort(effort));
+                }
                 let provider = attempt.provider.clone();
                 let result = if attempt.responses {
                     ApiResponsesClient::new(transport, provider, client_setup.api_auth)

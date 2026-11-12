@@ -49,6 +49,51 @@ pub struct Score {
     pub rank: u32,
 }
 
+/// Output speed from the benchmark source: the median over the serving providers it lists.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BenchSpeed {
+    pub tokens_per_second: f64,
+    /// How many serving providers' values the median is of.
+    pub n_settings: u32,
+    pub metric: String,
+    pub observed_at: Option<String>,
+    pub source_url: Option<String>,
+}
+
+/// The metric the benchmark source's speed comes from.
+pub(crate) const SPEED_METRIC: &str = "or_output_tokens_per_second";
+
+pub(crate) fn speed_for(board: &Board, model: &ModelRef) -> Option<BenchSpeed> {
+    let rows = board.metrics.get(SPEED_METRIC)?;
+    let resolved = resolve(model, &|provider| board_ids(board, provider))?;
+    let mut mine: Vec<&RawScore> = rows
+        .iter()
+        .filter(|row| matches_model(row, &resolved).is_some())
+        .filter(|row| row.value.is_finite() && row.value > 0.0)
+        .collect();
+    if mine.is_empty() {
+        return None;
+    }
+    mine.sort_by(|a, b| a.value.total_cmp(&b.value));
+    let middle = mine.len() / 2;
+    let value = if mine.len() % 2 == 1 {
+        mine[middle].value
+    } else {
+        (mine[middle - 1].value + mine[middle].value) / 2.0
+    };
+    let newest = mine
+        .iter()
+        .filter_map(|row| row.observed_at.clone())
+        .max();
+    Some(BenchSpeed {
+        tokens_per_second: value,
+        n_settings: u32::try_from(mine.len()).unwrap_or(u32::MAX),
+        metric: SPEED_METRIC.to_string(),
+        observed_at: newest,
+        source_url: mine[0].source_url.clone(),
+    })
+}
+
 pub(crate) struct Board {
     pub metrics: BTreeMap<String, Vec<RawScore>>,
     pub any_data: bool,
@@ -211,4 +256,68 @@ pub(crate) fn scores_for(
         }
     }
     (found, out)
+}
+
+#[cfg(test)]
+mod speed_tests {
+    use super::*;
+
+    fn row(model_id: &str, value: f64, setting: &str) -> RawScore {
+        RawScore {
+            model_id: model_id.to_string(),
+            source: "openrouter".to_string(),
+            value,
+            unit: "count".to_string(),
+            observed_at: Some("2026-11-11".to_string()),
+            source_url: Some("https://example.test/speed".to_string()),
+            setting: Some(setting.to_string()),
+        }
+    }
+
+    fn board(rows: Vec<RawScore>) -> Board {
+        Board {
+            metrics: BTreeMap::from([(SPEED_METRIC.to_string(), rows)]),
+            any_data: true,
+            fetched_at: None,
+            stale: false,
+        }
+    }
+
+    fn model(provider: &str, id: &str) -> ModelRef {
+        ModelRef {
+            provider: provider.to_string(),
+            model_id: id.to_string(),
+            auth_kind: None,
+        }
+    }
+
+    #[test]
+    fn speed_is_the_median_over_serving_providers_found_under_the_common_name() {
+        let board = board(vec![
+            row("deepseek/deepseek-v4.1-flash", 30.0, "a"),
+            row("deepseek/deepseek-v4.1-flash", 90.0, "b"),
+            row("deepseek/deepseek-v4.1-flash", 60.0, "c"),
+            row("deepseek/other", 5.0, "a"),
+        ]);
+        let speed = speed_for(&board, &model("deepai", "deepseek-v4.1-flash")).expect("speed");
+        assert_eq!(speed.tokens_per_second, 60.0);
+        assert_eq!(speed.n_settings, 3);
+        assert_eq!(speed.metric, SPEED_METRIC);
+        assert_eq!(speed.observed_at.as_deref(), Some("2026-11-11"));
+        // The same model under another provider's name gives the same figure.
+        let via = speed_for(&board, &model("openscale", "deepseek/deepseek-v4.1-flash")).expect("via");
+        assert_eq!(via, speed);
+        // An even number of values: the mean of the two in the middle.
+        let even = super::speed_for(
+            &super::speed_tests::board(vec![
+                row("openai/m", 10.0, "a"),
+                row("openai/m", 30.0, "b"),
+            ]),
+            &model("openai", "m"),
+        )
+        .expect("even");
+        assert_eq!(even.tokens_per_second, 20.0);
+        // No row, no figure; a model that is not listed gets none.
+        assert_eq!(speed_for(&board, &model("deepai", "glyph-cluster")), None);
+    }
 }

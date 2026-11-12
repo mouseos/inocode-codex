@@ -37,6 +37,7 @@ pub use price::PriceKind;
 pub use price::PriceSource;
 pub use price::PriceTier;
 pub use price::ReferencePrice;
+pub use scores::BenchSpeed;
 pub use scores::Score;
 pub use usemap::load_use_map;
 
@@ -96,6 +97,10 @@ pub struct ModelEnrichment {
     pub benchmark_match: Option<Match>,
     pub scores: Vec<Score>,
     pub price: Price,
+    /// The context window models.dev lists (`limit.context`), when it lists one.
+    pub context_window: Option<i64>,
+    /// Output speed from the benchmark source (the median over its serving providers).
+    pub bench_speed: Option<BenchSpeed>,
 }
 
 /// A source used for the answer, with what its license asks to be shown.
@@ -150,7 +155,14 @@ impl Catalog {
             .collect();
 
         let fetcher = Fetcher::new(&self.home, options);
-        let board = scores::load_board(&fetcher, &self.endpoints, &wanted).await;
+        // The speed metric is always read (it answers the model's speed even when the request asks
+        // for other uses only); `scores` is still made from the uses asked for.
+        let mut with_speed = wanted.clone();
+        with_speed
+            .entry("__speed".to_string())
+            .or_default()
+            .push(scores::SPEED_METRIC.to_string());
+        let board = scores::load_board(&fetcher, &self.endpoints, &with_speed).await;
         let costs = price::load_costs(&fetcher, &self.endpoints).await;
         let overrides = overrides::read_overrides(&self.home);
 
@@ -181,6 +193,8 @@ impl Catalog {
                     .get(&overrides::key(&model.provider, &model.model_id))
                     .cloned();
                 ModelEnrichment {
+                    context_window: price::context_for(costs.data.as_ref(), model),
+                    bench_speed: scores::speed_for(&board, model),
                     provider: model.provider.clone(),
                     model_id: model.model_id.clone(),
                     benchmark_match,

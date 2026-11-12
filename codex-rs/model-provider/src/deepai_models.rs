@@ -61,10 +61,14 @@ pub(crate) fn model_info(model: &DeepAiModel, priority: i32, is_default: bool) -
     info.display_name = model.name.clone();
     info.description = None;
     info.supported_reasoning_levels = if model.reasoning {
+        // The same ladder Codex offers (low .. max, default medium). What DeepAI accepts is
+        // narrower (none, low, medium, high): the request clamps (`deepai_client`).
         vec![
             effort(ReasoningEffort::Low, "Fast, light reasoning"),
             effort(ReasoningEffort::Medium, "Balanced reasoning"),
             effort(ReasoningEffort::High, "Deeper reasoning"),
+            effort(ReasoningEffort::XHigh, "Extra-deep reasoning"),
+            effort(ReasoningEffort::Max, "Maximum reasoning"),
         ]
     } else {
         Vec::new()
@@ -342,7 +346,12 @@ mod tests {
         assert!(b.priority < a.priority, "the default is listed first");
         assert_eq!(a.context_window, Some(1000));
         assert_eq!(a.input_modalities, vec![InputModality::Text, InputModality::Image]);
-        assert!(!a.supported_reasoning_levels.is_empty());
+        let ladder: Vec<ReasoningEffort> = a.supported_reasoning_levels.iter().map(|p| p.effort.clone()).collect();
+        assert_eq!(
+            ladder,
+            [ReasoningEffort::Low, ReasoningEffort::Medium, ReasoningEffort::High, ReasoningEffort::XHigh, ReasoningEffort::Max]
+        );
+        assert_eq!(a.default_reasoning_level, Some(ReasoningEffort::Medium));
         assert!(b.supported_reasoning_levels.is_empty());
         // Chat Completions models carry the freeform and search tools as functions; a
         // Responses-format model keeps the generic settings.

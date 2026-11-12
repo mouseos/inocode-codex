@@ -20,6 +20,19 @@ use std::time::Duration;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::mpsc;
 
+/// DeepAI prices and accepts four reasoning levels (none, low, medium, high); a higher one the
+/// picker offers (the Codex ladder goes on to xhigh and max) is sent as the highest it knows.
+pub(crate) fn clamp_effort(
+    effort: codex_protocol::openai_models::ReasoningEffort,
+) -> codex_protocol::openai_models::ReasoningEffort {
+    use codex_protocol::openai_models::ReasoningEffort as Effort;
+    match effort {
+        Effort::Minimal => Effort::Low,
+        Effort::XHigh | Effort::Max | Effort::Ultra | Effort::Persistent => Effort::High,
+        other => other,
+    }
+}
+
 pub(crate) fn is_deepai(provider: &Provider) -> bool {
     deepai::is_deepai_url(&provider.base_url)
 }
@@ -165,4 +178,26 @@ pub(crate) fn user_error(error: &ApiError) -> Option<CodexErr> {
         identity_authorization_error: None,
         identity_error_code: None,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamp_effort;
+    use codex_protocol::openai_models::ReasoningEffort as Effort;
+
+    #[test]
+    fn levels_above_what_deepai_knows_are_sent_as_high() {
+        for (offered, sent) in [
+            (Effort::None, Effort::None),
+            (Effort::Minimal, Effort::Low),
+            (Effort::Low, Effort::Low),
+            (Effort::Medium, Effort::Medium),
+            (Effort::High, Effort::High),
+            (Effort::XHigh, Effort::High),
+            (Effort::Max, Effort::High),
+            (Effort::Ultra, Effort::High),
+        ] {
+            assert_eq!(clamp_effort(offered), sent);
+        }
+    }
 }

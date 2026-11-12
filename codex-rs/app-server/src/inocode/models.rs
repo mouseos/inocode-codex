@@ -14,6 +14,7 @@ use codex_app_server_protocol::InocodeModelEnrichment;
 use codex_app_server_protocol::InocodeModelPrice;
 use codex_app_server_protocol::InocodeModelScore;
 use codex_app_server_protocol::InocodeModelSource;
+use codex_app_server_protocol::InocodeModelSpeed;
 use codex_app_server_protocol::InocodeModelTheos;
 use codex_app_server_protocol::InocodeModelsEnrichParams;
 use codex_app_server_protocol::InocodeModelsEnrichResponse;
@@ -97,7 +98,18 @@ async fn enrich(
         codex_inocode_advisor::set_model_hint(&model.model_id, hint_line(model));
     }
     Ok(InocodeModelsEnrichResponse {
-        models: result.models.into_iter().map(to_model).map(with_theos).collect(),
+        models: {
+            let since_ms = codex_inocode_stats::now_ms()
+                .saturating_sub(MEASURED_WINDOW_DAYS * 86_400_000);
+            let records = StatsStore::at(home).read_since(since_ms);
+            result
+                .models
+                .into_iter()
+                .map(to_model)
+                .map(with_theos)
+                .map(|model| with_measured_speed(model, &records))
+                .collect()
+        },
         sources: result
             .sources
             .into_iter()
@@ -169,6 +181,9 @@ fn with_theos(mut model: InocodeModelEnrichment) -> InocodeModelEnrichment {
         } else {
             model.price.billing
         };
+        // The provider's own catalog gives the limit the requests really run under.
+        model.context_window = Some(found.context_window);
+        model.context_window_source = Some("catalog".to_string());
         model.theos = Some(InocodeModelTheos {
             is_free: found.is_free(),
             theos_per_request: found.theos_per_request.clone(),
@@ -193,6 +208,39 @@ fn with_theos(mut model: InocodeModelEnrichment) -> InocodeModelEnrichment {
             };
             model.price.measured = None;
         }
+    }
+    model
+}
+
+/// This machine's own speed for the model, when it has measured requests: output tokens divided
+/// by generation seconds over the measured live requests of the window. It takes the place of the
+/// benchmark source's figure.
+fn with_measured_speed(
+    mut model: InocodeModelEnrichment,
+    records: &[codex_inocode_stats::RequestRecord],
+) -> InocodeModelEnrichment {
+    let (mut output, mut seconds, mut count) = (0.0_f64, 0.0_f64, 0_u32);
+    let mut newest = 0_u64;
+    for record in records.iter().filter(|r| {
+        r.source == "live" && r.provider == model.provider && r.model == model.model_id
+    }) {
+        if let (Some(ms), Some(_)) = (record.gen_ms, record.tok_per_s) {
+            output += record.output as f64;
+            seconds += ms as f64 / 1000.0;
+            count += 1;
+            newest = newest.max(record.ts_ms);
+        }
+    }
+    if seconds > 0.0 && output > 0.0 {
+        model.speed = Some(InocodeModelSpeed {
+            tokens_per_second: output / seconds,
+            source: "inocode_measured".to_string(),
+            n_samples: Some(count),
+            metric: None,
+            observed_at: chrono::DateTime::from_timestamp_millis(i64::try_from(newest).unwrap_or(0))
+                .map(|at| at.format("%Y-%m-%d").to_string()),
+            source_url: None,
+        });
     }
     model
 }
@@ -222,6 +270,16 @@ fn attach_measured(models: &mut [catalog::ModelEnrichment], store: &StatsStore) 
 fn to_model(model: catalog::ModelEnrichment) -> InocodeModelEnrichment {
     let reference = model.price.reference;
     InocodeModelEnrichment {
+        context_window: model.context_window,
+        context_window_source: model.context_window.map(|_| "models.dev".to_string()),
+        speed: model.bench_speed.map(|speed| InocodeModelSpeed {
+            tokens_per_second: speed.tokens_per_second,
+            source: "llmbenchmark".to_string(),
+            n_samples: Some(speed.n_settings),
+            metric: Some(speed.metric),
+            observed_at: speed.observed_at,
+            source_url: speed.source_url,
+        }),
         provider: model.provider,
         model_id: model.model_id,
         benchmark_match: model.benchmark_match.map(|found| InocodeBenchmarkMatch {
@@ -336,6 +394,8 @@ mod tests {
     #[test]
     fn the_hint_line_is_short_and_has_scores_and_the_list_price() {
         let model = catalog::ModelEnrichment {
+            context_window: None,
+            bench_speed: None,
             provider: "openai".into(),
             model_id: "gpt-x".into(),
             benchmark_match: None,
@@ -488,6 +548,9 @@ mod tests {
         .expect("catalog");
         codex_inocode_deepai::catalog::remember(&catalog);
         let priced = |provider: &str, id: &str| InocodeModelEnrichment {
+            context_window: Some(1),
+            context_window_source: Some("models.dev".to_string()),
+            speed: None,
             provider: provider.to_string(),
             model_id: id.to_string(),
             benchmark_match: None,
@@ -544,9 +607,84 @@ mod tests {
             assert!(out.price.measured.is_none());
             assert_eq!(out.scores.len(), 1, "benchmarks stay");
         }
+        // The provider's own catalog gives the context window of a DeepAI model.
+        let out = with_theos(priced("deepai", "paid-one"));
+        assert_eq!(out.context_window, Some(10));
+        assert_eq!(out.context_window_source.as_deref(), Some("catalog"));
         // Another provider's model keeps its price and measured cost.
         let other = with_theos(priced("openai", "free-one"));
         assert_eq!(other.price.reference.kind, InocodePriceKind::PerTokenList);
         assert!(other.price.measured.is_some());
+    }
+
+    #[test]
+    fn measured_speed_is_output_over_generation_seconds_and_replaces_the_benchmark_figure() {
+        let record = |provider: &str, model: &str, output: u64, gen_ms: Option<u64>| {
+            codex_inocode_stats::RequestRecord {
+                ts_ms: 1_794_000_000_000,
+                source: "live".to_string(),
+                thread_id: "t".to_string(),
+                model: model.to_string(),
+                provider: provider.to_string(),
+                account: None,
+                limit_id: None,
+                uncached_input: 1,
+                cached_input: 0,
+                output,
+                reasoning: 0,
+                gen_ms,
+                tok_per_s: gen_ms.map(|ms| output as f64 / (ms as f64 / 1000.0)),
+                five_hour: None,
+                weekly: None,
+            }
+        };
+        let records = vec![
+            record("openscale", "m", 100, Some(10_000)),
+            record("openscale", "m", 300, Some(10_000)),
+            record("openscale", "m", 999, None),
+            record("other", "m", 5000, Some(1_000)),
+        ];
+        let mut base = to_model(catalog::ModelEnrichment {
+            context_window: Some(128_000),
+            bench_speed: Some(catalog::BenchSpeed {
+                tokens_per_second: 50.0,
+                n_settings: 3,
+                metric: "or_output_tokens_per_second".into(),
+                observed_at: Some("2026-11-11".into()),
+                source_url: None,
+            }),
+            provider: "openscale".into(),
+            model_id: "m".into(),
+            benchmark_match: None,
+            scores: Vec::new(),
+            price: catalog::Price {
+                reference: catalog::ReferencePrice {
+                    kind: catalog::PriceKind::Unknown,
+                    input: None,
+                    output: None,
+                    cache_read: None,
+                    cache_write: None,
+                    tiers: Vec::new(),
+                    source: None,
+                    fetched_at: None,
+                    source_data_date: None,
+                    reason: None,
+                },
+                measured: None,
+                user_override: None,
+                billing: "unknown".into(),
+            },
+        });
+        // Without measured requests the benchmark source's figure stands, marked as such.
+        assert_eq!(base.speed.as_ref().map(|s| s.source.as_str()), Some("llmbenchmark"));
+        assert_eq!(base.context_window, Some(128_000));
+        assert_eq!(base.context_window_source.as_deref(), Some("models.dev"));
+        // 400 tokens over 20 generation seconds (the request without a generation time and the
+        // other provider's request are not counted).
+        base = with_measured_speed(base, &records);
+        let speed = base.speed.expect("speed");
+        assert_eq!(speed.source, "inocode_measured");
+        assert!((speed.tokens_per_second - 20.0).abs() < 1e-9);
+        assert_eq!(speed.n_samples, Some(2));
     }
 }

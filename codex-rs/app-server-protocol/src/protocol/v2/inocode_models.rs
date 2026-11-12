@@ -251,6 +251,21 @@ pub struct InocodeModelEnrichment {
     pub benchmark_match: Option<InocodeBenchmarkMatch>,
     pub scores: Vec<InocodeModelScore>,
     pub price: InocodeModelPrice,
+    /// The model's context window in tokens. Absent when no source gives one. See
+    /// `contextWindowSource` for where the number comes from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number | null", optional = nullable)]
+    pub context_window: Option<i64>,
+    /// `catalog` (the provider's own model catalog; the limit the requests really run under) or
+    /// `models.dev`. Present exactly when `contextWindow` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub context_window_source: Option<String>,
+    /// Output speed, tokens per second: this machine's measurement when there is one, else the
+    /// benchmark source's. Absent when neither exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional = nullable)]
+    pub speed: Option<InocodeModelSpeed>,
     /// DeepAI models only: whether the model is free and what a request costs in Theos.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional = nullable)]
@@ -368,4 +383,33 @@ pub struct InocodeRefreshedModel {
 pub struct InocodeModelsRefreshResponse {
     pub model_provider: String,
     pub models: Vec<InocodeRefreshedModel>,
+}
+
+/// How fast a model produces output.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeModelSpeed {
+    /// Output tokens per second.
+    pub tokens_per_second: f64,
+    /// `inocode_measured` (this app's own requests: output tokens divided by generation seconds,
+    /// summed over the measured requests of the last 30 days) or `llmbenchmark` (the median of
+    /// the serving providers' values for `or_output_tokens_per_second`; not measured here).
+    pub source: String,
+    /// `inocode_measured`: how many requests. `llmbenchmark`: how many serving providers.
+    #[ts(type = "number | null", optional = nullable)]
+    #[serde(default)]
+    pub n_samples: Option<u32>,
+    /// `llmbenchmark` only: the metric name.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub metric: Option<String>,
+    /// Date of the newest data (`YYYY-MM-DD`).
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub observed_at: Option<String>,
+    /// `llmbenchmark` only.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub source_url: Option<String>,
 }

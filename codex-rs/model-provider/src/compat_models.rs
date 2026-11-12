@@ -24,6 +24,8 @@ use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelVisibility;
 use codex_protocol::openai_models::ModelsResponse;
+use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::openai_models::ReasoningEffortPreset;
 use serde_json::Value;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -76,6 +78,8 @@ pub(crate) struct Listed {
     pub id: String,
     pub name: Option<String>,
     pub context: Option<i64>,
+    /// `Some(false)` only when the provider says outright that the model does not reason.
+    pub reasoning: Option<bool>,
 }
 
 /// Reads the public `/models` answer. Entries without a string `id` are skipped.
@@ -104,7 +108,22 @@ pub(crate) fn parse_list(body: &Value) -> Vec<Listed> {
                 .map(str::trim)
                 .filter(|n| !n.is_empty())
                 .map(str::to_string);
-            Some(Listed { id, name, context })
+            // Only an explicit "no" counts: a model whose answer says nothing is offered the
+            // standard levels (a server that does not know the setting ignores it).
+            let reasoning = ["reasoning", "supports_reasoning", "reasoning_supported"]
+                .iter()
+                .find_map(|key| item.get(*key).and_then(Value::as_bool))
+                .or_else(|| {
+                    item.get("capabilities")
+                        .and_then(|c| c.get("reasoning"))
+                        .and_then(Value::as_bool)
+                });
+            Some(Listed {
+                id,
+                name,
+                context,
+                reasoning,
+            })
         })
         .collect()
 }
@@ -121,6 +140,24 @@ pub(crate) fn model_info(listed: &Listed, priority: i32, wire: WireApi) -> Model
     info.visibility = ModelVisibility::List;
     info.supported_in_api = true;
     info.priority = priority;
+    if listed.reasoning != Some(false) {
+        let level = |effort: ReasoningEffort, description: &str| ReasoningEffortPreset {
+            effort,
+            description: description.to_string(),
+        };
+        // The ladder Codex offers (low .. max, default medium); the value is sent as chosen.
+        info.supported_reasoning_levels = vec![
+            level(ReasoningEffort::Low, "Fast, light reasoning"),
+            level(ReasoningEffort::Medium, "Balanced reasoning"),
+            level(ReasoningEffort::High, "Deeper reasoning"),
+            level(ReasoningEffort::XHigh, "Extra-deep reasoning"),
+            level(ReasoningEffort::Max, "Maximum reasoning"),
+        ];
+        info.default_reasoning_level = Some(ReasoningEffort::Medium);
+    } else {
+        info.supported_reasoning_levels = Vec::new();
+        info.default_reasoning_level = None;
+    }
     if let Some(context) = listed.context {
         info.context_window = Some(context);
         info.max_context_window = info.context_window;
@@ -434,12 +471,38 @@ mod tests {
         let info = create_oss_provider_with_base_url("http://127.0.0.1:1/v1", WireApi::Responses);
         let fallback: SharedModelsManager = Arc::new(StaticModelsManager::new(
             None,
-            ModelsResponse { models: vec![model_info(&Listed { id: "kept".to_string(), name: None, context: None }, 0, WireApi::Responses)] },
+            ModelsResponse { models: vec![model_info(&Listed { id: "kept".to_string(), name: None, context: None, reasoning: None }, 0, WireApi::Responses)] },
             ModelOrigin::Bundled,
         ));
         let manager = CompatModelsManager::new(info, fallback);
         manager.refresh(true).await;
         let models = manager.get_remote_models().await;
         assert_eq!(models.iter().map(|m| m.slug.as_str()).collect::<Vec<_>>(), ["kept"]);
+    }
+
+    #[test]
+    fn a_listed_model_gets_the_standard_reasoning_levels_unless_it_says_it_does_not_reason() {
+        let body = json!({"data": [
+            {"id": "plain"},
+            {"id": "yes", "reasoning": true},
+            {"id": "no", "reasoning": false},
+            {"id": "caps-no", "capabilities": {"reasoning": false}}
+        ]});
+        let infos: Vec<ModelInfo> = parse_list(&body)
+            .iter()
+            .map(|l| model_info(l, 0, WireApi::Responses))
+            .collect();
+        let levels = |slug: &str| {
+            infos
+                .iter()
+                .find(|i| i.slug == slug)
+                .map(|i| i.supported_reasoning_levels.len())
+        };
+        assert_eq!(levels("plain"), Some(5), "no statement: offered (low .. max)");
+        assert_eq!(levels("yes"), Some(5));
+        assert_eq!(levels("no"), Some(0));
+        assert_eq!(levels("caps-no"), Some(0));
+        let plain = infos.iter().find(|i| i.slug == "plain").expect("plain");
+        assert_eq!(plain.default_reasoning_level, Some(ReasoningEffort::Medium));
     }
 }
