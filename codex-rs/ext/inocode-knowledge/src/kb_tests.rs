@@ -485,3 +485,40 @@ fn the_model_proposes_and_only_the_user_registers() {
 fn ok_call(method: &str, params: Value) -> Value {
     ok(method, params)
 }
+
+#[test]
+fn page_graph_gives_the_mind_map_in_one_call_without_bodies() {
+    let (_d, cwd) = project();
+    let store = codex_inocode_evidence::default_store();
+    let src = store.import_text("法令", "law", "他人の財物を窃取した者は処罰される。", None).unwrap();
+    ok("page/write", json!({ "cwd": cwd, "title": "A", "body": format!("[B] と [無い]
+> quote:{}: 財物を窃取した者", src.id), "by": "user", "confirm": true }));
+    ok("page/write", json!({ "cwd": cwd, "title": "B", "body": "本文は返らない", "by": "model" }));
+    let g = ok("page/graph", json!({ "cwd": cwd }));
+    let pages = g["pages"].as_array().unwrap();
+    assert_eq!(pages.len(), 2);
+    let a = &pages[0];
+    assert_eq!(a["title"], "A");
+    assert_eq!(a["confirmed"], true);
+    assert!(a.get("body").is_none() && a["rev"].is_string());
+    assert_eq!(a["links"], json!([{ "title": "B", "exists": true }, { "title": "無い", "exists": false }]));
+    assert_eq!(a["quotes"][0]["matches"], true);
+    assert_eq!(a["quotes"][0]["sourceTitle"], "法令");
+    assert_eq!(pages[1]["confirmed"], false);
+    let one = ok("page/graph", json!({ "cwd": cwd, "limit": 1 }));
+    assert_eq!(one["pages"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn verify_reports_novel_terms_and_missing_quotes_without_blocking() {
+    let (_d, cwd) = project();
+    let store = codex_inocode_evidence::default_store();
+    let src = store.import_text("訴状", "text", "被告人は他人の財物を奪い、強盗罪に当たる行為をした。", None).unwrap();
+    let r = ok("verify", json!({ "cwd": cwd, "text": "本件は窃盗罪に当たる。「存在しない文」[出典]", "sourceRefs": [src.id] }));
+    let f = r["findings"].as_array().unwrap();
+    assert!(f.iter().any(|x| x["kind"] == "novel_term" && x["text"] == "窃盗罪"), "{f:?}");
+    assert!(f.iter().any(|x| x["kind"] == "quote_missing" && x["text"] == "存在しない文"), "{f:?}");
+    let novel = f.iter().find(|x| x["text"] == "窃盗罪").unwrap();
+    assert_eq!(novel["position"]["end"].as_u64().unwrap() - novel["position"]["start"].as_u64().unwrap(), 3);
+    assert_eq!(err("verify", json!({ "cwd": cwd, "text": "x", "sourceRefs": ["src-9999"] })).code, INVALID);
+}

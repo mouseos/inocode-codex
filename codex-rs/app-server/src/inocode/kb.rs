@@ -14,6 +14,8 @@ use codex_app_server_protocol::InocodeKbPageListResponse;
 use codex_app_server_protocol::InocodeKbPageReadResponse;
 use codex_app_server_protocol::InocodeKbPageWriteResponse;
 use codex_app_server_protocol::InocodeKbPageDeleteResponse;
+use codex_app_server_protocol::InocodeKbPageGraphResponse;
+use codex_app_server_protocol::InocodeKbVerifyResponse;
 use codex_app_server_protocol::InocodeKbTagListResponse;
 use codex_app_server_protocol::InocodeKbProhibitionListResponse;
 use codex_app_server_protocol::InocodeKbProhibitionWriteResponse;
@@ -71,6 +73,8 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
         ClientRequest::InocodeKbPageDelete { .. } => InocodeKbPageDeleteResponse { fields }.into(),
         ClientRequest::InocodeKbTagList { .. } => InocodeKbTagListResponse { fields }.into(),
         ClientRequest::InocodeKbProhibitionList { .. } => InocodeKbProhibitionListResponse { fields }.into(),
+        ClientRequest::InocodeKbPageGraph { .. } => InocodeKbPageGraphResponse { fields }.into(),
+        ClientRequest::InocodeKbVerify { .. } => InocodeKbVerifyResponse { fields }.into(),
         ClientRequest::InocodeKbProhibitionWrite { .. } => InocodeKbProhibitionWriteResponse { fields }.into(),
         ClientRequest::InocodeKbProhibitionRetract { .. } => InocodeKbProhibitionRetractResponse { fields }.into(),
         ClientRequest::InocodeKbRelaxationAdd { .. } => InocodeKbRelaxationAddResponse { fields }.into(),

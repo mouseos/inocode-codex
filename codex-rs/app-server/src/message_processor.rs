@@ -1226,6 +1226,8 @@ impl MessageProcessor {
             | ClientRequest::InocodeKbPageRead { .. }
             | ClientRequest::InocodeKbPageWrite { .. }
             | ClientRequest::InocodeKbPageDelete { .. }
+            | ClientRequest::InocodeKbPageGraph { .. }
+            | ClientRequest::InocodeKbVerify { .. }
             | ClientRequest::InocodeKbTagList { .. }
             | ClientRequest::InocodeKbProhibitionList { .. }
             | ClientRequest::InocodeKbProhibitionWrite { .. }

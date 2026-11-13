@@ -2208,6 +2208,8 @@ kb_responses!(
     InocodeKbIndexGetResponse,
     InocodeKbPageListResponse,
     InocodeKbPageReadResponse,
+    InocodeKbPageGraphResponse,
+    InocodeKbVerifyResponse,
     InocodeKbPageWriteResponse,
     InocodeKbPageDeleteResponse,
     InocodeKbTagListResponse,

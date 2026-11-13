@@ -585,6 +585,77 @@ fn page_read(p: &Value) -> R {
     }))
 }
 
+/// One call for the mind map: per page only title, confirmed, rev, links and quote
+/// check results (no body).
+fn page_graph(p: &Value) -> R {
+    let dirs = Dirs::new(&cwd_of(p)?);
+    let pages = all_pages(&dirs);
+    let titles: BTreeSet<&str> = pages.iter().map(|x| x.meta.title.as_str()).collect();
+    let limit = p.get("limit").and_then(Value::as_u64).map(|n| n as usize).unwrap_or(usize::MAX);
+    let mut sources: BTreeMap<String, Option<(String, Option<String>, String)>> = BTreeMap::new();
+    let out: Vec<Value> = pages
+        .iter()
+        .take(limit)
+        .map(|pg| {
+            let links: Vec<Value> = links_in(&pg.body)
+                .into_iter()
+                .map(|t| json!({ "title": t, "exists": titles.contains(t.as_str()) }))
+                .collect();
+            let quotes: Vec<Value> = quotes_in(&pg.body)
+                .into_iter()
+                .map(|(src, text)| {
+                    let found = sources.entry(src.clone()).or_insert_with(|| source_text(&src));
+                    json!({
+                        "sourceRef": src,
+                        "sourceTitle": found.as_ref().map(|f| f.0.clone()),
+                        "matches": found.as_ref().is_some_and(|f| f.2.contains(&text)),
+                    })
+                })
+                .collect();
+            json!({
+                "title": pg.meta.title,
+                "confirmed": pg.meta.confirmed,
+                "rev": pg.rev(),
+                "links": links,
+                "quotes": quotes,
+            })
+        })
+        .collect();
+    Ok(json!({ "pages": out }))
+}
+
+/// Mechanical document check against the given sources (quotes, uncited sentences,
+/// novel terms). Reports only; never blocks output.
+fn verify(p: &Value) -> R {
+    let _ = cwd_of(p)?;
+    let text = str_of(p, "text").ok_or_else(|| invalid("text is required"))?;
+    let store = codex_inocode_evidence::default_store();
+    let refs: Vec<String> = match p.get("sourceRefs").and_then(Value::as_array) {
+        Some(a) if !a.is_empty() => a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
+        _ => store.list_sources().into_iter().map(|s| s.id).collect(),
+    };
+    let mut texts = Vec::new();
+    for r in &refs {
+        let (_, t) = store
+            .read_source(r)
+            .ok_or_else(|| invalid(format!("source not found: {r}")))?;
+        texts.push(t);
+    }
+    let findings: Vec<Value> = codex_inocode_evidence::verify_document(text, &texts)
+        .into_iter()
+        .map(|f| {
+            let start = f.position;
+            let end = start + f.text.chars().count();
+            json!({
+                "kind": serde_json::to_value(f.kind).unwrap_or(Value::Null),
+                "text": f.text,
+                "position": { "start": start, "end": end },
+            })
+        })
+        .collect();
+    Ok(json!({ "findings": findings }))
+}
+
 fn page_write(p: &Value) -> R {
     let dirs = Dirs::new(&cwd_of(p)?);
     let title = need_str(p, "title")?.trim().to_string();
@@ -1920,3 +1991,5 @@ pub fn call(method: &str, params: &Value) -> R {
 #[cfg(test)]
 #[path = "kb_tests.rs"]
 mod kb_tests;
+        "page/graph" => page_graph(params),
+        "verify" => verify(params),

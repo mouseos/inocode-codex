@@ -103,7 +103,22 @@ impl Store {
         let hash = format!("{:x}", Sha256::digest(bytes));
         let d = self.dir("sources");
         std::fs::create_dir_all(&d)?;
-        std::fs::write(d.join(format!("{id}.txt")), bytes)?;
+        // Reserve the id atomically so concurrent imports never share one.
+        let id = loop {
+            let id = self.next_id("sources", "src");
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(d.join(format!("{id}.txt")))
+            {
+                Ok(mut f) => {
+                    std::io::Write::write_all(&mut f, bytes)?;
+                    break id;
+                }
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        };
         let src = Source {
             id: id.clone(),
             title: title.to_string(),

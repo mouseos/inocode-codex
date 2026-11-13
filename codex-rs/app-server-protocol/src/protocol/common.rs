@@ -600,6 +600,18 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeKbPageReadResponse,
     },
+    #[experimental("inocode/kb/page/graph")]
+    InocodeKbPageGraph => "inocode/kb/page/graph" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbPageGraphResponse,
+    },
+    #[experimental("inocode/kb/verify")]
+    InocodeKbVerify => "inocode/kb/verify" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbVerifyResponse,
+    },
     #[experimental("inocode/kb/page/write")]
     InocodeKbPageWrite => "inocode/kb/page/write" {
         params: v2::InocodeKbParams,
