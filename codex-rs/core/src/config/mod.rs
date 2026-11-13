@@ -2889,7 +2889,8 @@ fn resolve_update_plan_enabled(config_toml: &ConfigToml) -> bool {
         .tools
         .as_ref()
         .and_then(|tools| tools.update_plan.as_ref())
-        .is_some_and(|config| config.enabled)
+        // InoCode: the checklist tool is on unless `[tools.update_plan] enabled = false`.
+        .map_or(true, |config| config.enabled)
 }
 
 fn resolve_feature_enabled(feature: Option<&codex_config::config_toml::FeatureToggleToml>) -> bool {
