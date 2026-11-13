@@ -443,6 +443,20 @@ fn the_model_proposes_and_only_the_user_registers() {
     // approval registers the failure case as the user's verified record, with the conditions
     let done = ok_call("candidate/approve", json!({ "cwd": cwd, "id": "cand-0001" }));
     assert_eq!(done["status"], "registered");
+    assert!(done["id"].as_str().unwrap().starts_with("failure_case-"), "the approval says which record it made");
+    assert_eq!(done["target"]["sub"], "failures");
+    // the screen reads registered failures: list, search, read; "unknown" conditions say so
+    let listed = ok_call("failure/list", json!({ "cwd": cwd }));
+    assert_eq!(listed["failures"].as_array().unwrap().len(), 1);
+    let first = &listed["failures"][0];
+    assert_eq!(first["conditions"], "fastboot の最中だった");
+    assert_eq!((first["attempted"].as_str(), first["outcome"].as_str()), (Some("adb shell"), Some("exit 1: device offline")));
+    assert_eq!((first["source"].as_str(), first["checkedAt"].as_str()), (Some("https://example.com/adb"), Some("2026-11-13")));
+    assert_eq!(first["avoid"], "fastboot の間は adb shell を使わない");
+    assert_eq!(ok_call("failure/list", json!({ "cwd": cwd, "query": "fastboot" }))["failures"].as_array().unwrap().len(), 1);
+    assert_eq!(ok_call("failure/list", json!({ "cwd": cwd, "query": "nothing-like-it" }))["failures"].as_array().unwrap().len(), 0);
+    assert_eq!(ok_call("failure/read", json!({ "cwd": cwd, "id": done["id"] }))["failure"]["title"], "adb shell は fastboot 中に失敗する");
+    assert_eq!(err("failure/read", json!({ "cwd": cwd, "id": "failure_case-9999" })).code, NOT_FOUND);
     let rec = store.all(Some(Scope::Project)).into_iter().find(|r| r.kind == Kind::FailureCase).unwrap();
     assert_eq!(rec.conditions.as_deref(), Some("fastboot の最中だった"));
     assert_eq!(rec.attempted.as_deref(), Some("adb shell"));
@@ -451,28 +465,37 @@ fn the_model_proposes_and_only_the_user_registers() {
     assert!(rec.source.as_deref().unwrap().contains("2026-11-13"));
     // approving the "unknown" one records that the conditions were not established
     ok_call("candidate/approve", json!({ "cwd": cwd, "id": "cand-0002" }));
+    let unk_listed = ok_call("failure/list", json!({ "cwd": cwd, "query": "別の失敗" }));
+    assert_eq!(unk_listed["failures"][0]["conditions"], "unknown");
     let unk = store.all(Some(Scope::Project)).into_iter().find(|r| r.title == "別の失敗").unwrap();
     assert_eq!((unk.conditions_known, unk.conditions), (Some(false), None));
     // a similar record that exists makes the next proposal an update of it
     let upd = propose(root, &failure("adb shell は fastboot 中に失敗する", json!({ "outcome": "exit 1 (again)" })), "m");
     assert_eq!(upd["op"], "update");
     assert_eq!(upd["updates"], rec.id.as_str());
+    // the candidate list carries the current content of the record an update would change
+    let waiting = ok_call("candidate/list", json!({ "cwd": cwd }));
+    let up = waiting["candidates"].as_array().unwrap().iter().find(|c| c["op"] == "update").unwrap();
+    assert_eq!(up["payload"]["outcome"], "exit 1 (again)");
+    assert_eq!(up["payload"]["updates"], rec.id.as_str());
+    assert_eq!(up["current"]["outcome"], "exit 1: device offline");
+    assert_eq!(up["current"]["conditions"], "fastboot の最中だった");
     ok_call("candidate/approve", json!({ "cwd": cwd, "id": upd["id"] }));
     let all: Vec<_> = store.all(Some(Scope::Project)).into_iter().filter(|r| r.title.starts_with("adb shell")).collect();
     assert!(all.iter().any(|r| r.status == Status::Superseded) && all.iter().any(|r| r.status == Status::Verified && r.outcome.as_deref() == Some("exit 1 (again)")));
 
-    // a page draft and a fact: approved ones become confirmed pages
+    // a new page and a fact are registered at once, marked as drafts (Q-12)
     let page = propose(root, &json!({ "kind": "page", "title": "ビルドの手順", "body": "#手順\nlock を取って cargo を 1 本ずつ走らせる" }), "m");
     assert_eq!(page["kind"], "page");
+    assert_eq!(page["status"], "registered");
+    assert_eq!(page["draft"], true);
+    assert_eq!(page["requiresApproval"], false);
     let fact = propose(root, &json!({ "kind": "fact", "title": "ビルドは Windows だけ", "body": "他の OS では確認していない", "source": "AGENTS.md" }), "m");
-    assert_eq!(fact["status"], "candidate");
-    assert_eq!(ok_call("page/list", json!({ "cwd": cwd }))["pages"].as_array().unwrap().len(), 0, "nothing registered yet");
-    ok_call("candidate/approve", json!({ "cwd": cwd, "id": page["id"] }));
-    ok_call("candidate/approve", json!({ "cwd": cwd, "id": fact["id"] }));
+    assert_eq!(fact["status"], "registered");
     let pages = ok_call("page/list", json!({ "cwd": cwd }));
     assert_eq!(pages["pages"].as_array().unwrap().len(), 2);
     let r = ok_call("page/read", json!({ "cwd": cwd, "title": "ビルドは Windows だけ" }));
-    assert_eq!(r["confirmed"], true);
+    assert_eq!(r["confirmed"], false, "a draft until the user confirms it");
     assert!(r["tags"].as_array().unwrap().iter().any(|t| t == "fact"));
     assert!(r["body"].as_str().unwrap().contains("Source: AGENTS.md"));
     // a page that exists becomes an update proposal; the approved update keeps the history
@@ -521,4 +544,60 @@ fn verify_reports_novel_terms_and_missing_quotes_without_blocking() {
     let novel = f.iter().find(|x| x["text"] == "窃盗罪").unwrap();
     assert_eq!(novel["position"]["end"].as_u64().unwrap() - novel["position"]["start"].as_u64().unwrap(), 3);
     assert_eq!(err("verify", json!({ "cwd": cwd, "text": "x", "sourceRefs": ["src-9999"] })).code, INVALID);
+}
+
+#[test]
+fn record_evidence_writes_the_project_page_and_quote_that_the_screen_reads() {
+    let (d, cwd) = project();
+    let root = d.path();
+    let page_text = "Widget X costs 1,200 yen (tax included) as of 2026-11-11.";
+    let rec = |claim: &str, quote: &str| {
+        json!({ "claim": claim, "quote": quote, "source_url": "https://example.com/price",
+            "source_title": "Price page", "source_text": page_text, "page": "Widget の価格" })
+    };
+    let first = record_evidence(root, &rec("Widget X は 1,200 円", "Widget X costs 1,200 yen"), "model:t");
+    assert_eq!(first["status"], "registered", "{first}");
+    assert_eq!(first["draft"], true);
+    assert_eq!(first["requiresApproval"], false);
+    assert_eq!(first["op"], "create");
+    assert_eq!(first["target"], json!({ "tab": "evidence", "sub": "pages", "ref": "Widget の価格" }));
+    assert!(first["retrievedAt"].is_string());
+    // the source belongs to this project, not to the old global database
+    assert!(root.join(".inocode").join("kb").join("evidence").join("sources").exists());
+    let src = first["sourceRef"].as_str().unwrap().to_string();
+    // the same page again is the same source, and the fact goes onto the same page
+    let second = record_evidence(root, &rec("税込み", "tax included"), "model:t");
+    assert_eq!(second["op"], "update");
+    assert_eq!(second["sourceRef"], src.as_str());
+    // the page, its quotes and the mind map read it
+    let r = ok("page/read", json!({ "cwd": cwd, "title": "Widget の価格" }));
+    assert_eq!(r["confirmed"], false);
+    let quotes = r["quotes"].as_array().unwrap();
+    assert_eq!(quotes.len(), 2);
+    assert!(quotes.iter().all(|q| q["matches"] == true && q["sourceUrl"] == "https://example.com/price"));
+    let g = ok("page/graph", json!({ "cwd": cwd }));
+    assert_eq!(g["pages"][0]["quotes"][0]["sourceTitle"], "Price page");
+    // refusals carry the reason
+    assert_eq!(record_evidence(root, &rec("x", "Widget X costs 9 yen"), "m")["status"], "denied");
+    assert_eq!(record_evidence(root, &json!({ "claim": "x", "quote": "a\nb" }), "m")["status"], "denied");
+    // without a page name, the page is named after the source
+    let other = record_evidence(root, &json!({ "claim": "c", "quote": "q", "source_title": "Memo" }), "m");
+    assert_eq!(other["page"], "Memo");
+
+    // search finds the page with its quotes and sources
+    let found = search_evidence(root, Some("widget 円"), 20);
+    assert_eq!(found["count"], 1);
+    assert_eq!(found["results"][0]["page"], "Widget の価格");
+    assert_eq!(found["results"][0]["draft"], true);
+    assert_eq!(found["results"][0]["quotes"][0]["sourceUrl"], "https://example.com/price");
+    assert!(found["results"][0]["quotes"][0]["retrievedAt"].is_string());
+    assert_eq!(search_evidence(root, Some("gadget"), 20)["count"], 0);
+
+    // verify is the same check as inocode/kb/verify, over this project's sources by default
+    let a = verify_document(root, "Widget X costs 1,200 yen.", &[src.clone()]).unwrap();
+    let b = ok("verify", json!({ "cwd": cwd, "text": "Widget X costs 1,200 yen.", "sourceRefs": [src] }));
+    assert_eq!(a, b);
+    let all = verify_document(root, "「存在しない文」", &[]).unwrap();
+    assert!(all["findings"].as_array().unwrap().iter().any(|f| f["kind"] == "quote_missing"));
+    assert_eq!(verify_document(root, "x", &["src-9999".to_string()]).unwrap_err().code, INVALID);
 }

@@ -197,6 +197,26 @@ pub fn list_guard_events(
     (page, next)
 }
 
+/// プロジェクトの知識(ページ・禁止事項・チェックリストなど)が変わったことの通知。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KbChanged {
+    pub cwd: String,
+    pub area: String,
+}
+
+fn kb_changed_sender() -> &'static tokio::sync::broadcast::Sender<KbChanged> {
+    static S: OnceLock<tokio::sync::broadcast::Sender<KbChanged>> = OnceLock::new();
+    S.get_or_init(|| tokio::sync::broadcast::channel(64).0)
+}
+
+pub fn subscribe_kb_changed() -> tokio::sync::broadcast::Receiver<KbChanged> {
+    kb_changed_sender().subscribe()
+}
+
+pub(crate) fn notify_kb_changed(cwd: &std::path::Path, area: &str) {
+    let _ = kb_changed_sender().send(KbChanged { cwd: cwd.to_string_lossy().into_owned(), area: area.to_string() });
+}
+
 /// 失敗例などが記録されたことの通知。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnowledgeRecorded {

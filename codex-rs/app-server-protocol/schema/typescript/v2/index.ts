@@ -306,6 +306,7 @@ export type { InocodeGuardEvent } from "./InocodeGuardEvent";
 export type { InocodeGuardFiredNotification } from "./InocodeGuardFiredNotification";
 export type { InocodeGuardOrigin } from "./InocodeGuardOrigin";
 export type { InocodeGuardResult } from "./InocodeGuardResult";
+export type { InocodeKbChangedNotification } from "./InocodeKbChangedNotification";
 export type { InocodeKeyVerification } from "./InocodeKeyVerification";
 export type { InocodeKeyVerificationStatus } from "./InocodeKeyVerificationStatus";
 export type { InocodeKnowledgeConfidence } from "./InocodeKnowledgeConfidence";

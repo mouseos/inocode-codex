@@ -1,9 +1,10 @@
-//! Model-facing tools of the evidence database (`evidence.enabled`):
+//! Model-facing tools for the project's source pages (`evidence.enabled`):
 //! `record_evidence`, `search_evidence` and `verify_evidence_document`.
 //!
-//! The database itself (`ext/inocode-evidence`) is the same one the GUI's evidence tab reads:
-//! sources (original text, kept unchanged), quotes (verbatim spans) and claims. These tools are
-//! how the model puts what it found there, with its source, and gets it back later.
+//! They write and read the same data the GUI's mind map and evidence tab read (`inocode/kb/page/*`):
+//! the original text of each source is kept unchanged in the project, and each fact goes onto a
+//! page as a line plus a verbatim quote block (`> quote:<source ref>: ...`). What the model writes is
+//! registered at once and marked as a draft until the user confirms it (decision Q-12).
 
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
@@ -13,17 +14,16 @@ use crate::tools::context::boxed_tool_output;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::CoreToolRuntime;
 use crate::tools::registry::ToolExecutor;
-use codex_inocode_evidence::ClaimType;
-use codex_inocode_evidence::Confidence;
-use codex_inocode_evidence::NewClaim;
-use codex_inocode_evidence::Store;
 use codex_tools::JsonSchema;
 use codex_tools::ResponsesApiTool;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use serde::Deserialize;
+use serde::Serialize;
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::path::Path;
+use std::path::PathBuf;
 
 pub(crate) const RECORD_EVIDENCE_TOOL_NAME: &str = "record_evidence";
 pub(crate) const SEARCH_EVIDENCE_TOOL_NAME: &str = "search_evidence";
@@ -61,7 +61,7 @@ pub(crate) fn create_record_evidence_tool() -> ToolSpec {
         ),
         (
             "quote".to_string(),
-            text_prop("The exact words of the source that support the claim, copied verbatim (a price line, a sentence of an article). It must appear unchanged in source_text when that is given."),
+            text_prop("The exact words of the source that support the claim, copied verbatim, on one line (a price line, a sentence of an article). It must appear unchanged in source_text when that is given."),
         ),
         (
             "source_url".to_string(),
@@ -76,26 +76,20 @@ pub(crate) fn create_record_evidence_tool() -> ToolSpec {
             text_prop("Optional. The text of the page or document you read, to keep as the original. When omitted, the quote alone is kept as the original."),
         ),
         (
-            "claim_type".to_string(),
-            text_prop("`fact` (default), `interpretation`, `inference` or `opinion`."),
-        ),
-        (
-            "status".to_string(),
-            text_prop("`reported` (default: the source says so), `verified` (you checked it against another source), `speculative`, `unverified`, `disputed` or `refuted`."),
-        ),
-        (
-            "confidence".to_string(),
-            text_prop("`high`, `medium` or `low`. Optional."),
+            "page".to_string(),
+            text_prop("Optional. The title of the page to add it to, for example the topic you are researching. Defaults to the source title. The page is created when it does not exist."),
         ),
     ]);
     tool(
         RECORD_EVIDENCE_TOOL_NAME,
-        "Record a fact you found, together with its source, in the evidence database. Use it \
-whenever you look something up on the web or in a document and the result matters later: a price, \
-a specification, a date, a figure, a statement. Give the claim, the verbatim quote that supports \
-it and where it came from (URL or file); the retrieval date is added automatically. The record is \
-kept across sessions, shown in the GUI's evidence tab, and found again with `search_evidence`. \
-Returns the ids of the source, the quote and the claim.",
+        "Record a fact you found, with its source, on a page of this project's notes. Use it \
+whenever you look something up on the web or in a document and the result matters later, and \
+whenever the user asks you to keep something to read again later: a price, a specification, a \
+date, a figure, a statement. Give the claim, the verbatim quote that supports it and where it came \
+from (URL or file); the retrieval date is added automatically. The original text is kept, the fact \
+and its quote are added to the page (created if needed), and the page is registered at once, \
+marked as a draft until the user confirms it. It is shown in the GUI's evidence tab and mind map \
+and found again with `search_evidence`. Returns the page and the source reference.",
         properties,
         &["claim", "quote"],
     )
@@ -105,23 +99,20 @@ pub(crate) fn create_search_evidence_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (
             "query".to_string(),
-            text_prop("Words to look for in the recorded claims (case-insensitive). Omit to list the most recent."),
-        ),
-        (
-            "status".to_string(),
-            text_prop("Only claims with this status, for example `verified` or `disputed`."),
+            text_prop("Words to look for in the pages (case-insensitive, all must appear). Omit to list the most recent."),
         ),
         (
             "limit".to_string(),
-            JsonSchema::number(Some("Maximum number of results (default 20).".to_string())),
+            JsonSchema::number(Some("Maximum number of pages (default 20).".to_string())),
         ),
     ]);
     tool(
         SEARCH_EVIDENCE_TOOL_NAME,
-        "Search the evidence database for facts recorded earlier with `record_evidence`, including \
-in other sessions. Check it before looking something up again, for example a price you may \
-already have recorded. Each result has the claim, its status, the supporting quote, and the \
-source (title, URL, retrieval date) so you can say where it came from and how old it is.",
+        "Search this project's notes (pages written with `record_evidence` or `kb_propose`, \
+including in other sessions, and pages the user wrote). Check it before looking something up \
+again, for example a price you may already have recorded. Each result has the page, whether it is \
+still a draft, and its quotes with the source (title, URL, retrieval date) so you can say where it \
+came from and how old it is.",
         properties,
         &[],
     )
@@ -134,16 +125,16 @@ pub(crate) fn create_verify_evidence_document_tool() -> ToolSpec {
             text_prop("The document or answer to check."),
         ),
         (
-            "source_ids".to_string(),
+            "source_refs".to_string(),
             JsonSchema::array(
-                text_prop("A source id returned by `record_evidence` or `search_evidence`."),
-                Some("The sources the document must rest on. Omit to use every recorded source.".to_string()),
+                text_prop("A source reference returned by `record_evidence` or `search_evidence`."),
+                Some("The sources the document must rest on. Omit to use every source of this project.".to_string()),
             ),
         ),
     ]);
     tool(
         VERIFY_EVIDENCE_DOCUMENT_TOOL_NAME,
-        "Check a document you wrote against recorded sources. It reports, and does not change \
+        "Check a document you wrote against the recorded sources. It reports, and does not change \
 anything: quotes that do not appear word for word in the sources, sentences without a citation \
 marker, and terms (amounts, dates, names of offences or articles) that appear in the document but \
 in none of the sources. Use it on a report or an answer that states facts taken from sources, \
@@ -153,22 +144,34 @@ before you hand it over.",
     )
 }
 
-fn store() -> Store {
-    codex_inocode_evidence::default_store()
-}
-
 fn model_error(message: impl Into<String>) -> FunctionCallError {
     FunctionCallError::RespondToModel(message.into())
 }
 
-fn arguments(invocation: ToolInvocation, tool: &str) -> Result<(String, String), FunctionCallError> {
+/// The arguments, the project folder of the turn and the thread id.
+fn arguments(
+    invocation: ToolInvocation,
+    tool: &str,
+) -> Result<(String, PathBuf, String), FunctionCallError> {
     let ToolInvocation {
-        session, payload, ..
+        session,
+        turn,
+        payload,
+        ..
     } = invocation;
     let ToolPayload::Function { arguments } = payload else {
         return Err(model_error(format!("{tool} handler received unsupported payload")));
     };
-    Ok((arguments, session.thread_id.to_string()))
+    let cwd = turn.cwd.as_path().to_path_buf();
+    let root = project_root(&cwd);
+    Ok((arguments, root, session.thread_id.to_string()))
+}
+
+fn project_root(cwd: &Path) -> PathBuf {
+    codex_inocode_knowledge::store_for(cwd)
+        .project_root()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| cwd.to_path_buf())
 }
 
 fn out(value: serde_json::Value) -> Box<dyn crate::tools::context::ToolOutput> {
@@ -178,102 +181,24 @@ fn out(value: serde_json::Value) -> Box<dyn crate::tools::context::ToolOutput> {
     ))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RecordArgs {
     claim: String,
     quote: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     source_url: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     source_title: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     source_text: Option<String>,
-    #[serde(default)]
-    claim_type: Option<ClaimType>,
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    confidence: Option<Confidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    page: Option<String>,
 }
 
-const STATUSES: &[&str] = &[
-    "verified",
-    "reported",
-    "speculative",
-    "unverified",
-    "disputed",
-    "refuted",
-];
-
-fn record(store: &Store, args: RecordArgs, created_by: &str) -> Result<serde_json::Value, String> {
-    if args.claim.trim().is_empty() || args.quote.trim().is_empty() {
-        return Err("claim and quote must not be empty".to_string());
-    }
-    let status = args.status.as_deref().unwrap_or("reported");
-    if !STATUSES.contains(&status) {
-        return Err(format!("status must be one of {}", STATUSES.join(", ")));
-    }
-    let url = args.source_url.as_deref().filter(|u| !u.trim().is_empty());
-    let original = args
-        .source_text
-        .as_deref()
-        .filter(|t| !t.trim().is_empty())
-        .unwrap_or(&args.quote);
-    if !original.contains(&args.quote) {
-        return Err("the quote does not appear word for word in source_text; copy it exactly".to_string());
-    }
-    // The same page read again is one source.
-    let existing = url.and_then(|url| {
-        store.list_sources().into_iter().find(|s| {
-            s.origin.as_deref() == Some(url)
-                && store
-                    .read_source(&s.id)
-                    .is_some_and(|(_, text)| text == original)
-        })
-    });
-    let source = match existing {
-        Some(source) => source,
-        None => store
-            .import_bytes(
-                args.source_title.as_deref().or(url).unwrap_or("note"),
-                if url.is_some_and(|u| u.starts_with("http")) { "web" } else { "text" },
-                original.as_bytes(),
-                None,
-                url,
-            )
-            .map_err(|e| format!("could not save the source: {e}"))?,
-    };
-    let span = store
-        .add_quote(&source.id, &args.quote)
-        .map_err(|e| format!("could not record the quote: {e}"))?;
-    let claim = store
-        .add_claim(NewClaim {
-            text: &args.claim,
-            claim_type: args.claim_type.unwrap_or(ClaimType::Fact),
-            status,
-            confidence: args.confidence,
-            span_ids: vec![span.id.clone()],
-            premise_ids: Vec::new(),
-            created_by,
-        })
-        .map_err(|e| format!("could not record the claim: {e}"))?;
-    Ok(json!({
-        // The card in the chat (kind, what was done, state, where it is on the screen).
-        "kind": "evidence",
-        "op": "create",
-        "id": claim.id,
-        "title": args.claim.chars().take(120).collect::<String>(),
-        "status": "registered",
-        "requiresApproval": false,
-        "target": { "tab": "evidence", "sub": "claims", "ref": claim.id },
-        "claimId": claim.id,
-        "quoteId": span.id,
-        "sourceId": source.id,
-        "sourceUrl": source.origin,
-        "retrievedAt": source.retrieved_at,
-        "claimStatus": claim.status,
-    }))
+fn record(root: &Path, args: &RecordArgs, created_by: &str) -> serde_json::Value {
+    let value = serde_json::to_value(args).unwrap_or_default();
+    codex_inocode_knowledge::kb::record_evidence(root, &value, created_by)
 }
 
 #[derive(Debug, Deserialize)]
@@ -282,61 +207,15 @@ struct SearchArgs {
     #[serde(default)]
     query: Option<String>,
     #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
     limit: Option<usize>,
 }
 
-fn search(store: &Store, args: SearchArgs) -> serde_json::Value {
-    let spans = store.list_spans();
-    let sources = store.list_sources();
-    let words: Vec<String> = args
-        .query
-        .as_deref()
-        .unwrap_or("")
-        .split_whitespace()
-        .map(str::to_lowercase)
-        .collect();
-    let mut claims: Vec<_> = store
-        .list_claims(args.status.as_deref())
-        .into_iter()
-        .filter(|c| {
-            let text = c.text.to_lowercase();
-            words.iter().all(|w| text.contains(w))
-        })
-        .collect();
-    // Newest first (ids are sequential).
-    claims.reverse();
-    let limit = args.limit.unwrap_or(20).max(1);
-    let results: Vec<_> = claims
-        .into_iter()
-        .take(limit)
-        .map(|c| {
-            let evidence: Vec<_> = c
-                .span_ids
-                .iter()
-                .filter_map(|id| spans.iter().find(|s| &s.id == id))
-                .map(|span| {
-                    let source = sources.iter().find(|s| s.id == span.source_id);
-                    json!({
-                        "quote": span.text,
-                        "sourceId": span.source_id,
-                        "sourceTitle": source.map(|s| s.title.clone()),
-                        "sourceUrl": source.and_then(|s| s.origin.clone()),
-                        "retrievedAt": source.map(|s| s.retrieved_at.clone()),
-                    })
-                })
-                .collect();
-            json!({
-                "claimId": c.id,
-                "claim": c.text,
-                "status": c.status,
-                "confidence": c.confidence,
-                "evidence": evidence,
-            })
-        })
-        .collect();
-    json!({ "count": results.len(), "results": results })
+fn search(root: &Path, args: SearchArgs) -> serde_json::Value {
+    codex_inocode_knowledge::kb::search_evidence(
+        root,
+        args.query.as_deref(),
+        args.limit.unwrap_or(20),
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -344,27 +223,15 @@ fn search(store: &Store, args: SearchArgs) -> serde_json::Value {
 struct VerifyArgs {
     text: String,
     #[serde(default)]
-    source_ids: Option<Vec<String>>,
+    source_refs: Option<Vec<String>>,
 }
 
-fn verify(store: &Store, args: VerifyArgs) -> Result<serde_json::Value, String> {
-    let ids: Vec<String> = match args.source_ids {
-        Some(ids) => ids,
-        None => store.list_sources().into_iter().map(|s| s.id).collect(),
-    };
-    let mut texts = Vec::new();
-    for id in &ids {
-        let (_, text) = store
-            .read_source(id)
-            .ok_or_else(|| format!("source not found: {id}"))?;
-        texts.push(text);
-    }
-    let findings = codex_inocode_evidence::verify_document(&args.text, &texts);
-    Ok(json!({
-        "checkedSources": ids.len(),
-        "findings": findings,
-        "note": "Findings are reports only; nothing was changed or blocked.",
-    }))
+fn verify(root: &Path, args: VerifyArgs) -> Result<serde_json::Value, String> {
+    let refs = args.source_refs.unwrap_or_default();
+    let mut report = codex_inocode_knowledge::kb::verify_document(root, &args.text, &refs)
+        .map_err(|e| e.message)?;
+    report["note"] = json!("Findings are reports only; nothing was changed or blocked.");
+    Ok(report)
 }
 
 pub struct RecordEvidenceHandler;
@@ -383,18 +250,11 @@ impl ToolExecutor<ToolInvocation> for RecordEvidenceHandler {
         ToolInvocation: 'a,
     {
         Box::pin(async move {
-            let (arguments, thread_id) = arguments(invocation, RECORD_EVIDENCE_TOOL_NAME)?;
+            let (arguments, root, thread_id) = arguments(invocation, RECORD_EVIDENCE_TOOL_NAME)?;
             let args: RecordArgs = parse_arguments(&arguments)?;
-            let created_by = format!("model:{thread_id}");
             // A refusal is a result too (status denied, with the reason), so the card can show it
             // and the model can fix the call.
-            Ok(out(match record(&store(), args, &created_by) {
-                Ok(done) => done,
-                Err(reason) => json!({
-                    "kind": "evidence", "op": "create", "status": "denied",
-                    "requiresApproval": false, "reason": reason,
-                }),
-            }))
+            Ok(out(record(&root, &args, &format!("model:{thread_id}"))))
         })
     }
 }
@@ -414,9 +274,9 @@ impl ToolExecutor<ToolInvocation> for SearchEvidenceHandler {
         ToolInvocation: 'a,
     {
         Box::pin(async move {
-            let (arguments, _) = arguments(invocation, SEARCH_EVIDENCE_TOOL_NAME)?;
+            let (arguments, root, _) = arguments(invocation, SEARCH_EVIDENCE_TOOL_NAME)?;
             let args: SearchArgs = parse_arguments(&arguments)?;
-            Ok(out(search(&store(), args)))
+            Ok(out(search(&root, args)))
         })
     }
 }
@@ -436,9 +296,9 @@ impl ToolExecutor<ToolInvocation> for VerifyEvidenceDocumentHandler {
         ToolInvocation: 'a,
     {
         Box::pin(async move {
-            let (arguments, _) = arguments(invocation, VERIFY_EVIDENCE_DOCUMENT_TOOL_NAME)?;
+            let (arguments, root, _) = arguments(invocation, VERIFY_EVIDENCE_DOCUMENT_TOOL_NAME)?;
             let args: VerifyArgs = parse_arguments(&arguments)?;
-            verify(&store(), args).map(out).map_err(model_error)
+            verify(&root, args).map(out).map_err(model_error)
         })
     }
 }
@@ -463,6 +323,7 @@ mod tests {
         let (name, d) = name_and_description(create_record_evidence_tool());
         assert_eq!(name, "record_evidence");
         assert!(d.contains("price") && d.contains("source"));
+        assert!(d.contains("read again later") && d.contains("draft"));
         let (name, d) = name_and_description(create_search_evidence_tool());
         assert_eq!(name, "search_evidence");
         assert!(d.contains("Check it before looking something up again"));
@@ -471,54 +332,11 @@ mod tests {
     }
 
     #[test]
-    fn record_search_and_verify_round_trip() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = Store::new(dir.path().to_path_buf());
-        let rec = |claim: &str, quote: &str, text: Option<&str>| RecordArgs {
-            claim: claim.into(),
-            quote: quote.into(),
-            source_url: Some("https://example.com/price".into()),
-            source_title: Some("Price page".into()),
-            source_text: text.map(str::to_string),
-            claim_type: None,
-            status: None,
-            confidence: None,
-        };
-        let page = "Widget X costs 1,200 yen (tax included) as of 2026-11-11.";
-        let first = record(&store, rec("Widget X is 1,200 yen", "Widget X costs 1,200 yen", Some(page)), "model:t").unwrap();
-        assert_eq!(first["status"], "registered");
-        assert_eq!(first["claimStatus"], "reported");
-        assert_eq!(first["kind"], "evidence");
-        assert_eq!(first["target"]["tab"], "evidence");
-        // The same page again is the same source.
-        let second = record(&store, rec("Widget X tax included", "tax included", Some(page)), "model:t").unwrap();
-        assert_eq!(first["sourceId"], second["sourceId"]);
-        // A quote that is not in the text is refused.
-        assert!(record(&store, rec("x", "Widget X costs 9 yen", Some(page)), "model:t").is_err());
-        // Bad status refused.
-        let mut bad = rec("x", "tax included", Some(page));
-        bad.status = Some("maybe".into());
-        assert!(record(&store, bad, "model:t").is_err());
-
-        let found = search(&store, SearchArgs { query: Some("widget yen".into()), status: None, limit: None });
-        assert_eq!(found["count"], 1);
-        assert_eq!(found["results"][0]["evidence"][0]["sourceUrl"], "https://example.com/price");
-        assert!(found["results"][0]["evidence"][0]["retrievedAt"].is_string());
-        let none = search(&store, SearchArgs { query: Some("gadget".into()), status: None, limit: None });
-        assert_eq!(none["count"], 0);
-
-        let ids = vec![first["sourceId"].as_str().unwrap().to_string()];
-        let report = verify(&store, VerifyArgs { text: "Widget X costs 1,200 yen.".into(), source_ids: Some(ids) }).unwrap();
-        assert_eq!(report["checkedSources"], 1);
-        assert!(verify(&store, VerifyArgs { text: "t".into(), source_ids: Some(vec!["nope".into()]) }).is_err());
-    }
-
-    #[test]
-    fn arguments_reject_unknown_fields_and_bad_enums() {
+    fn arguments_reject_unknown_fields() {
         assert!(serde_json::from_str::<RecordArgs>(r#"{"claim":"a","quote":"b","x":1}"#).is_err());
         assert!(
-            serde_json::from_str::<RecordArgs>(r#"{"claim":"a","quote":"b","confidence":"high"}"#)
-                .is_ok()
+            serde_json::from_str::<RecordArgs>(r#"{"claim":"a","quote":"b","page":"p"}"#).is_ok()
         );
+        assert!(serde_json::from_str::<VerifyArgs>(r#"{"text":"a","source_ids":["x"]}"#).is_err());
     }
 }

@@ -122,6 +122,28 @@ pub(crate) fn spawn_notifier(
             }
         }
     });
+    let mut changed_rx = kb::subscribe_kb_changed();
+    let changed_out = std::sync::Arc::clone(&outgoing);
+    handle.spawn(async move {
+        loop {
+            match changed_rx.recv().await {
+                Ok(c) => {
+                    changed_out
+                        .send_server_notification(
+                            codex_app_server_protocol::ServerNotification::InocodeKbChanged(
+                                codex_app_server_protocol::InocodeKbChangedNotification {
+                                    cwd: c.cwd,
+                                    area: c.area,
+                                },
+                            ),
+                        )
+                        .await;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
     let mut rec_rx = kb::subscribe_recorded();
     handle.spawn(async move {
         loop {

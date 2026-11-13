@@ -76,8 +76,11 @@ pub(crate) fn create_search_knowledge_tool() -> ToolSpec {
     ]);
     tool(
         SEARCH_KNOWLEDGE_TOOL_NAME,
-        "Search this project's knowledge database: the rules about what must not be done, past \
-failure cases and what worked, decisions, known facts, open issues, contracts and procedures. \
+        "Search this project's knowledge database: the overview, the pages (write-ups, notes and \
+researched facts with their sources, ids `page:<title>`), the prohibitions, the checklists, the \
+rules about what must not be done, past failure cases and what worked, decisions, known facts, open \
+issues, contracts and procedures. Check it before starting a task, so you build on what is already \
+known instead of looking it up again. \
 Check it before an action that could be forbidden or that may have gone wrong before, for example \
 before deleting or force-pushing, touching a protected file, or retrying something that failed. \
 The first turn only lists the blocking rules; this finds the rest. Each result has the id, kind, \
@@ -97,7 +100,7 @@ It only reads: it cannot add or change rules.",
 pub(crate) fn create_read_knowledge_tool() -> ToolSpec {
     let properties = BTreeMap::from([(
         "id".to_string(),
-        text_prop("A record id returned by `search_knowledge`, for example `rule-0003`."),
+        text_prop("An id returned by `search_knowledge`, for example `rule-0003`, `page:<title>`, `prohibition:<id>`, `checklist:<role>` or `overview`."),
     )]);
     tool(
         READ_KNOWLEDGE_TOOL_NAME,
@@ -335,7 +338,22 @@ impl ToolExecutor<ToolInvocation> for SearchKnowledgeHandler {
         Box::pin(async move {
             let arguments = arguments(&invocation, SEARCH_KNOWLEDGE_TOOL_NAME)?;
             let args: SearchArgs = parse_arguments(&arguments)?;
-            search(&store_for(&invocation), args).map(out).map_err(model_error)
+            let store = store_for(&invocation);
+            let query = args.query.clone();
+            let limit = args.limit.unwrap_or(20).clamp(1, 100);
+            let only_legacy_kind = args.kind.as_deref().is_some_and(|k| !k.is_empty());
+            let mut value = search(&store, args).map_err(model_error)?;
+            // The redesigned knowledge of the project (overview, pages, prohibitions, checklists).
+            if !only_legacy_kind && let Some(root) = store.project_root() {
+                let extra = codex_inocode_knowledge::kb::search_project_knowledge(root, query.as_deref(), limit);
+                if let Some(results) = value.get_mut("results").and_then(|r| r.as_array_mut()) {
+                    results.extend(extra);
+                    results.truncate(limit);
+                    let n = results.len();
+                    value["count"] = json!(n);
+                }
+            }
+            Ok(out(value))
         })
     }
 }
@@ -357,7 +375,13 @@ impl ToolExecutor<ToolInvocation> for ReadKnowledgeHandler {
         Box::pin(async move {
             let arguments = arguments(&invocation, READ_KNOWLEDGE_TOOL_NAME)?;
             let args: ReadArgs = parse_arguments(&arguments)?;
-            read(&store_for(&invocation), args).map(out).map_err(model_error)
+            let store = store_for(&invocation);
+            if let Some(root) = store.project_root()
+                && let Some(found) = codex_inocode_knowledge::kb::read_project_knowledge(root, args.id.trim())
+            {
+                return found.map(out).map_err(model_error);
+            }
+            read(&store, args).map(out).map_err(model_error)
         })
     }
 }

@@ -643,7 +643,8 @@ async fn load_config_resolves_update_plan_enabled() -> std::io::Result<()> {
     let codex_home = tempdir()?;
     for (config_toml, expected_enabled) in [
         ("", true),
-        ("[tools.update_plan]", true),
+        // The section written without `enabled` keeps the field's own default (false).
+        ("[tools.update_plan]", false),
         ("[tools.update_plan]\nenabled = false", false),
         ("[tools.update_plan]\nenabled = true", true),
     ] {

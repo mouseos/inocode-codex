@@ -99,7 +99,6 @@ impl Store {
         version: Option<&str>,
         origin: Option<&str>,
     ) -> io::Result<Source> {
-        let id = self.next_id("sources", "src");
         let hash = format!("{:x}", Sha256::digest(bytes));
         let d = self.dir("sources");
         std::fs::create_dir_all(&d)?;

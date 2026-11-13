@@ -3616,6 +3616,24 @@
       ],
       "type": "string"
     },
+    "InocodeKbChangedNotification": {
+      "description": "The project's knowledge changed (by the screen or by the model): clients reload `area`.",
+      "properties": {
+        "area": {
+          "description": "`project`, `overview`, `page`, `prohibition`, `relaxation`, `checklist`, `ledger` or `failure`.",
+          "type": "string"
+        },
+        "cwd": {
+          "description": "The project folder whose knowledge changed.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "area",
+        "cwd"
+      ],
+      "type": "object"
+    },
     "InocodeKnowledgeKind": {
       "enum": [
         "rule",
@@ -9108,6 +9126,26 @@
         "params"
       ],
       "title": "Inocode/knowledge/recordedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "inocode/kb/changed"
+          ],
+          "title": "Inocode/kb/changedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/InocodeKbChangedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Inocode/kb/changedNotification",
       "type": "object"
     },
     {

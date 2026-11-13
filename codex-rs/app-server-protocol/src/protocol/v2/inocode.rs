@@ -1298,6 +1298,18 @@ pub struct InocodeKnowledgeRecordedNotification {
     pub title: String,
 }
 
+/// The project's knowledge changed (by the screen or by the model): clients reload `area`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeKbChangedNotification {
+    /// The project folder whose knowledge changed.
+    pub cwd: String,
+    /// `project`, `overview`, `page`, `prohibition`, `relaxation`, `checklist`, `ledger` or
+    /// `failure`.
+    pub area: String,
+}
+
 // ------------------------------------------------------------------- params (S3)
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
@@ -2229,6 +2241,8 @@ kb_responses!(
     InocodeKbCandidateListResponse,
     InocodeKbCandidateApproveResponse,
     InocodeKbCandidateRejectResponse,
+    InocodeKbFailureListResponse,
+    InocodeKbFailureReadResponse,
 );
 
 // ---------------------------------------------------------------- messages/resolveMany (quotes)

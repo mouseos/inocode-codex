@@ -4,6 +4,8 @@ use super::InocodeResult;
 use crate::error_code::internal_error;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::InocodeKbProjectGetResponse;
+use codex_app_server_protocol::InocodeKbFailureListResponse;
+use codex_app_server_protocol::InocodeKbFailureReadResponse;
 use codex_app_server_protocol::InocodeKbCandidateListResponse;
 use codex_app_server_protocol::InocodeKbCandidateApproveResponse;
 use codex_app_server_protocol::InocodeKbCandidateRejectResponse;
@@ -12,10 +14,10 @@ use codex_app_server_protocol::InocodeKbOverviewWriteResponse;
 use codex_app_server_protocol::InocodeKbIndexGetResponse;
 use codex_app_server_protocol::InocodeKbPageListResponse;
 use codex_app_server_protocol::InocodeKbPageReadResponse;
-use codex_app_server_protocol::InocodeKbPageWriteResponse;
-use codex_app_server_protocol::InocodeKbPageDeleteResponse;
 use codex_app_server_protocol::InocodeKbPageGraphResponse;
 use codex_app_server_protocol::InocodeKbVerifyResponse;
+use codex_app_server_protocol::InocodeKbPageWriteResponse;
+use codex_app_server_protocol::InocodeKbPageDeleteResponse;
 use codex_app_server_protocol::InocodeKbTagListResponse;
 use codex_app_server_protocol::InocodeKbProhibitionListResponse;
 use codex_app_server_protocol::InocodeKbProhibitionWriteResponse;
@@ -61,6 +63,8 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
     };
     Ok(Some(match &request {
         ClientRequest::InocodeKbProjectGet { .. } => InocodeKbProjectGetResponse { fields }.into(),
+        ClientRequest::InocodeKbFailureList { .. } => InocodeKbFailureListResponse { fields }.into(),
+        ClientRequest::InocodeKbFailureRead { .. } => InocodeKbFailureReadResponse { fields }.into(),
         ClientRequest::InocodeKbCandidateList { .. } => InocodeKbCandidateListResponse { fields }.into(),
         ClientRequest::InocodeKbCandidateApprove { .. } => InocodeKbCandidateApproveResponse { fields }.into(),
         ClientRequest::InocodeKbCandidateReject { .. } => InocodeKbCandidateRejectResponse { fields }.into(),
@@ -69,12 +73,12 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
         ClientRequest::InocodeKbIndexGet { .. } => InocodeKbIndexGetResponse { fields }.into(),
         ClientRequest::InocodeKbPageList { .. } => InocodeKbPageListResponse { fields }.into(),
         ClientRequest::InocodeKbPageRead { .. } => InocodeKbPageReadResponse { fields }.into(),
+        ClientRequest::InocodeKbPageGraph { .. } => InocodeKbPageGraphResponse { fields }.into(),
+        ClientRequest::InocodeKbVerify { .. } => InocodeKbVerifyResponse { fields }.into(),
         ClientRequest::InocodeKbPageWrite { .. } => InocodeKbPageWriteResponse { fields }.into(),
         ClientRequest::InocodeKbPageDelete { .. } => InocodeKbPageDeleteResponse { fields }.into(),
         ClientRequest::InocodeKbTagList { .. } => InocodeKbTagListResponse { fields }.into(),
         ClientRequest::InocodeKbProhibitionList { .. } => InocodeKbProhibitionListResponse { fields }.into(),
-        ClientRequest::InocodeKbPageGraph { .. } => InocodeKbPageGraphResponse { fields }.into(),
-        ClientRequest::InocodeKbVerify { .. } => InocodeKbVerifyResponse { fields }.into(),
         ClientRequest::InocodeKbProhibitionWrite { .. } => InocodeKbProhibitionWriteResponse { fields }.into(),
         ClientRequest::InocodeKbProhibitionRetract { .. } => InocodeKbProhibitionRetractResponse { fields }.into(),
         ClientRequest::InocodeKbRelaxationAdd { .. } => InocodeKbRelaxationAddResponse { fields }.into(),

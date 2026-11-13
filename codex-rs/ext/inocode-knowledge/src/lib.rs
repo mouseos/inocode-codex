@@ -16,7 +16,7 @@ pub use guard::GuardOrigin;
 pub use guard::{GuardAction, action_from_tool_input, builtin_check, GuardHit, GuardVerdict, check_action, guard_message};
 pub use events::{
     GuardEvent, GuardOutcome, GuardRuleStats, GuardTarget, guard_stats, KnowledgeRecorded, guard_events_path, list_guard_events,
-    record_guard_hits, subscribe_guard, subscribe_recorded,
+    record_guard_hits, subscribe_guard, subscribe_recorded, KbChanged, subscribe_kb_changed,
 };
 pub use record::{Confidence, FailureDetail, Kind, MatchSpec, Record, Scope, Severity, Status};
 pub use store::{ListQuery, Store, SummaryRow};
@@ -123,6 +123,9 @@ pub fn record_failure_case_with_conditions(
     let store = store_for(cwd);
     let id = store.record_failure_case_with_conditions(signature, symptom, detail, created_by)?;
     events::notify_recorded(&store, &id);
+    if let Some(root) = store.project_root() {
+        events::notify_kb_changed(root, "failure");
+    }
     Ok(Some(id))
 }
 

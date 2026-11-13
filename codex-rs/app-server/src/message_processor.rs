@@ -1215,6 +1215,8 @@ impl MessageProcessor {
             ClientRequest::ServerDiagnostics { .. } => Ok(Some(read_server_diagnostics().into())),
             request @ (ClientRequest::InocodeKnowledgeList { .. }
             | ClientRequest::InocodeKbProjectGet { .. }
+            | ClientRequest::InocodeKbFailureList { .. }
+            | ClientRequest::InocodeKbFailureRead { .. }
             | ClientRequest::InocodeKbCandidateList { .. }
             | ClientRequest::InocodeKbCandidateApprove { .. }
             | ClientRequest::InocodeKbCandidateReject { .. }
@@ -1224,10 +1226,10 @@ impl MessageProcessor {
             | ClientRequest::InocodeKbIndexGet { .. }
             | ClientRequest::InocodeKbPageList { .. }
             | ClientRequest::InocodeKbPageRead { .. }
-            | ClientRequest::InocodeKbPageWrite { .. }
-            | ClientRequest::InocodeKbPageDelete { .. }
             | ClientRequest::InocodeKbPageGraph { .. }
             | ClientRequest::InocodeKbVerify { .. }
+            | ClientRequest::InocodeKbPageWrite { .. }
+            | ClientRequest::InocodeKbPageDelete { .. }
             | ClientRequest::InocodeKbTagList { .. }
             | ClientRequest::InocodeKbProhibitionList { .. }
             | ClientRequest::InocodeKbProhibitionWrite { .. }

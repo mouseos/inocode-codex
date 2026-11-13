@@ -209,6 +209,10 @@ impl Dirs {
     fn checklists(&self) -> PathBuf {
         self.kb().join("checklists")
     }
+    /// Original texts of this project (sources), kept unchanged with their hash and retrieval time.
+    fn evidence(&self) -> PathBuf {
+        self.kb().join("evidence")
+    }
     fn migrations(&self) -> PathBuf {
         self.kb().join("legacy-migrations.json")
     }
@@ -359,11 +363,21 @@ pub fn quotes_in(body: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn source_text(source_ref: &str) -> Option<(String, Option<String>, String)> {
-    let store = codex_inocode_evidence::default_store();
-    store
+/// The sources of this project.
+fn sources_store(dirs: &Dirs) -> codex_inocode_evidence::Store {
+    codex_inocode_evidence::Store::new(dirs.evidence())
+}
+
+/// A source by its reference: this project's own sources first, then the old global evidence
+/// database (read only, for references written before sources belonged to a project).
+fn source_info(dirs: &Dirs, source_ref: &str) -> Option<(codex_inocode_evidence::Source, String)> {
+    sources_store(dirs)
         .read_source(source_ref)
-        .map(|(s, text)| (s.title, s.origin, text))
+        .or_else(|| codex_inocode_evidence::default_store().read_source(source_ref))
+}
+
+fn source_text(dirs: &Dirs, source_ref: &str) -> Option<(String, Option<String>, String)> {
+    source_info(dirs, source_ref).map(|(s, text)| (s.title, s.origin, text))
 }
 
 // ---------------------------------------------------------------------------
@@ -560,7 +574,7 @@ fn page_read(p: &Value) -> R {
     let quotes: Vec<Value> = quotes_in(&page.body)
         .into_iter()
         .map(|(src, text)| {
-            let found = source_text(&src);
+            let found = source_text(&dirs, &src);
             json!({
                 "sourceRef": src,
                 "sourceTitle": found.as_ref().map(|f| f.0.clone()),
@@ -604,7 +618,7 @@ fn page_graph(p: &Value) -> R {
             let quotes: Vec<Value> = quotes_in(&pg.body)
                 .into_iter()
                 .map(|(src, text)| {
-                    let found = sources.entry(src.clone()).or_insert_with(|| source_text(&src));
+                    let found = sources.entry(src.clone()).or_insert_with(|| source_text(&dirs, &src));
                     json!({
                         "sourceRef": src,
                         "sourceTitle": found.as_ref().map(|f| f.0.clone()),
@@ -627,18 +641,15 @@ fn page_graph(p: &Value) -> R {
 /// Mechanical document check against the given sources (quotes, uncited sentences,
 /// novel terms). Reports only; never blocks output.
 fn verify(p: &Value) -> R {
-    let _ = cwd_of(p)?;
+    let dirs = Dirs::new(&cwd_of(p)?);
     let text = str_of(p, "text").ok_or_else(|| invalid("text is required"))?;
-    let store = codex_inocode_evidence::default_store();
     let refs: Vec<String> = match p.get("sourceRefs").and_then(Value::as_array) {
         Some(a) if !a.is_empty() => a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
-        _ => store.list_sources().into_iter().map(|s| s.id).collect(),
+        _ => sources_store(&dirs).list_sources().into_iter().map(|s| s.id).collect(),
     };
     let mut texts = Vec::new();
     for r in &refs {
-        let (_, t) = store
-            .read_source(r)
-            .ok_or_else(|| invalid(format!("source not found: {r}")))?;
+        let (_, t) = source_info(&dirs, r).ok_or_else(|| invalid(format!("source not found: {r}")))?;
         texts.push(t);
     }
     let findings: Vec<Value> = codex_inocode_evidence::verify_document(text, &texts)
@@ -676,7 +687,7 @@ fn page_write(p: &Value) -> R {
     // Quote blocks must be verbatim in their source.
     let mut quote_errors = Vec::new();
     for (src, text) in quotes_in(&body) {
-        match source_text(&src) {
+        match source_text(&dirs, &src) {
             None => quote_errors.push(json!({ "sourceRef": src, "text": text, "reason": "the source does not exist" })),
             Some((_, _, full)) if !full.contains(&text) => quote_errors.push(
                 json!({ "sourceRef": src, "text": text, "reason": "the text does not appear word for word in the source" }),
@@ -1666,10 +1677,24 @@ fn candidate_list(p: &Value) -> R {
         .filter_map(|e| read_text(&e.path()).and_then(|t| serde_json::from_str::<Value>(&t).ok()))
         .map(|mut c| {
             let target = candidate_target(str_of(&c, "kind").unwrap_or(""), c.get("payload").unwrap_or(&Value::Null));
+            // An update proposal carries the current content of the record it would change.
+            let current = c
+                .get("payload")
+                .and_then(|pl| str_of(pl, "updates"))
+                .and_then(|old| match str_of(&c, "kind") {
+                    Some("failureCase") => legacy_store(&dirs)
+                        .read(Scope::Project, old)
+                        .map(|r| failure_json(&r)),
+                    Some("page" | "fact") => load_page(&page_path(&dirs, old)).map(|pg| json!({ "title": pg.meta.title, "body": pg.body })),
+                    _ => None,
+                });
             if let Some(m) = c.as_object_mut() {
                 m.insert("status".into(), json!("candidate"));
                 m.insert("requiresApproval".into(), json!(true));
                 m.insert("target".into(), target);
+                if let Some(cur) = current {
+                    m.insert("current".into(), cur);
+                }
             }
             c
         })
@@ -1759,16 +1784,7 @@ fn candidate_approve(p: &Value) -> R {
         }
         "page" | "fact" => {
             let title = need_str(&c, "title")?.to_string();
-            let mut body = str_of(&payload, "body").unwrap_or("").to_string();
-            if kind == "fact" && !tags_in(&body).iter().any(|t| t == "fact") {
-                body = format!("#fact\n{body}");
-            }
-            if let Some(source) = str_of(&payload, "source") {
-                body.push_str(&format!("\n\nSource: {source}"));
-                if let Some(d) = str_of(&payload, "checkedAt") {
-                    body.push_str(&format!(" (checked {d})"));
-                }
-            }
+            let body = model_page_body(kind, &payload);
             let base = load_page(&page_path(&dirs, &title)).map(|pg| pg.rev());
             let mut params = json!({
                 "cwd": dirs.root.to_string_lossy(), "title": title, "body": body,
@@ -1786,6 +1802,22 @@ fn candidate_approve(p: &Value) -> R {
     Ok(json!({ "status": "registered", "target": target, "id": new_id }))
 }
 
+/// The text of a page the model proposed: a fact gets the `#fact` tag, the source and the check
+/// date are appended.
+fn model_page_body(kind: &str, payload: &Value) -> String {
+    let mut body = str_of(payload, "body").unwrap_or("").to_string();
+    if kind == "fact" && !tags_in(&body).iter().any(|t| t == "fact") {
+        body = format!("#fact\n{body}");
+    }
+    if let Some(source) = str_of(payload, "source") {
+        body.push_str(&format!("\n\nSource: {source}"));
+        if let Some(d) = str_of(payload, "checkedAt") {
+            body.push_str(&format!(" (checked {d})"));
+        }
+    }
+    body
+}
+
 fn norm_title(t: &str) -> String {
     t.chars()
         .filter(|c| !c.is_whitespace())
@@ -1793,11 +1825,20 @@ fn norm_title(t: &str) -> String {
         .collect()
 }
 
-/// The model proposes a record (failure, page draft or fact). It is stored as a candidate that the
-/// user approves; nothing is registered by this call. Always returns the result card: `status` is
-/// `candidate`, or `denied` with a reason the model can fix. A similar record that already exists
+/// The model proposes a record (failure, page draft or fact). A failure is stored as a candidate
+/// that the user approves; a new page or fact is registered at once as a draft. Always returns the result card: `status` is
+/// `registered` (page, fact), `candidate` (failure, update), or `denied` with a reason the model can fix. A similar record that already exists
 /// turns the proposal into an update of it.
 pub fn propose(root: &Path, args: &Value, by: &str) -> Value {
+    let card = propose_inner(root, args, by);
+    if card["status"].as_str().is_some_and(|s| s != "denied") {
+        let area = if card["kind"].as_str() == Some("failureCase") { "failure" } else { "page" };
+        crate::events::notify_kb_changed(root, area);
+    }
+    card
+}
+
+fn propose_inner(root: &Path, args: &Value, by: &str) -> Value {
     let kind_name = str_of(args, "kind").unwrap_or("");
     let denied = |reason: &str| {
         json!({
@@ -1866,6 +1907,26 @@ pub fn propose(root: &Path, args: &Value, by: &str) -> Value {
     if let Some(w) = waiting {
         return denied(&format!("this was already proposed and waits for the user ({})", str_of(&w, "id").unwrap_or("")));
     }
+    // A page or a fact that does not exist yet is registered at once, marked as a draft (not
+    // confirmed by the user; decision Q-12). An existing page is never overwritten by the model:
+    // the change waits as an update proposal.
+    if kind != "failure" && existing.is_none() {
+        let card = |status: &str, reason: Option<String>| {
+            json!({
+                "kind": record_kind, "op": "create", "id": title, "title": title, "status": status,
+                "draft": status == "registered", "requiresApproval": false, "reason": reason,
+                "target": candidate_target(record_kind, &json!({ "title": title })),
+            })
+        };
+        let params = json!({
+            "cwd": root.to_string_lossy(), "title": title, "body": model_page_body(kind, &payload), "by": "model",
+        });
+        return match page_write(&params) {
+            Ok(w) if w["quoteErrors"].as_array().is_none_or(|e| e.is_empty()) => card("registered", None),
+            Ok(w) => card("denied", Some(format!("a quote is not word for word in its source: {}", w["quoteErrors"]))),
+            Err(e) => card("denied", Some(e.message)),
+        };
+    }
     let op = if existing.is_some() { "update" } else { "add" };
     if let Some(old) = &existing {
         payload["updates"] = json!(old);
@@ -1879,6 +1940,73 @@ pub fn propose(root: &Path, args: &Value, by: &str) -> Value {
         }),
         Err(e) => denied(&e.message),
     }
+}
+
+/// A failure record as the screen reads it: the conditions say `unknown` when they were not
+/// established; `source` and `checkedAt` are split.
+fn failure_json(r: &crate::record::Record) -> Value {
+    let conditions = if r.conditions_known == Some(false) {
+        Some("unknown".to_string())
+    } else {
+        r.conditions.clone()
+    };
+    let (source, checked_at) = match r.source.as_deref() {
+        Some(s) => match s.rsplit_once(" (checked ") {
+            Some((src, rest)) if rest.ends_with(')') => (Some(src.to_string()), Some(rest.trim_end_matches(')').to_string())),
+            _ => (Some(s.to_string()), None),
+        },
+        None => (None, None),
+    };
+    json!({
+        "id": r.id, "title": r.title, "conditions": conditions, "attempted": r.attempted, "outcome": r.outcome,
+        "avoid": r.do_not, "cause": r.cause, "source": source, "checkedAt": checked_at,
+        "status": serde_json::to_value(r.status).unwrap_or(Value::Null),
+        "body": r.body, "stateDependent": r.state_dependent, "worksWhen": r.works_when,
+        "updatedAt": r.updated_at, "seen": null,
+    })
+}
+
+fn failure_list(p: &Value) -> R {
+    let dirs = Dirs::new(&cwd_of(p)?);
+    let ws = words(str_of(p, "query"));
+    let status = str_of(p, "status");
+    let mut all: Vec<_> = legacy_store(&dirs)
+        .all(Some(Scope::Project))
+        .into_iter()
+        .filter(|r| r.kind == Kind::FailureCase && !is_candidate(r) && r.status.is_live() == (status != Some("superseded")))
+        .filter(|r| {
+            status.is_none_or(|s| s == "superseded" || serde_json::to_value(r.status).ok().and_then(|v| v.as_str().map(str::to_string)).as_deref() == Some(s))
+        })
+        .filter(|r| {
+            let hay = format!(
+                "{} {} {} {} {}",
+                r.title,
+                r.conditions.as_deref().unwrap_or(""),
+                r.attempted.as_deref().unwrap_or(""),
+                r.outcome.as_deref().unwrap_or(""),
+                r.body
+            )
+            .to_lowercase();
+            ws.iter().all(|w| hay.contains(w.as_str()))
+        })
+        .collect();
+    all.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    let limit = limit_of(p);
+    let off = offset_of(p);
+    let total = all.len();
+    let failures: Vec<Value> = all.iter().skip(off).take(limit).map(failure_json).collect();
+    let next = (off + failures.len() < total).then(|| (off + failures.len()).to_string());
+    Ok(json!({ "failures": failures, "nextCursor": next }))
+}
+
+fn failure_read(p: &Value) -> R {
+    let dirs = Dirs::new(&cwd_of(p)?);
+    let id = need_str(p, "id")?;
+    let r = legacy_store(&dirs)
+        .read(Scope::Project, id)
+        .filter(|r| r.kind == Kind::FailureCase)
+        .ok_or_else(|| not_found(format!("failure {id}")))?;
+    Ok(json!({ "failure": failure_json(&r) }))
 }
 
 fn candidate_reject(p: &Value) -> R {
@@ -1957,7 +2085,248 @@ fn index_get(p: &Value) -> R {
 // ---------------------------------------------------------------------------
 
 /// `method` is the part after `inocode/kb/` (for example `page/read`).
+// ---------------------------------------------------------------------------
+// the model-facing evidence tools (record, search) on the project's pages
+// ---------------------------------------------------------------------------
+
+fn first_line(s: &str) -> String {
+    s.lines().next().unwrap_or("").trim().to_string()
+}
+
+/// `record_evidence`: keeps the original text of a source in this project, then adds the fact and
+/// its verbatim quote (`> quote:<source ref>: ...`) to the page of that source. The page is a
+/// draft until the user confirms it. Always returns the result card.
+pub fn record_evidence(root: &Path, args: &Value, by: &str) -> Value {
+    let card = record_evidence_inner(root, args, by);
+    if card["status"].as_str().is_some_and(|s| s != "denied") {
+        let area = if card["kind"].as_str() == Some("failureCase") { "failure" } else { "page" };
+        crate::events::notify_kb_changed(root, area);
+    }
+    card
+}
+
+fn record_evidence_inner(root: &Path, args: &Value, by: &str) -> Value {
+    let denied = |reason: &str| json!({ "kind": "evidence", "op": "create", "status": "denied", "requiresApproval": false, "reason": reason });
+    let text = |key: &str| str_of(args, key).map(str::trim).filter(|s| !s.is_empty());
+    let Some(claim) = text("claim") else { return denied("claim is required") };
+    let Some(quote) = text("quote") else { return denied("quote is required") };
+    if quote.contains('\n') {
+        return denied("the quote must be one line; record each line separately");
+    }
+    let url = text("source_url");
+    let original = text("source_text").unwrap_or(quote);
+    if !original.contains(quote) {
+        return denied("the quote does not appear word for word in source_text; copy it exactly");
+    }
+    let dirs = Dirs { root: root.to_path_buf(), home: crate::inocode_home() };
+    let (project_id, _, _, ready) = ensure_project(&dirs);
+    if project_id.is_none() || !ready {
+        return denied("the project id could not be created (is the project folder writable?)");
+    }
+    let store = sources_store(&dirs);
+    // The same page read again is one source.
+    let existing = url.and_then(|u| {
+        store
+            .list_sources()
+            .into_iter()
+            .find(|s| s.origin.as_deref() == Some(u) && store.read_source(&s.id).is_some_and(|(_, t)| t == original))
+    });
+    let source = match existing {
+        Some(s) => s,
+        None => match store.import_bytes(
+            text("source_title").or(url).unwrap_or("note"),
+            if url.is_some_and(|u| u.starts_with("http")) { "web" } else { "text" },
+            original.as_bytes(),
+            None,
+            url,
+        ) {
+            Ok(s) => s,
+            Err(e) => return denied(&format!("could not save the source: {e}")),
+        },
+    };
+    let title = text("page")
+        .map(str::to_string)
+        .unwrap_or_else(|| first_line(&source.title).chars().take(120).collect());
+    let day: String = source.retrieved_at.chars().take(10).collect();
+    let block = format!("- {claim}\n> quote:{}: {quote}\n", source.id);
+    let existing_page = load_page(&page_path(&dirs, &title));
+    let (body, base) = match &existing_page {
+        Some(pg) => (format!("{}\n{block}", pg.body.trim_end()), Some(pg.rev())),
+        None => {
+            let origin = url.map(|u| format!(" {u}")).unwrap_or_default();
+            (format!("出典: {}{origin} (checked {day})\n\n{block}", source.title), None)
+        }
+    };
+    let mut params = json!({ "cwd": root.to_string_lossy(), "title": title, "body": body, "by": "model" });
+    if let Some(b) = base {
+        params["baseRev"] = json!(b);
+    }
+    match page_write(&params) {
+        Ok(w) if w["quoteErrors"].as_array().is_none_or(|e| e.is_empty()) => json!({
+            "kind": "evidence", "op": if existing_page.is_some() { "update" } else { "create" },
+            "id": title, "title": claim.chars().take(120).collect::<String>(),
+            "status": "registered", "draft": true, "requiresApproval": false,
+            "target": { "tab": "evidence", "sub": "pages", "ref": title },
+            "page": title, "sourceRef": source.id, "sourceUrl": source.origin,
+            "retrievedAt": source.retrieved_at, "createdBy": by,
+        }),
+        Ok(w) => denied(&format!("a quote on the page is not word for word in its source: {}", w["quoteErrors"])),
+        Err(e) => denied(&e.message),
+    }
+}
+
+/// `search_evidence`: pages of this project that match, with their quotes, the source of each and
+/// when it was retrieved.
+pub fn search_evidence(root: &Path, query: Option<&str>, limit: usize) -> Value {
+    let dirs = Dirs { root: root.to_path_buf(), home: crate::inocode_home() };
+    let ws = words(query);
+    let mut hits: Vec<Page> = all_pages(&dirs)
+        .into_iter()
+        .filter(|pg| {
+            let hay = format!("{}\n{}", pg.meta.title.to_lowercase(), pg.body.to_lowercase());
+            ws.iter().all(|w| hay.contains(w.as_str()))
+        })
+        .collect();
+    hits.sort_by(|a, b| b.meta.updated_at.cmp(&a.meta.updated_at));
+    let results: Vec<Value> = hits
+        .iter()
+        .take(limit.max(1))
+        .map(|pg| {
+            let quotes: Vec<Value> = quotes_in(&pg.body)
+                .into_iter()
+                .map(|(src, text)| {
+                    let found = source_info(&dirs, &src);
+                    json!({
+                        "sourceRef": src, "text": text,
+                        "sourceTitle": found.as_ref().map(|f| f.0.title.clone()),
+                        "sourceUrl": found.as_ref().and_then(|f| f.0.origin.clone()),
+                        "retrievedAt": found.as_ref().map(|f| f.0.retrieved_at.clone()),
+                        "matches": found.as_ref().is_some_and(|f| f.1.contains(&text)),
+                    })
+                })
+                .collect();
+            json!({
+                "page": pg.meta.title, "draft": !pg.meta.confirmed, "snippet": snippet(&pg.body, &ws),
+                "quotes": quotes,
+            })
+        })
+        .collect();
+    json!({ "count": results.len(), "results": results })
+}
+
+/// `search_knowledge` over the redesigned knowledge of this project: the overview, the pages, the
+/// active prohibitions and the checklist items. Each hit has an `id` that `read_project_knowledge`
+/// accepts (`overview`, `page:<title>`, `prohibition:<id>`, `checklist:<role>`).
+pub fn search_project_knowledge(root: &Path, query: Option<&str>, limit: usize) -> Vec<Value> {
+    let dirs = Dirs { root: root.to_path_buf(), home: crate::inocode_home() };
+    let ws = words(query);
+    let hit = |hay: &str| {
+        let h = hay.to_lowercase();
+        ws.iter().all(|w| h.contains(w.as_str()))
+    };
+    let mut out = Vec::new();
+    if let Some(t) = read_text(&dirs.overview()).filter(|t| !t.trim().is_empty() && hit(t)) {
+        out.push(json!({ "id": "overview", "kind": "overview", "title": "Project overview", "summary": snippet(&t, &ws) }));
+    }
+    for x in all_prohibitions(&dirs).into_iter().filter(|x| x.status == "active" && !expired(&x.expires)) {
+        if hit(&format!("{}\n{}", x.title, x.reason)) {
+            out.push(json!({
+                "id": format!("prohibition:{}", x.id), "kind": "prohibition", "title": x.title,
+                "summary": x.reason, "strength": x.strength,
+            }));
+        }
+    }
+    for c in load_checklists(&dirs) {
+        let open: Vec<&ChecklistItem> = c.items.iter().filter(|i| hit(&format!("{} {} {}", c.role, i.text, i.when))).collect();
+        if !open.is_empty() {
+            let lines: Vec<String> = open.iter().take(5).map(|i| format!("[{}] {}", if i.done { "x" } else { " " }, i.text)).collect();
+            out.push(json!({
+                "id": format!("checklist:{}", c.role), "kind": "checklist", "title": format!("Checklist for {}", c.role),
+                "summary": lines.join("; "),
+            }));
+        }
+    }
+    let mut pages: Vec<Page> = all_pages(&dirs).into_iter().filter(|pg| hit(&format!("{}\n{}", pg.meta.title, pg.body))).collect();
+    pages.sort_by(|a, b| b.meta.updated_at.cmp(&a.meta.updated_at));
+    for pg in pages {
+        out.push(json!({
+            "id": format!("page:{}", pg.meta.title), "kind": "page", "title": pg.meta.title,
+            "summary": snippet(&pg.body, &ws), "draft": !pg.meta.confirmed,
+        }));
+    }
+    out.truncate(limit.max(1));
+    out
+}
+
+/// `read_knowledge` for an id from `search_project_knowledge`. `None` when the id is not one of them.
+pub fn read_project_knowledge(root: &Path, id: &str) -> Option<Result<Value, String>> {
+    let dirs = Dirs { root: root.to_path_buf(), home: crate::inocode_home() };
+    if id == "overview" {
+        return Some(Ok(json!({ "id": id, "kind": "overview", "text": read_text(&dirs.overview()).unwrap_or_default() })));
+    }
+    if let Some(title) = id.strip_prefix("page:") {
+        return Some(match load_page(&page_path(&dirs, title)) {
+            Some(pg) => Ok(json!({
+                "id": id, "kind": "page", "title": pg.meta.title, "draft": !pg.meta.confirmed,
+                "updatedAt": pg.meta.updated_at, "body": pg.body,
+            })),
+            None => Err(format!("no page titled {title}; find pages with search_knowledge")),
+        });
+    }
+    if let Some(pid) = id.strip_prefix("prohibition:") {
+        return Some(match all_prohibitions(&dirs).into_iter().find(|x| x.id == pid) {
+            Some(x) => Ok(json!({
+                "id": id, "kind": "prohibition", "title": x.title, "reason": x.reason,
+                "strength": x.strength, "status": x.status, "expires": x.expires,
+            })),
+            None => Err(format!("no prohibition {pid}")),
+        });
+    }
+    if let Some(role) = id.strip_prefix("checklist:") {
+        return Some(match load_checklists(&dirs).into_iter().find(|c| c.role == role) {
+            Some(c) => Ok(json!({
+                "id": id, "kind": "checklist", "role": c.role,
+                "items": c.items.iter().map(|i| json!({ "id": i.id, "text": i.text, "when": i.when, "done": i.done })).collect::<Vec<_>>(),
+            })),
+            None => Err(format!("no checklist for {role}")),
+        });
+    }
+    None
+}
+
+/// `verify_evidence_document`: the same check as `inocode/kb/verify`.
+pub fn verify_document(root: &Path, text: &str, source_refs: &[String]) -> R {
+    verify(&json!({ "cwd": root.to_string_lossy(), "text": text, "sourceRefs": source_refs }))
+}
+
+/// The area a successful write changes, for `inocode/kb/changed`. `None` for reads.
+fn changed_area(method: &str) -> Option<&'static str> {
+    Some(match method {
+        "overview/write" => "overview",
+        "page/write" | "page/delete" => "page",
+        "prohibition/write" | "prohibition/retract" | "legacy/migrate" => "prohibition",
+        "relaxation/add" | "relaxation/revoke" => "relaxation",
+        "checklist/write" | "checklist/setDone" => "checklist",
+        "candidate/approve" | "candidate/reject" => "page",
+        _ => return None,
+    })
+}
+
 pub fn call(method: &str, params: &Value) -> R {
+    let result = call_inner(method, params);
+    if result.is_ok()
+        && let Some(area) = changed_area(method)
+        && let Ok(cwd) = cwd_of(params)
+    {
+        crate::events::notify_kb_changed(&Dirs::new(&cwd).root, area);
+        if matches!(method, "candidate/approve" | "candidate/reject") {
+            crate::events::notify_kb_changed(&Dirs::new(&cwd).root, "failure");
+        }
+    }
+    result
+}
+
+fn call_inner(method: &str, params: &Value) -> R {
     match method {
         "project/get" => project_get(params),
         "overview/read" => overview_read(params),
@@ -1965,6 +2334,8 @@ pub fn call(method: &str, params: &Value) -> R {
         "index/get" => index_get(params),
         "page/list" => page_list(params),
         "page/read" => page_read(params),
+        "page/graph" => page_graph(params),
+        "verify" => verify(params),
         "page/write" => page_write(params),
         "page/delete" => page_delete(params),
         "tag/list" => tag_list(params),
@@ -1981,6 +2352,8 @@ pub fn call(method: &str, params: &Value) -> R {
         "legacy/rules" => legacy_rules(params),
         "legacy/migrate" => legacy_migrate(params),
         "legacy/failureCases" => legacy_failure_cases(params),
+        "failure/list" => failure_list(params),
+        "failure/read" => failure_read(params),
         "candidate/list" => candidate_list(params),
         "candidate/approve" => candidate_approve(params),
         "candidate/reject" => candidate_reject(params),
@@ -1991,5 +2364,3 @@ pub fn call(method: &str, params: &Value) -> R {
 #[cfg(test)]
 #[path = "kb_tests.rs"]
 mod kb_tests;
-        "page/graph" => page_graph(params),
-        "verify" => verify(params),

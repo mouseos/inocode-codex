@@ -732,6 +732,18 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeMessagesResolveManyResponse,
     },
+    #[experimental("inocode/kb/failure/list")]
+    InocodeKbFailureList => "inocode/kb/failure/list" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbFailureListResponse,
+    },
+    #[experimental("inocode/kb/failure/read")]
+    InocodeKbFailureRead => "inocode/kb/failure/read" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbFailureReadResponse,
+    },
     #[experimental("inocode/knowledge/search")]
     InocodeKnowledgeSearch => "inocode/knowledge/search" {
         params: v2::InocodeKnowledgeSearchParams,
@@ -2649,6 +2661,8 @@ server_notification_definitions! {
     InocodeGoalCompletionEvidenceNotice => "inocode/goal/completionEvidence" (v2::InocodeGoalCompletionEvidenceNotification),
     #[experimental("inocode/knowledge/recorded")]
     InocodeKnowledgeRecorded => "inocode/knowledge/recorded" (v2::InocodeKnowledgeRecordedNotification),
+    #[experimental("inocode/kb/changed")]
+    InocodeKbChanged => "inocode/kb/changed" (v2::InocodeKbChangedNotification),
     #[experimental("inocode/advisor/event")]
     InocodeAdvisorEvent => "inocode/advisor/event" (v2::InocodeAdvisorEventNotification),
     #[experimental("inocode/messages/appended")]
