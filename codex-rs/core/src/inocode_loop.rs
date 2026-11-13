@@ -220,6 +220,7 @@ struct ThreadStall {
     last_error: String,
     tracker: codex_inocode_advisor::StateTracker,
     research: codex_inocode_advisor::ResearchTracker,
+    plan: codex_inocode_advisor::PlanTracker,
 }
 
 fn detectors() -> &'static Mutex<HashMap<ThreadId, ThreadStall>> {
@@ -389,6 +390,7 @@ pub(crate) fn observe_tool_result(
             last_error: String::new(),
             tracker: Default::default(),
             research: Default::default(),
+            plan: Default::default(),
         });
         entry.recent.push_back(format!(
             "{summary} -> {}",
@@ -409,6 +411,14 @@ pub(crate) fn observe_tool_result(
         let recent = entry.recent.iter().cloned().collect::<Vec<_>>();
         let conditions = codex_inocode_advisor::call_conditions(&recent, &cwd, &obs_for_conditions);
         let research_fact = entry.research.observe(tool, success);
+        // A turn of several calls without a checklist (only when the checklist tool exists here).
+        let plan_fact = (turn.config.update_plan_enabled && turn.mode() != codex_protocol::config_types::ModeKind::Plan)
+            .then(|| entry.plan.observe(&turn.sub_id, tool))
+            .flatten();
+        let research_fact = match (research_fact, plan_fact) {
+            (Some(a), Some(b)) => Some(format!("{a} {b}")),
+            (a, b) => a.or(b),
+        };
         (stall, recent, entry.last_error.clone(), conditions, research_fact)
     };
     // Research that is not recorded: a statement of fact, once. Nothing is required or stopped.

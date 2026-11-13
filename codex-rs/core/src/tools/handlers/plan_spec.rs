@@ -41,7 +41,11 @@ pub fn create_update_plan_tool() -> ToolSpec {
 
     ToolSpec::Function(ResponsesApiTool {
         name: "update_plan".to_string(),
-        description: r#"Updates the task plan.
+        description: r#"Updates the task plan: the checklist the user sees beside the conversation.
+Call it before the first action of any request that takes two or more steps (looking things up,
+editing, running commands, checking), with every step and the first one in_progress. Then call it
+again as each step is done (completed) and the next one starts, and when the plan changes. Skip it
+for a one-step request or a direct answer.
 Provide an optional explanation and a list of plan items, each with a step and status.
 At most one step can be in_progress at a time.
 "#

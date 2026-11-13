@@ -14,6 +14,8 @@ mod failure;
 mod model_hints;
 mod readonly;
 mod research;
+mod plan;
+pub use plan::PlanTracker;
 
 pub use research::ResearchTracker;
 pub use model_hints::model_hint;
