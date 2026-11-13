@@ -410,7 +410,7 @@ pub(crate) fn observe_tool_result(
         entry.tracker.after(&finished);
         let recent = entry.recent.iter().cloned().collect::<Vec<_>>();
         let conditions = codex_inocode_advisor::call_conditions(&recent, &cwd, &obs_for_conditions);
-        let research_fact = entry.research.observe(tool, success);
+        let research_fact = entry.research.observe(tool, args, success);
         // A turn of several calls without a checklist (only when the checklist tool exists here).
         let plan_fact = (turn.config.update_plan_enabled && turn.mode() != codex_protocol::config_types::ModeKind::Plan)
             .then(|| entry.plan.observe(&turn.sub_id, tool))
