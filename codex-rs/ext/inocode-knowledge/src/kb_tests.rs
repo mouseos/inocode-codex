@@ -588,4 +588,17 @@ fn record_evidence_writes_the_project_page_and_quote_that_the_screen_reads() {
     let all = verify_document(root, "「存在しない文」", &[]).unwrap();
     assert!(all["findings"].as_array().unwrap().iter().any(|f| f["kind"] == "quote_missing"));
     assert_eq!(verify_document(root, "x", &["src-9999".to_string()]).unwrap_err().code, INVALID);
+
+    // the user rejects one quote: only its two lines go, the other quote and the page stay, and
+    // the same claim is not recorded again (the page can still take other claims)
+    let rej = |r: &Value| json!({ "cwd": cwd, "kind": "evidence", "id": r["id"], "claim": r["claim"], "sourceRef": r["sourceRef"], "reason": "古い価格" });
+    assert_eq!(ok("reject", rej(&second))["status"], "quoteRemoved");
+    let left = ok("page/read", json!({ "cwd": cwd, "title": "Widget の価格" }));
+    assert_eq!(left["quotes"].as_array().unwrap().len(), 1);
+    assert_eq!(left["confirmed"], false, "a rejection does not confirm the page");
+    let again = record_evidence(root, &rec("税込み", "tax included"), "m");
+    assert!(again["reason"].as_str().unwrap().contains("古い価格"), "{again}");
+    // the last quote of a page the model made: the page goes
+    assert_eq!(ok("reject", rej(&first))["status"], "removed");
+    assert_eq!(err("page/read", json!({ "cwd": cwd, "title": "Widget の価格" })).code, NOT_FOUND);
 }

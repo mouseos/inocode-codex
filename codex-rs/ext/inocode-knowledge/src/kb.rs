@@ -2051,6 +2051,28 @@ fn reject(p: &Value) -> R {
     let id = need_str(p, "id")?;
     let reason = str_of(p, "reason").map(str::trim).filter(|s| !s.is_empty());
     let (title, result) = match kind {
+        "evidence" if str_of(p, "sourceRef").is_some() && str_of(p, "claim").is_some() => {
+            // One quote on a page: take out its two lines, not the page (other quotes stay).
+            let path = page_path(&dirs, id);
+            let pg = load_page(&path).ok_or_else(|| not_found(format!("page {id}")))?;
+            let claim = str_of(p, "claim").unwrap_or("").trim();
+            let head = format!("- {claim}");
+            let quote = format!("> quote:{}:", str_of(p, "sourceRef").unwrap_or(""));
+            let lines: Vec<&str> = pg.body.lines().collect();
+            let at = (0..lines.len().saturating_sub(1))
+                .find(|&i| lines[i].trim_end() == head && lines[i + 1].starts_with(&quote))
+                .ok_or_else(|| not_found(format!("the quote on page {id}")))?;
+            let rest: Vec<&str> = lines.iter().enumerate().filter(|(i, _)| *i != at && *i != at + 1).map(|(_, l)| *l).collect();
+            let made_by_model = pg.meta.revs.first().map(|r| r.by != "user").unwrap_or(pg.meta.by != "user");
+            let result = if !rest.iter().any(|l| l.starts_with("> quote:")) && made_by_model {
+                page_delete(&json!({ "cwd": dirs.root.to_string_lossy(), "title": pg.meta.title }))?;
+                "removed"
+            } else {
+                page_write(&json!({ "cwd": dirs.root.to_string_lossy(), "title": pg.meta.title, "body": rest.join("\n") + "\n", "by": "user", "baseRev": pg.rev() }))?;
+                "quoteRemoved"
+            };
+            (claim.to_string(), result)
+        }
         "page" | "fact" | "evidence" => {
             let path = page_path(&dirs, id);
             let pg = load_page(&path).ok_or_else(|| not_found(format!("page {id}")))?;
@@ -2087,7 +2109,7 @@ Rejected by the user: {r}", rec.body.trim_end());
         other => return Err(invalid(format!("kind {other} cannot be rejected"))),
     };
     let entry = json!({
-        "kind": if kind == "failure" { "failureCase" } else if kind == "evidence" { "page" } else { kind },
+        "kind": if kind == "failure" { "failureCase" } else if kind == "evidence" && str_of(p, "claim").is_none() { "page" } else { kind },
         "id": id, "title": title, "reason": reason, "at": now(), "by": str_of(p, "by").unwrap_or("user"),
     });
     let path = rejections_path(&dirs);
@@ -2240,6 +2262,10 @@ fn record_evidence_inner(root: &Path, args: &Value, by: &str) -> Value {
         let why = str_of(&r, "reason").filter(|s| !s.is_empty()).map(|s| format!(": {s}")).unwrap_or_default();
         return denied(&format!("the user rejected the page {title} before{why}. Do not record it again unless the user asks"));
     }
+    if let Some(r) = rejection_of(&dirs, "evidence", claim) {
+        let why = str_of(&r, "reason").filter(|s| !s.is_empty()).map(|s| format!(": {s}")).unwrap_or_default();
+        return denied(&format!("the user rejected this claim before{why}. Do not record it again unless the user asks"));
+    }
     let day: String = source.retrieved_at.chars().take(10).collect();
     let block = format!("- {claim}\n> quote:{}: {quote}\n", source.id);
     let existing_page = load_page(&page_path(&dirs, &title));
@@ -2257,7 +2283,7 @@ fn record_evidence_inner(root: &Path, args: &Value, by: &str) -> Value {
     match page_write(&params) {
         Ok(w) if w["quoteErrors"].as_array().is_none_or(|e| e.is_empty()) => json!({
             "kind": "evidence", "op": if existing_page.is_some() { "update" } else { "create" },
-            "id": title, "title": claim.chars().take(120).collect::<String>(),
+            "id": title, "title": claim.chars().take(120).collect::<String>(), "claim": claim,
             "status": "registered", "draft": true, "requiresApproval": false,
             "target": { "tab": "evidence", "sub": "pages", "ref": title },
             "page": title, "sourceRef": source.id, "sourceUrl": source.origin,

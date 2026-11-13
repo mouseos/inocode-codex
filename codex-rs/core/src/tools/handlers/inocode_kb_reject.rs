@@ -23,7 +23,7 @@ pub(crate) fn create_kb_reject_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (
             "kind".to_string(),
-            JsonSchema::string(Some("`page` (a page, a fact or recorded evidence) or `failure`.".to_string())),
+            JsonSchema::string(Some("`page` (a page or a fact), `evidence` (one recorded quote) or `failure`.".to_string())),
         ),
         (
             "id".to_string(),
@@ -31,6 +31,14 @@ pub(crate) fn create_kb_reject_tool() -> ToolSpec {
                 "The page title, or the failure record id (from `search_knowledge` or the result of the call that added it)."
                     .to_string(),
             )),
+        ),
+        (
+            "claim".to_string(),
+            JsonSchema::string(Some("For `evidence`: the claim as it was recorded (only that quote is taken off the page).".to_string())),
+        ),
+        (
+            "source_ref".to_string(),
+            JsonSchema::string(Some("For `evidence`: the `sourceRef` the record returned.".to_string())),
         ),
         (
             "reason".to_string(),
@@ -61,6 +69,10 @@ struct RejectArgs {
     kind: String,
     id: String,
     #[serde(default)]
+    claim: Option<String>,
+    #[serde(default)]
+    source_ref: Option<String>,
+    #[serde(default)]
     reason: Option<String>,
 }
 
@@ -85,10 +97,14 @@ impl ToolExecutor<ToolInvocation> for KbRejectHandler {
             };
             let args: RejectArgs = parse_arguments(arguments)?;
             let cwd = invocation.turn.cwd.as_path().to_path_buf();
-            let params = json!({
+            let mut params = json!({
                 "cwd": cwd.to_string_lossy(), "kind": args.kind, "id": args.id,
                 "reason": args.reason, "by": "user (in the chat)",
             });
+            if let (Some(c), Some(r)) = (args.claim, args.source_ref) {
+                params["claim"] = json!(c);
+                params["sourceRef"] = json!(r);
+            }
             let text = match codex_inocode_knowledge::kb::call("reject", &params) {
                 Ok(v) => serde_json::to_string_pretty(&v).unwrap_or_default(),
                 Err(e) => return Err(FunctionCallError::RespondToModel(e.message)),
