@@ -427,62 +427,45 @@ fn the_model_proposes_and_only_the_user_registers() {
     assert!(no_cond["reason"].as_str().unwrap().contains("conditions"));
     assert_eq!(propose(root, &json!({ "kind": "failure", "title": "t", "body": "b", "conditions": "x" }), "m")["status"], "denied");
     assert_eq!(propose(root, &json!({ "kind": "idea", "title": "t", "body": "b" }), "m")["status"], "denied");
-    // a candidate, not a registration
+    // registered at once (no approval); the user rejects what is wrong
     let ok = propose(root, &failure("adb shell は fastboot 中に失敗する", json!({})), "model:t");
-    assert_eq!((ok["status"].as_str(), ok["requiresApproval"].as_bool(), ok["kind"].as_str()), (Some("candidate"), Some(true), Some("failureCase")));
-    assert_eq!(ok["id"], "cand-0001");
+    assert_eq!((ok["status"].as_str(), ok["requiresApproval"].as_bool(), ok["kind"].as_str()), (Some("registered"), Some(false), Some("failureCase")));
+    assert!(ok["id"].as_str().unwrap().starts_with("failure_case-"), "the result says which record it made");
+    assert_eq!(ok["target"]["sub"], "failures");
     let store = guard_store(&cwd);
-    assert!(store.all(Some(Scope::Project)).iter().all(|r| r.kind != Kind::FailureCase), "nothing is registered yet");
-    // the same proposal again is refused while it waits
-    let again = propose(root, &failure("adb shell は fastboot 中に失敗する", json!({})), "model:t");
-    assert_eq!(again["status"], "denied");
-    assert!(again["reason"].as_str().unwrap().contains("cand-0001"));
     // "unknown" conditions are accepted and said so
     let unknown = propose(root, &failure("別の失敗", json!({ "conditions": "unknown", "attempted": "cargo build", "outcome": "OOM" })), "m");
-    assert_eq!(unknown["status"], "candidate");
-    // approval registers the failure case as the user's verified record, with the conditions
-    let done = ok_call("candidate/approve", json!({ "cwd": cwd, "id": "cand-0001" }));
-    assert_eq!(done["status"], "registered");
-    assert!(done["id"].as_str().unwrap().starts_with("failure_case-"), "the approval says which record it made");
-    assert_eq!(done["target"]["sub"], "failures");
+    assert_eq!(unknown["status"], "registered");
     // the screen reads registered failures: list, search, read; "unknown" conditions say so
-    let listed = ok_call("failure/list", json!({ "cwd": cwd }));
+    let listed = ok_call("failure/list", json!({ "cwd": cwd, "query": "fastboot" }));
     assert_eq!(listed["failures"].as_array().unwrap().len(), 1);
     let first = &listed["failures"][0];
     assert_eq!(first["conditions"], "fastboot の最中だった");
     assert_eq!((first["attempted"].as_str(), first["outcome"].as_str()), (Some("adb shell"), Some("exit 1: device offline")));
     assert_eq!((first["source"].as_str(), first["checkedAt"].as_str()), (Some("https://example.com/adb"), Some("2026-11-13")));
     assert_eq!(first["avoid"], "fastboot の間は adb shell を使わない");
-    assert_eq!(ok_call("failure/list", json!({ "cwd": cwd, "query": "fastboot" }))["failures"].as_array().unwrap().len(), 1);
     assert_eq!(ok_call("failure/list", json!({ "cwd": cwd, "query": "nothing-like-it" }))["failures"].as_array().unwrap().len(), 0);
-    assert_eq!(ok_call("failure/read", json!({ "cwd": cwd, "id": done["id"] }))["failure"]["title"], "adb shell は fastboot 中に失敗する");
+    assert_eq!(ok_call("failure/read", json!({ "cwd": cwd, "id": ok["id"] }))["failure"]["title"], "adb shell は fastboot 中に失敗する");
     assert_eq!(err("failure/read", json!({ "cwd": cwd, "id": "failure_case-9999" })).code, NOT_FOUND);
-    let rec = store.all(Some(Scope::Project)).into_iter().find(|r| r.kind == Kind::FailureCase).unwrap();
-    assert_eq!(rec.conditions.as_deref(), Some("fastboot の最中だった"));
-    assert_eq!(rec.attempted.as_deref(), Some("adb shell"));
+    let rec = store.all(Some(Scope::Project)).into_iter().find(|r| r.title.starts_with("adb shell")).unwrap();
     assert_eq!(rec.status, Status::Verified);
     assert!(!is_candidate(&rec));
-    assert!(rec.source.as_deref().unwrap().contains("2026-11-13"));
-    // approving the "unknown" one records that the conditions were not established
-    ok_call("candidate/approve", json!({ "cwd": cwd, "id": "cand-0002" }));
     let unk_listed = ok_call("failure/list", json!({ "cwd": cwd, "query": "別の失敗" }));
     assert_eq!(unk_listed["failures"][0]["conditions"], "unknown");
-    let unk = store.all(Some(Scope::Project)).into_iter().find(|r| r.title == "別の失敗").unwrap();
-    assert_eq!((unk.conditions_known, unk.conditions), (Some(false), None));
-    // a similar record that exists makes the next proposal an update of it
+    // a similar record that exists is updated (the old one is superseded)
     let upd = propose(root, &failure("adb shell は fastboot 中に失敗する", json!({ "outcome": "exit 1 (again)" })), "m");
-    assert_eq!(upd["op"], "update");
+    assert_eq!((upd["op"].as_str(), upd["status"].as_str()), (Some("update"), Some("registered")));
     assert_eq!(upd["updates"], rec.id.as_str());
-    // the candidate list carries the current content of the record an update would change
-    let waiting = ok_call("candidate/list", json!({ "cwd": cwd }));
-    let up = waiting["candidates"].as_array().unwrap().iter().find(|c| c["op"] == "update").unwrap();
-    assert_eq!(up["payload"]["outcome"], "exit 1 (again)");
-    assert_eq!(up["payload"]["updates"], rec.id.as_str());
-    assert_eq!(up["current"]["outcome"], "exit 1: device offline");
-    assert_eq!(up["current"]["conditions"], "fastboot の最中だった");
-    ok_call("candidate/approve", json!({ "cwd": cwd, "id": upd["id"] }));
     let all: Vec<_> = store.all(Some(Scope::Project)).into_iter().filter(|r| r.title.starts_with("adb shell")).collect();
     assert!(all.iter().any(|r| r.status == Status::Superseded) && all.iter().any(|r| r.status == Status::Verified && r.outcome.as_deref() == Some("exit 1 (again)")));
+    // the user rejects one (reason optional): it is retracted and not proposed again
+    let now_id = upd["id"].as_str().unwrap().to_string();
+    let rej = ok_call("reject", json!({ "cwd": cwd, "kind": "failureCase", "id": now_id, "reason": "fastboot は関係なかった" }));
+    assert_eq!(rej["status"], "retracted");
+    assert_eq!(ok_call("failure/list", json!({ "cwd": cwd, "query": "fastboot" }))["failures"].as_array().unwrap().len(), 0);
+    let again = propose(root, &failure("adb shell は fastboot 中に失敗する", json!({})), "m");
+    assert_eq!(again["status"], "denied");
+    assert!(again["reason"].as_str().unwrap().contains("fastboot は関係なかった"));
 
     // a new page and a fact are registered at once, marked as drafts (Q-12)
     let page = propose(root, &json!({ "kind": "page", "title": "ビルドの手順", "body": "#手順\nlock を取って cargo を 1 本ずつ走らせる" }), "m");
@@ -498,11 +481,16 @@ fn the_model_proposes_and_only_the_user_registers() {
     assert_eq!(r["confirmed"], false, "a draft until the user confirms it");
     assert!(r["tags"].as_array().unwrap().iter().any(|t| t == "fact"));
     assert!(r["body"].as_str().unwrap().contains("Source: AGENTS.md"));
-    // a page that exists becomes an update proposal; the approved update keeps the history
-    let again = propose(root, &json!({ "kind": "page", "title": "ビルドの手順", "body": "更新後の本文" }), "m");
-    assert_eq!(again["op"], "update");
-    ok_call("candidate/approve", json!({ "cwd": cwd, "id": again["id"] }));
+    // a change to an existing page replaces it (the history keeps the old one); rejecting it
+    // brings the old version back
+    let changed = propose(root, &json!({ "kind": "page", "title": "ビルドの手順", "body": "cargo を並列で何本も走らせる" }), "m");
+    assert_eq!((changed["op"].as_str(), changed["status"].as_str()), (Some("update"), Some("registered")));
     assert_eq!(ok_call("page/read", json!({ "cwd": cwd, "title": "ビルドの手順" }))["revs"].as_array().unwrap().len(), 2);
+    assert_eq!(ok_call("reject", json!({ "cwd": cwd, "kind": "page", "id": "ビルドの手順" }))["status"], "restored");
+    assert!(ok_call("page/read", json!({ "cwd": cwd, "title": "ビルドの手順" }))["body"].as_str().unwrap().contains("1 本ずつ"));
+    // a page the model made goes to the trash, without a reason
+    assert_eq!(ok_call("reject", json!({ "cwd": cwd, "kind": "page", "id": "ビルドは Windows だけ" }))["status"], "removed");
+    assert_eq!(ok_call("page/list", json!({ "cwd": cwd }))["pages"].as_array().unwrap().len(), 1);
 }
 
 fn ok_call(method: &str, params: Value) -> Value {

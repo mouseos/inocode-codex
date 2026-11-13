@@ -726,6 +726,12 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeKbCandidateRejectResponse,
     },
+    #[experimental("inocode/kb/reject")]
+    InocodeKbReject => "inocode/kb/reject" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeKbRejectResponse,
+    },
     #[experimental("inocode/messages/resolveMany")]
     InocodeMessagesResolveMany => "inocode/messages/resolveMany" {
         params: v2::InocodeMessagesResolveManyParams,

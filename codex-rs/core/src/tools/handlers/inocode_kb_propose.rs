@@ -1,7 +1,6 @@
 //! `kb_propose`: how the model puts a failure, a page or a fact into the project's knowledge.
-//! A new page or fact is registered at once, marked as a draft until the user confirms it
-//! (decision Q-12). A failure, and a change to a page that exists, wait as a candidate until the
-//! user approves it on the screen (`inocode/kb/candidate/approve`).
+//! It is adopted at once (a page as a draft); the user rejects what is wrong, on the screen or by
+//! telling the model in the chat (`kb_reject`).
 
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
@@ -67,14 +66,7 @@ pub(crate) fn create_kb_propose_tool() -> ToolSpec {
     ]);
     ToolSpec::Function(ResponsesApiTool {
         name: KB_PROPOSE_TOOL_NAME.to_string(),
-        description: "Add to this project's knowledge: a page (a write-up worth keeping, for \
-example when the user asks you to keep something to read again later or to sum it up), a fact, or \
-a failure (what was run, the result, the conditions it failed under, how to avoid it). A new page \
-or fact is registered at once, marked as a draft until the user confirms it. A failure, and a \
-change to a page that already exists, are kept as a candidate and the user approves it. Search \
-first with `search_evidence` or `search_knowledge`. A failure without conditions is refused \
-(write `unknown` if you do not know them). The result says `registered`, `candidate`, or `denied` \
-with the reason."
+        description: "Add to this project's knowledge: a page (a write-up worth keeping, for example when the user asks you to keep something to read again later or to sum it up), a fact, or a failure (what was run, the result, the conditions it failed under, how to avoid it). It is registered at once (a page stays a draft until the user confirms it); the user rejects what is wrong. A change to a page that exists replaces it, and the old version is kept. Search first with `search_evidence` or `search_knowledge`. A failure without conditions is refused (write `unknown` if you do not know them). Something the user rejected is refused too. The result says `registered`, or `denied` with the reason."
             .to_string(),
         strict: false,
         defer_loading: None,
@@ -157,8 +149,8 @@ mod tests {
             panic!("function tool expected");
         };
         assert_eq!(tool.name, "kb_propose");
-        assert!(tool.description.contains("the user approves it"));
         assert!(tool.description.contains("registered at once"));
+        assert!(tool.description.contains("the user rejects"));
         assert!(tool.description.contains("`unknown`"));
         assert!(tool.description.chars().count() < 700);
     }

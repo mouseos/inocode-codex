@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The project's knowledge changed (by the screen or by the model): clients reload `area`.",
+  "properties": {
+    "area": {
+      "description": "`project`, `overview`, `page`, `prohibition`, `relaxation`, `checklist`, `ledger` or `failure`.",
+      "type": "string"
+    },
+    "cwd": {
+      "description": "The project folder whose knowledge changed.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "area",
+    "cwd"
+  ],
+  "title": "InocodeKbChangedNotification",
+  "type": "object"
+}

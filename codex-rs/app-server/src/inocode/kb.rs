@@ -9,6 +9,7 @@ use codex_app_server_protocol::InocodeKbFailureReadResponse;
 use codex_app_server_protocol::InocodeKbCandidateListResponse;
 use codex_app_server_protocol::InocodeKbCandidateApproveResponse;
 use codex_app_server_protocol::InocodeKbCandidateRejectResponse;
+use codex_app_server_protocol::InocodeKbRejectResponse;
 use codex_app_server_protocol::InocodeKbOverviewReadResponse;
 use codex_app_server_protocol::InocodeKbOverviewWriteResponse;
 use codex_app_server_protocol::InocodeKbIndexGetResponse;
@@ -68,6 +69,7 @@ pub(crate) async fn handle(request: ClientRequest) -> InocodeResult {
         ClientRequest::InocodeKbCandidateList { .. } => InocodeKbCandidateListResponse { fields }.into(),
         ClientRequest::InocodeKbCandidateApprove { .. } => InocodeKbCandidateApproveResponse { fields }.into(),
         ClientRequest::InocodeKbCandidateReject { .. } => InocodeKbCandidateRejectResponse { fields }.into(),
+        ClientRequest::InocodeKbReject { .. } => InocodeKbRejectResponse { fields }.into(),
         ClientRequest::InocodeKbOverviewRead { .. } => InocodeKbOverviewReadResponse { fields }.into(),
         ClientRequest::InocodeKbOverviewWrite { .. } => InocodeKbOverviewWriteResponse { fields }.into(),
         ClientRequest::InocodeKbIndexGet { .. } => InocodeKbIndexGetResponse { fields }.into(),

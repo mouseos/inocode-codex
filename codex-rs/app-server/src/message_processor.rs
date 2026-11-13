@@ -1220,6 +1220,7 @@ impl MessageProcessor {
             | ClientRequest::InocodeKbCandidateList { .. }
             | ClientRequest::InocodeKbCandidateApprove { .. }
             | ClientRequest::InocodeKbCandidateReject { .. }
+            | ClientRequest::InocodeKbReject { .. }
             | ClientRequest::InocodeMessagesResolveMany { .. }
             | ClientRequest::InocodeKbOverviewRead { .. }
             | ClientRequest::InocodeKbOverviewWrite { .. }

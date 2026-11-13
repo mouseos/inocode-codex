@@ -2241,6 +2241,7 @@ kb_responses!(
     InocodeKbCandidateListResponse,
     InocodeKbCandidateApproveResponse,
     InocodeKbCandidateRejectResponse,
+    InocodeKbRejectResponse,
     InocodeKbFailureListResponse,
     InocodeKbFailureReadResponse,
 );

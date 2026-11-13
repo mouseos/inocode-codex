@@ -1788,8 +1788,11 @@ fn candidate_approve(p: &Value) -> R {
             let base = load_page(&page_path(&dirs, &title)).map(|pg| pg.rev());
             let mut params = json!({
                 "cwd": dirs.root.to_string_lossy(), "title": title, "body": body,
-                "by": "model", "approvedBy": "user",
+                "by": "model",
             });
+            if str_of(p, "by") != Some("auto") {
+                params["approvedBy"] = json!("user");
+            }
             if let Some(b) = base {
                 params["baseRev"] = json!(b);
             }
@@ -1907,6 +1910,10 @@ fn propose_inner(root: &Path, args: &Value, by: &str) -> Value {
     if let Some(w) = waiting {
         return denied(&format!("this was already proposed and waits for the user ({})", str_of(&w, "id").unwrap_or("")));
     }
+    if let Some(r) = rejection_of(&dirs, record_kind, title) {
+        let why = str_of(&r, "reason").filter(|s| !s.is_empty()).map(|s| format!(": {s}")).unwrap_or_default();
+        return denied(&format!("the user rejected this record before{why}. Do not record it again unless the user asks"));
+    }
     // A page or a fact that does not exist yet is registered at once, marked as a draft (not
     // confirmed by the user; decision Q-12). An existing page is never overwritten by the model:
     // the change waits as an update proposal.
@@ -1931,11 +1938,19 @@ fn propose_inner(root: &Path, args: &Value, by: &str) -> Value {
     if let Some(old) = &existing {
         payload["updates"] = json!(old);
     }
-    match add_candidate_op(root, record_kind, op, title, payload.clone(), by) {
-        Ok(id) => json!({
-            "kind": record_kind, "op": if existing.is_some() { "update" } else { "create" }, "id": id, "title": title,
-            "status": "candidate", "requiresApproval": true,
-            "target": candidate_target(record_kind, &json!({ "title": title })),
+    // Everything is adopted at once (the user rejects what is wrong instead of approving each
+    // record): the proposal goes through the same steps as an approval, by "auto", and the page
+    // stays a draft until the user confirms it.
+    let id = match add_candidate_op(root, record_kind, op, title, payload.clone(), by) {
+        Ok(id) => id,
+        Err(e) => return denied(&e.message),
+    };
+    match candidate_approve(&json!({ "cwd": root.to_string_lossy(), "id": id, "by": "auto" })) {
+        Ok(done) => json!({
+            "kind": record_kind, "op": if existing.is_some() { "update" } else { "create" },
+            "id": done.get("id").cloned().unwrap_or(json!(id)), "title": title,
+            "status": "registered", "draft": true, "requiresApproval": false,
+            "target": done.get("target").cloned().unwrap_or_else(|| candidate_target(record_kind, &json!({ "title": title }))),
             "updates": existing,
         }),
         Err(e) => denied(&e.message),
@@ -2007,6 +2022,80 @@ fn failure_read(p: &Value) -> R {
         .filter(|r| r.kind == Kind::FailureCase)
         .ok_or_else(|| not_found(format!("failure {id}")))?;
     Ok(json!({ "failure": failure_json(&r) }))
+}
+
+fn rejections_path(dirs: &Dirs) -> PathBuf {
+    dirs.kb().join("rejections.jsonl")
+}
+
+/// The last rejection of a record of `kind` with this title, if the user rejected one.
+fn rejection_of(dirs: &Dirs, kind: &str, title: &str) -> Option<Value> {
+    let text = read_text(&rejections_path(dirs))?;
+    text.lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|r| {
+            let k = str_of(r, "kind").unwrap_or("");
+            let same_kind = k == kind || (matches!(k, "page" | "fact") && matches!(kind, "page" | "fact"));
+            same_kind && norm_title(str_of(r, "title").unwrap_or("")) == norm_title(title)
+        })
+        .last()
+}
+
+/// `inocode/kb/reject {cwd, kind, id, reason?}`: the user (on the screen, or through the model
+/// from the chat) rejects a record that was adopted. A page or fact goes back to the version
+/// before the model's last change, or to the trash when the model made it; a failure record is
+/// retracted. The reason is optional. The same record is not proposed again.
+fn reject(p: &Value) -> R {
+    let dirs = Dirs::new(&cwd_of(p)?);
+    let kind = need_str(p, "kind")?;
+    let id = need_str(p, "id")?;
+    let reason = str_of(p, "reason").map(str::trim).filter(|s| !s.is_empty());
+    let (title, result) = match kind {
+        "page" | "fact" | "evidence" => {
+            let path = page_path(&dirs, id);
+            let pg = load_page(&path).ok_or_else(|| not_found(format!("page {id}")))?;
+            // the version before the model's last change, if there is one
+            let previous = pg.meta.revs.iter().rev().nth(1).and_then(|r| {
+                read_text(&dirs.kb().join("revs").join(slug(&pg.meta.title)).join(format!("{}.md", r.rev)))
+            });
+            let last_by_model = pg.meta.revs.last().map(|r| r.by != "user").unwrap_or(pg.meta.by != "user");
+            let result = match (last_by_model, previous) {
+                (true, Some(text)) => {
+                    write_text(&path, &text)?;
+                    "restored"
+                }
+                _ => {
+                    page_delete(&json!({ "cwd": dirs.root.to_string_lossy(), "title": pg.meta.title }))?;
+                    "removed"
+                }
+            };
+            (pg.meta.title, result)
+        }
+        "failureCase" | "failure" => {
+            let store = legacy_store(&dirs);
+            let mut rec = store.read(Scope::Project, id).ok_or_else(|| not_found(format!("failure {id}")))?;
+            rec.status = Status::Retracted;
+            if let Some(r) = reason {
+                rec.body = format!("{}
+
+Rejected by the user: {r}", rec.body.trim_end());
+            }
+            let title = rec.title.clone();
+            store.write(rec).map_err(io)?;
+            (title, "retracted")
+        }
+        other => return Err(invalid(format!("kind {other} cannot be rejected"))),
+    };
+    let entry = json!({
+        "kind": if kind == "failure" { "failureCase" } else if kind == "evidence" { "page" } else { kind },
+        "id": id, "title": title, "reason": reason, "at": now(), "by": str_of(p, "by").unwrap_or("user"),
+    });
+    let path = rejections_path(&dirs);
+    let mut text = read_text(&path).unwrap_or_default();
+    text.push_str(&format!("{entry}
+"));
+    write_text(&path, &text)?;
+    Ok(json!({ "status": result, "title": title }))
 }
 
 fn candidate_reject(p: &Value) -> R {
@@ -2147,6 +2236,10 @@ fn record_evidence_inner(root: &Path, args: &Value, by: &str) -> Value {
     let title = text("page")
         .map(str::to_string)
         .unwrap_or_else(|| first_line(&source.title).chars().take(120).collect());
+    if let Some(r) = rejection_of(&dirs, "page", &title) {
+        let why = str_of(&r, "reason").filter(|s| !s.is_empty()).map(|s| format!(": {s}")).unwrap_or_default();
+        return denied(&format!("the user rejected the page {title} before{why}. Do not record it again unless the user asks"));
+    }
     let day: String = source.retrieved_at.chars().take(10).collect();
     let block = format!("- {claim}\n> quote:{}: {quote}\n", source.id);
     let existing_page = load_page(&page_path(&dirs, &title));
@@ -2308,6 +2401,7 @@ fn changed_area(method: &str) -> Option<&'static str> {
         "relaxation/add" | "relaxation/revoke" => "relaxation",
         "checklist/write" | "checklist/setDone" => "checklist",
         "candidate/approve" | "candidate/reject" => "page",
+        "reject" => "page",
         _ => return None,
     })
 }
@@ -2319,7 +2413,7 @@ pub fn call(method: &str, params: &Value) -> R {
         && let Ok(cwd) = cwd_of(params)
     {
         crate::events::notify_kb_changed(&Dirs::new(&cwd).root, area);
-        if matches!(method, "candidate/approve" | "candidate/reject") {
+        if matches!(method, "candidate/approve" | "candidate/reject" | "reject") {
             crate::events::notify_kb_changed(&Dirs::new(&cwd).root, "failure");
         }
     }
@@ -2357,6 +2451,7 @@ fn call_inner(method: &str, params: &Value) -> R {
         "candidate/list" => candidate_list(params),
         "candidate/approve" => candidate_approve(params),
         "candidate/reject" => candidate_reject(params),
+        "reject" => reject(params),
         other => Err(KbError { code: -32601, message: format!("method not found: inocode/kb/{other}"), data: None }),
     }
 }
