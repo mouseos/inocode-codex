@@ -307,8 +307,11 @@ fn read(store: &Store, args: ReadArgs) -> Result<serde_json::Value, String> {
     Ok(json!({ "records": found }))
 }
 
+/// The knowledge of the project the session is in (not of a folder above it), and the common one.
 fn store_for(invocation: &ToolInvocation) -> Store {
-    codex_inocode_knowledge::store_for(invocation.turn.cwd.as_path())
+    let cwd = invocation.turn.cwd.as_path();
+    Store::new(Some(codex_inocode_knowledge::kb_root(cwd)), codex_inocode_knowledge::inocode_home())
+        .with_session_cwd(cwd.to_path_buf())
 }
 
 fn arguments(invocation: &ToolInvocation, tool: &str) -> Result<String, FunctionCallError> {

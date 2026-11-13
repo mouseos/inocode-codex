@@ -181,7 +181,7 @@ impl Dirs {
     pub fn new(cwd: &Path) -> Dirs {
         let home = crate::inocode_home();
         Dirs {
-            root: crate::project_root_for(cwd, &home),
+            root: crate::kb_root_for(cwd, &home),
             home,
         }
     }
@@ -1669,6 +1669,18 @@ fn read_candidate(dirs: &Dirs, id: &str) -> Result<Value, KbError> {
 
 fn candidate_list(p: &Value) -> R {
     let dirs = Dirs::new(&cwd_of(p)?);
+    // Everything is adopted at once now: a proposal left from before waits for no one. It is
+    // adopted the way a new one is (by "auto", a page stays a draft); one that cannot be stays.
+    let waiting: Vec<String> = std::fs::read_dir(inbox(&dirs))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+        .filter_map(|e| e.path().file_stem().and_then(|x| x.to_str()).map(str::to_string))
+        .collect();
+    for id in waiting {
+        let _ = candidate_approve(&json!({ "cwd": dirs.root.to_string_lossy(), "id": id, "by": "auto" }));
+    }
     let mut out: Vec<Value> = std::fs::read_dir(inbox(&dirs))
         .into_iter()
         .flatten()

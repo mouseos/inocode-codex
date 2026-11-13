@@ -34,6 +34,39 @@ pub fn store_for(cwd: &Path) -> Store {
     Store::new(Some(project_root_for(cwd, &home)), home).with_session_cwd(cwd.to_path_buf())
 }
 
+/// The folder whose `.inocode/kb` holds the knowledge and evidence of a session in `cwd` (the
+/// pages, the evidence, the failures shown in the tabs): the project the session is in, not a
+/// folder above it. In a git repository: the nearest folder up to the top of the repository that
+/// already has `.inocode/kb` or `project.json`, else the top of the repository. Outside git: `cwd`
+/// itself (a folder above, such as Documents, is another project). The guard's rules still reach
+/// down from a folder above (`project_root_for`).
+pub fn kb_root_for(cwd: &Path, home: &Path) -> PathBuf {
+    let top = cwd.ancestors().find(|d| d.join(".git").exists());
+    kb_root_from(cwd, home, top)
+}
+
+/// `kb_root_for` with the top of the repository given (`None`: not in git).
+pub(crate) fn kb_root_from(cwd: &Path, home: &Path, top: Option<&Path>) -> PathBuf {
+    let Some(top) = top else {
+        return cwd.to_path_buf();
+    };
+    for dir in cwd.ancestors() {
+        let inocode = dir.join(".inocode");
+        if inocode != *home && (inocode.join("kb").is_dir() || inocode.join("project.json").is_file()) {
+            return dir.to_path_buf();
+        }
+        if dir == top {
+            break;
+        }
+    }
+    top.to_path_buf()
+}
+
+/// `kb_root_for` with this machine's home.
+pub fn kb_root(cwd: &Path) -> PathBuf {
+    kb_root_for(cwd, &inocode_home())
+}
+
 /// プロジェクトの知識の置き場の親: `cwd` かその上位で、最初に `.inocode/knowledge` を持つフォルダ。
 /// 無ければ `cwd` そのもの。共通領域(`<home>/knowledge`)は数えない。
 /// 親フォルダに置いた規則が、その下のリポジトリで開いたセッションにも効く。

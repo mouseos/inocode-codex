@@ -168,10 +168,7 @@ fn arguments(
 }
 
 fn project_root(cwd: &Path) -> PathBuf {
-    codex_inocode_knowledge::store_for(cwd)
-        .project_root()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| cwd.to_path_buf())
+    codex_inocode_knowledge::kb_root(cwd)
 }
 
 fn out(value: serde_json::Value) -> Box<dyn crate::tools::context::ToolOutput> {

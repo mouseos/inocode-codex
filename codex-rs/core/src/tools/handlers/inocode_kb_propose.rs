@@ -123,10 +123,7 @@ impl ToolExecutor<ToolInvocation> for KbProposeHandler {
             let args: ProposeArgs = parse_arguments(arguments)?;
             let value = serde_json::to_value(&args).unwrap_or_default();
             let cwd = invocation.turn.cwd.as_path().to_path_buf();
-            let root = codex_inocode_knowledge::store_for(&cwd)
-                .project_root()
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or(cwd);
+            let root = codex_inocode_knowledge::kb_root(&cwd);
             let by = format!("model:{}", invocation.session.thread_id);
             let result = codex_inocode_knowledge::kb::propose(&root, &value, &by);
             Ok(boxed_tool_output(FunctionToolOutput::from_text(

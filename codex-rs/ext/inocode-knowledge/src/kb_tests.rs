@@ -380,7 +380,7 @@ fn a_ui_relaxation_takes_the_newest_user_message_as_its_range() {
 }
 
 #[test]
-fn candidates_wait_for_the_user_and_register_on_approval() {
+fn candidates_left_from_before_are_adopted_when_the_list_is_read() {
     let (d, cwd) = project();
     let root = d.path();
     let a = add_candidate(root, "checklistItem", "変更の後にテストを走らせる",
@@ -388,26 +388,15 @@ fn candidates_wait_for_the_user_and_register_on_approval() {
     let b = add_candidate(root, "overviewAppend", "概要へ追記", json!({ "text": "方針: 小さく直す" }), "model").unwrap();
     assert_eq!((a.as_str(), b.as_str()), ("cand-0001", "cand-0002"));
     assert!(add_candidate(root, "prohibition", "x", json!({}), "model").is_err(), "a model cannot propose a prohibition");
-    let list = ok("candidate/list", json!({ "cwd": cwd }));
-    assert_eq!(list["candidates"].as_array().unwrap().len(), 2);
-    assert_eq!(list["candidates"][0]["status"], "candidate");
-    assert_eq!(list["candidates"][0]["requiresApproval"], true);
-    // nothing is registered until approval
-    assert_eq!(ok("checklist/list", json!({ "cwd": cwd }))["items"].as_array().unwrap().len(), 0);
-    let done = ok("candidate/approve", json!({ "cwd": cwd, "id": a }));
-    assert_eq!(done["status"], "registered");
-    assert_eq!(done["target"]["sub"], "checklist");
-    assert_eq!(ok("checklist/list", json!({ "cwd": cwd }))["items"][0]["origin"], "candidate:cand-0001");
-    // reject keeps the file (moved), registers nothing
-    assert_eq!(ok("candidate/reject", json!({ "cwd": cwd, "id": b }))["status"], "denied");
-    assert!(!std::fs::read_to_string(d.path().join(".inocode/kb/overview.md")).is_ok());
+    // nothing waits for the user: reading the list adopts them
     assert_eq!(ok("candidate/list", json!({ "cwd": cwd }))["candidates"].as_array().unwrap().len(), 0);
-    assert!(d.path().join(".inocode/kb/inbox/rejected/cand-0002.json").exists());
-    assert_eq!(err("candidate/approve", json!({ "cwd": cwd, "id": a })).code, NOT_FOUND);
-    // an approved overview append lands in the overview
-    let c = add_candidate(root, "overviewAppend", "追記", json!({ "text": "方針: 小さく直す" }), "model").unwrap();
-    ok("candidate/approve", json!({ "cwd": cwd, "id": c }));
+    assert_eq!(ok("checklist/list", json!({ "cwd": cwd }))["items"][0]["origin"], "candidate:cand-0001");
     assert!(ok("overview/read", json!({ "cwd": cwd }))["text"].as_str().unwrap().contains("小さく直す"));
+    assert_eq!(err("candidate/approve", json!({ "cwd": cwd, "id": a })).code, NOT_FOUND);
+    // one approved directly still lands where it belongs
+    let c = add_candidate(root, "overviewAppend", "追記", json!({ "text": "方針: 確認してから直す" }), "model").unwrap();
+    assert_eq!(ok("candidate/approve", json!({ "cwd": cwd, "id": c }))["status"], "registered");
+    assert!(ok("overview/read", json!({ "cwd": cwd }))["text"].as_str().unwrap().contains("確認してから直す"));
 }
 
 #[test]
@@ -601,4 +590,30 @@ fn record_evidence_writes_the_project_page_and_quote_that_the_screen_reads() {
     // the last quote of a page the model made: the page goes
     assert_eq!(ok("reject", rej(&first))["status"], "removed");
     assert_eq!(err("page/read", json!({ "cwd": cwd, "title": "Widget の価格" })).code, NOT_FOUND);
+}
+
+#[test]
+fn a_folder_above_the_project_is_another_project() {
+    let d = tempfile::tempdir().unwrap();
+    let home = d.path().join("home").join(".inocode");
+    // Documents was opened once (it has its own knowledge); temp3 below it is not part of it.
+    let docs = d.path().join("Documents");
+    let temp3 = docs.join("temp3");
+    std::fs::create_dir_all(docs.join(".inocode").join("kb").join("inbox")).unwrap();
+    std::fs::create_dir_all(&temp3).unwrap();
+    // (not in git; the test folder itself may be inside a repository, so that is given)
+    assert_eq!(crate::kb_root_from(&temp3, &home, None), temp3);
+    // In a repository: its top, never the workspace folder above it (whose rules still guard).
+    let ws = d.path().join("ws");
+    let repo = ws.join("repo");
+    std::fs::create_dir_all(ws.join(".inocode")).unwrap();
+    std::fs::write(ws.join(".inocode").join("project.json"), "{}").unwrap();
+    std::fs::create_dir_all(repo.join(".git")).unwrap();
+    std::fs::create_dir_all(repo.join("src")).unwrap();
+    assert_eq!(crate::kb_root_from(&repo.join("src"), &home, Some(&repo)), repo);
+    assert_eq!(crate::project_root_for(&repo.join("src"), &home), ws, "the guard's rules reach down as before");
+    // A sub-project inside the repository that has its own knowledge is used.
+    std::fs::create_dir_all(repo.join("src").join(".inocode").join("kb")).unwrap();
+    assert_eq!(crate::kb_root_from(&repo.join("src").join("a"), &home, Some(&repo)), repo.join("src"));
+    assert_eq!(crate::kb_root_for(&repo.join("src").join("a"), &home), repo.join("src"), "the repository is found");
 }
