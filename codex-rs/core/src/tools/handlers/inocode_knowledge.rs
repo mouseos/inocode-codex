@@ -356,6 +356,12 @@ impl ToolExecutor<ToolInvocation> for SearchKnowledgeHandler {
                     value["count"] = json!(n);
                 }
             }
+            let n = value.get("count").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            codex_inocode_knowledge::notify_tool_used(&invocation.session.thread_id.to_string(), &invocation.call_id,
+                SEARCH_KNOWLEDGE_TOOL_NAME, &match query.as_deref().map(str::trim).filter(|q| !q.is_empty()) {
+                    Some(q) => format!("知識を検索しました: {q} — {n} 件"),
+                    None => format!("知識を検索しました — {n} 件"),
+                }, &serde_json::Value::Null);
             Ok(out(value))
         })
     }
@@ -379,6 +385,8 @@ impl ToolExecutor<ToolInvocation> for ReadKnowledgeHandler {
             let arguments = arguments(&invocation, READ_KNOWLEDGE_TOOL_NAME)?;
             let args: ReadArgs = parse_arguments(&arguments)?;
             let store = store_for(&invocation);
+            codex_inocode_knowledge::notify_tool_used(&invocation.session.thread_id.to_string(), &invocation.call_id,
+                READ_KNOWLEDGE_TOOL_NAME, &format!("知識を読みました: {}", args.id.trim()), &serde_json::Value::Null);
             if let Some(root) = store.project_root()
                 && let Some(found) = codex_inocode_knowledge::kb::read_project_knowledge(root, args.id.trim())
             {

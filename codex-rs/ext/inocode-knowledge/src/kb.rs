@@ -1844,6 +1844,55 @@ fn norm_title(t: &str) -> String {
 /// that the user approves; a new page or fact is registered at once as a draft. Always returns the result card: `status` is
 /// `registered` (page, fact), `candidate` (failure, update), or `denied` with a reason the model can fix. A similar record that already exists
 /// turns the proposal into an update of it.
+/// The model records a prohibition the user stated in this session ("from now on, do not ...").
+/// The user's words are the origin: `quote` must be word for word in a message the user typed in
+/// `thread` (the ledger). It is registered at once and the guard enforces it; the user takes it
+/// out with "retract" in the knowledge tab or by saying so in the chat (`kb_reject`).
+pub fn prohibit(root: &Path, args: &Value, thread: &str) -> Value {
+    let dirs = Dirs { root: root.to_path_buf(), home: crate::inocode_home() };
+    let denied = |reason: &str| json!({ "kind": "prohibition", "op": "create", "status": "denied", "requiresApproval": false, "reason": reason });
+    let text = |key: &str| str_of(args, key).map(str::trim).filter(|s| !s.is_empty());
+    let Some(title) = text("title") else { return denied("title is required") };
+    let Some(quote) = text("quote") else { return denied("quote is required: the user's own words, copied exactly") };
+    let entry = codex_inocode_ledger::entries_at(&dirs.home, thread)
+        .into_iter()
+        .rev()
+        .find(|e| e.text.contains(quote));
+    let Some(entry) = entry else {
+        return denied("the quote is not word for word in a message the user typed in this session; copy their words exactly");
+    };
+    if let Some(r) = rejection_of(&dirs, "prohibition", title) {
+        let why = str_of(&r, "reason").filter(|s| !s.is_empty()).map(|s| format!(": {s}")).unwrap_or_default();
+        return denied(&format!("the user rejected this prohibition before{why}. Do not record it again unless the user asks"));
+    }
+    if let Some(same) = all_prohibitions(&dirs).into_iter().find(|x| x.status == "active" && norm_title(&x.title) == norm_title(title)) {
+        return json!({ "kind": "prohibition", "op": "exists", "id": same.id, "title": same.title, "status": "registered",
+            "requiresApproval": false, "target": { "tab": "knowledge", "sub": "prohibitions", "ref": same.id } });
+    }
+    let strength = match text("strength") {
+        Some("warn") => "warn",
+        _ => "block",
+    };
+    let mut params = json!({
+        "cwd": root.to_string_lossy(), "title": title, "strength": strength,
+        "reason": text("reason").unwrap_or(""),
+        "origin": { "kind": "ledger", "ledgerRef": { "threadId": thread, "seq": entry.seq }, "quote": quote },
+    });
+    if let Some(m) = args.get("match").filter(|m| m.is_object()) {
+        params["match"] = m.clone();
+    }
+    match prohibition_write(&params) {
+        Ok(w) => {
+            let id = str_of(&w, "id").unwrap_or("").to_string();
+            crate::events::notify_kb_changed(root, "prohibition");
+            json!({ "kind": "prohibition", "op": "create", "id": id, "title": title, "status": "registered",
+                "requiresApproval": false, "strength": strength, "quote": quote,
+                "target": { "tab": "knowledge", "sub": "prohibitions", "ref": id } })
+        }
+        Err(e) => denied(&e.message),
+    }
+}
+
 pub fn propose(root: &Path, args: &Value, by: &str) -> Value {
     let card = propose_inner(root, args, by);
     if card["status"].as_str().is_some_and(|s| s != "denied") {
@@ -2104,6 +2153,14 @@ fn reject(p: &Value) -> R {
                 }
             };
             (pg.meta.title, result)
+        }
+        "prohibition" => {
+            let mut x = load_prohibition(&prohibition_path(&dirs, id)).ok_or_else(|| not_found(format!("prohibition {id}")))?;
+            x.status = "retracted".into();
+            x.updated_at = now();
+            let title = x.title.clone();
+            save_prohibition(&dirs, &x)?;
+            (title, "retracted")
         }
         "failureCase" | "failure" => {
             let store = legacy_store(&dirs);

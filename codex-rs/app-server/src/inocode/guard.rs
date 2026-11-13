@@ -144,6 +144,31 @@ pub(crate) fn spawn_notifier(
             }
         }
     });
+    let mut used_rx = kb::subscribe_tool_used();
+    let used_out = std::sync::Arc::clone(&outgoing);
+    handle.spawn(async move {
+        loop {
+            match used_rx.recv().await {
+                Ok(u) => {
+                    used_out
+                        .send_server_notification(
+                            codex_app_server_protocol::ServerNotification::InocodeToolUsed(
+                                codex_app_server_protocol::InocodeToolUsedNotification {
+                                    thread_id: u.thread_id,
+                                    call_id: u.call_id,
+                                    tool: u.tool,
+                                    text: u.text,
+                                    result: u.result,
+                                },
+                            ),
+                        )
+                        .await;
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
     let mut rec_rx = kb::subscribe_recorded();
     handle.spawn(async move {
         loop {

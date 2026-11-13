@@ -617,3 +617,28 @@ fn a_folder_above_the_project_is_another_project() {
     assert_eq!(crate::kb_root_from(&repo.join("src").join("a"), &home, Some(&repo)), repo.join("src"));
     assert_eq!(crate::kb_root_for(&repo.join("src").join("a"), &home), repo.join("src"), "the repository is found");
 }
+
+#[test]
+fn the_model_records_a_prohibition_in_the_users_words_and_the_user_takes_it_out() {
+    let (d, cwd) = project();
+    let root = d.path();
+    say("th-model-proh", "今後このプロジェクトでは out フォルダは絶対に消さないで。それと行数を数えて。");
+    let args = |quote: &str| json!({ "title": "out フォルダを消さない", "quote": quote, "reason": "手で集めたデータ",
+        "match": { "commands": [r"re:(Remove-Item|rm|rmdir|del)\b.*\bout\b"] } });
+    // only the user's words, word for word, from this session
+    assert_eq!(prohibit(root, &args("out は消してよい"), "th-model-proh")["status"], "denied");
+    assert_eq!(prohibit(root, &args("out フォルダは絶対に消さないで"), "another-thread")["status"], "denied");
+    let ok_card = prohibit(root, &args("out フォルダは絶対に消さないで"), "th-model-proh");
+    assert_eq!((ok_card["status"].as_str(), ok_card["kind"].as_str()), (Some("registered"), Some("prohibition")), "{ok_card}");
+    assert_eq!(ok_card["target"]["sub"], "prohibitions");
+    let id = ok_card["id"].as_str().unwrap().to_string();
+    let list = ok("prohibition/list", json!({ "cwd": cwd, "status": "active" }));
+    assert_eq!(list["prohibitions"][0]["origin"]["quote"], "out フォルダは絶対に消さないで");
+    // the same one again is the one that exists
+    assert_eq!(prohibit(root, &args("out フォルダは絶対に消さないで"), "th-model-proh")["op"], "exists");
+    // the user takes it out (screen or chat): retracted, and not recorded again
+    assert_eq!(ok("reject", json!({ "cwd": cwd, "kind": "prohibition", "id": id, "reason": "やっぱり消してよい" }))["status"], "retracted");
+    assert_eq!(ok("prohibition/list", json!({ "cwd": cwd, "status": "active" }))["prohibitions"].as_array().unwrap().len(), 0);
+    let again = prohibit(root, &args("out フォルダは絶対に消さないで"), "th-model-proh");
+    assert!(again["reason"].as_str().unwrap().contains("やっぱり消してよい"), "{again}");
+}

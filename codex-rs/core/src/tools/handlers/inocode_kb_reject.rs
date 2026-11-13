@@ -23,12 +23,12 @@ pub(crate) fn create_kb_reject_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (
             "kind".to_string(),
-            JsonSchema::string(Some("`page` (a page or a fact), `evidence` (one recorded quote) or `failure`.".to_string())),
+            JsonSchema::string(Some("`page` (a page or a fact), `evidence` (one recorded quote), `failure` or `prohibition`.".to_string())),
         ),
         (
             "id".to_string(),
             JsonSchema::string(Some(
-                "The page title, or the failure record id (from `search_knowledge` or the result of the call that added it)."
+                "The page title, or the id of the failure record or prohibition (from `search_knowledge` or the result of the call that added it)."
                     .to_string(),
             )),
         ),
@@ -106,7 +106,11 @@ impl ToolExecutor<ToolInvocation> for KbRejectHandler {
                 params["sourceRef"] = json!(r);
             }
             let text = match codex_inocode_knowledge::kb::call("reject", &params) {
-                Ok(v) => serde_json::to_string_pretty(&v).unwrap_or_default(),
+                Ok(v) => {
+                    codex_inocode_knowledge::notify_tool_used(&invocation.session.thread_id.to_string(), &invocation.call_id,
+                        KB_REJECT_TOOL_NAME, &format!("記録を却下しました: {}", v["title"].as_str().or(params["id"].as_str()).unwrap_or("")), &serde_json::Value::Null);
+                    serde_json::to_string_pretty(&v).unwrap_or_default()
+                }
                 Err(e) => return Err(FunctionCallError::RespondToModel(e.message)),
             };
             Ok(boxed_tool_output(FunctionToolOutput::from_text(text, Some(true))))

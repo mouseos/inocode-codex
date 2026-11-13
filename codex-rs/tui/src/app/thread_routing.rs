@@ -1233,6 +1233,7 @@ impl App {
                         | ServerNotification::InocodeGoalCompletionEvidenceNotice(_)
                         | ServerNotification::InocodeKnowledgeRecorded(_)
                         | ServerNotification::InocodeKbChanged(_)
+        | ServerNotification::InocodeToolUsed(_)
                         | ServerNotification::InocodeAccountsUpdated(_)
                         | ServerNotification::InocodeStatsSeedProgress(_)
                         | ServerNotification::InocodeAccountsSwitched(_)

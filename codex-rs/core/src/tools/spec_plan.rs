@@ -17,6 +17,7 @@ use crate::tools::handlers::GetContextRemainingHandler;
 use crate::tools::handlers::ReadMessageHandler;
 use crate::tools::handlers::RecordEvidenceHandler;
 use crate::tools::handlers::KbProposeHandler;
+use crate::tools::handlers::KbProhibitHandler;
 use crate::tools::handlers::KbRejectHandler;
 use crate::tools::handlers::ReadKnowledgeHandler;
 use crate::tools::handlers::SearchEvidenceHandler;
@@ -1394,6 +1395,7 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
         registry.add(SearchKnowledgeHandler);
         registry.add(ReadKnowledgeHandler);
         registry.add(KbProposeHandler);
+        registry.add(KbProhibitHandler);
         registry.add(KbRejectHandler);
     }
 

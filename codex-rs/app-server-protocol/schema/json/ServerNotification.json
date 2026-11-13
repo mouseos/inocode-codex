@@ -4115,6 +4115,37 @@
       ],
       "type": "object"
     },
+    "InocodeToolUsedNotification": {
+      "description": "The model used one of InoCode's own tools (knowledge, evidence, prohibitions). These calls are not items of the thread; this is what the chat shows for them.",
+      "properties": {
+        "callId": {
+          "description": "The id of the tool call.",
+          "type": "string"
+        },
+        "result": {
+          "description": "The tool's result (a registered record has `kind`, `status`, `title`, `target`)."
+        },
+        "text": {
+          "description": "One line for the chat (\"searched the knowledge: ...\").",
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "tool": {
+          "description": "`search_knowledge`, `read_knowledge`, `search_evidence`, `record_evidence`, `verify_evidence_document`, `kb_propose`, `kb_prohibit` or `kb_reject`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "callId",
+        "result",
+        "text",
+        "threadId",
+        "tool"
+      ],
+      "type": "object"
+    },
     "ItemCompletedNotification": {
       "properties": {
         "completedAtMs": {
@@ -9146,6 +9177,26 @@
         "params"
       ],
       "title": "Inocode/kb/changedNotification",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "method": {
+          "enum": [
+            "inocode/tool/used"
+          ],
+          "title": "Inocode/tool/usedNotificationMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/InocodeToolUsedNotification"
+        }
+      },
+      "required": [
+        "method",
+        "params"
+      ],
+      "title": "Inocode/tool/usedNotification",
       "type": "object"
     },
     {

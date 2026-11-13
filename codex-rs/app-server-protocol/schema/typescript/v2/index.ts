@@ -380,6 +380,7 @@ export type { InocodeTeamMessageEdge } from "./InocodeTeamMessageEdge";
 export type { InocodeTeamTask } from "./InocodeTeamTask";
 export type { InocodeTeamUpdatedNotification } from "./InocodeTeamUpdatedNotification";
 export type { InocodeToolOutputItem } from "./InocodeToolOutputItem";
+export type { InocodeToolUsedNotification } from "./InocodeToolUsedNotification";
 export type { InocodeVerifiedModel } from "./InocodeVerifiedModel";
 export type { InstalledApp } from "./InstalledApp";
 export type { ItemCompletedNotification } from "./ItemCompletedNotification";

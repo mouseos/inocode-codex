@@ -2669,6 +2669,8 @@ server_notification_definitions! {
     InocodeKnowledgeRecorded => "inocode/knowledge/recorded" (v2::InocodeKnowledgeRecordedNotification),
     #[experimental("inocode/kb/changed")]
     InocodeKbChanged => "inocode/kb/changed" (v2::InocodeKbChangedNotification),
+    #[experimental("inocode/tool/used")]
+    InocodeToolUsed => "inocode/tool/used" (v2::InocodeToolUsedNotification),
     #[experimental("inocode/advisor/event")]
     InocodeAdvisorEvent => "inocode/advisor/event" (v2::InocodeAdvisorEventNotification),
     #[experimental("inocode/messages/appended")]

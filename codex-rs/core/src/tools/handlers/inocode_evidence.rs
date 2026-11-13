@@ -148,15 +148,16 @@ fn model_error(message: impl Into<String>) -> FunctionCallError {
     FunctionCallError::RespondToModel(message.into())
 }
 
-/// The arguments, the project folder of the turn and the thread id.
+/// The arguments, the project folder of the turn, the thread id and the call id.
 fn arguments(
     invocation: ToolInvocation,
     tool: &str,
-) -> Result<(String, PathBuf, String), FunctionCallError> {
+) -> Result<(String, PathBuf, String, String), FunctionCallError> {
     let ToolInvocation {
         session,
         turn,
         payload,
+        call_id,
         ..
     } = invocation;
     let ToolPayload::Function { arguments } = payload else {
@@ -164,7 +165,7 @@ fn arguments(
     };
     let cwd = turn.cwd.as_path().to_path_buf();
     let root = project_root(&cwd);
-    Ok((arguments, root, session.thread_id.to_string()))
+    Ok((arguments, root, session.thread_id.to_string(), call_id))
 }
 
 fn project_root(cwd: &Path) -> PathBuf {
@@ -247,11 +248,14 @@ impl ToolExecutor<ToolInvocation> for RecordEvidenceHandler {
         ToolInvocation: 'a,
     {
         Box::pin(async move {
-            let (arguments, root, thread_id) = arguments(invocation, RECORD_EVIDENCE_TOOL_NAME)?;
+            let (arguments, root, thread_id, call_id) = arguments(invocation, RECORD_EVIDENCE_TOOL_NAME)?;
             let args: RecordArgs = parse_arguments(&arguments)?;
             // A refusal is a result too (status denied, with the reason), so the card can show it
             // and the model can fix the call.
-            Ok(out(record(&root, &args, &format!("model:{thread_id}"))))
+            let result = record(&root, &args, &format!("model:{thread_id}"));
+            codex_inocode_knowledge::notify_tool_used(&thread_id, &call_id, RECORD_EVIDENCE_TOOL_NAME,
+                &format!("根拠を記録しました: {}", args.claim), &result);
+            Ok(out(result))
         })
     }
 }
@@ -271,9 +275,14 @@ impl ToolExecutor<ToolInvocation> for SearchEvidenceHandler {
         ToolInvocation: 'a,
     {
         Box::pin(async move {
-            let (arguments, root, _) = arguments(invocation, SEARCH_EVIDENCE_TOOL_NAME)?;
+            let (arguments, root, thread_id, call_id) = arguments(invocation, SEARCH_EVIDENCE_TOOL_NAME)?;
             let args: SearchArgs = parse_arguments(&arguments)?;
-            Ok(out(search(&root, args)))
+            let query = args.query.clone().unwrap_or_default();
+            let result = search(&root, args);
+            let n = result.get("count").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            codex_inocode_knowledge::notify_tool_used(&thread_id, &call_id, SEARCH_EVIDENCE_TOOL_NAME,
+                &if query.trim().is_empty() { format!("根拠を検索しました — {n} 件") } else { format!("根拠を検索しました: {} — {n} 件", query.trim()) }, &result);
+            Ok(out(result))
         })
     }
 }
@@ -293,9 +302,13 @@ impl ToolExecutor<ToolInvocation> for VerifyEvidenceDocumentHandler {
         ToolInvocation: 'a,
     {
         Box::pin(async move {
-            let (arguments, root, _) = arguments(invocation, VERIFY_EVIDENCE_DOCUMENT_TOOL_NAME)?;
+            let (arguments, root, thread_id, call_id) = arguments(invocation, VERIFY_EVIDENCE_DOCUMENT_TOOL_NAME)?;
             let args: VerifyArgs = parse_arguments(&arguments)?;
-            verify(&root, args).map(out).map_err(model_error)
+            let result = verify(&root, args).map_err(model_error)?;
+            let n = result.get("findings").and_then(serde_json::Value::as_array).map_or(0, Vec::len);
+            codex_inocode_knowledge::notify_tool_used(&thread_id, &call_id, VERIFY_EVIDENCE_DOCUMENT_TOOL_NAME,
+                &format!("文書を根拠と照合しました — 指摘 {n} 件"), &serde_json::Value::Null);
+            Ok(out(result))
         })
     }
 }

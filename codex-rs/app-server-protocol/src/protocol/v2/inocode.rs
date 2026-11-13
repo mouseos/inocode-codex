@@ -1310,6 +1310,24 @@ pub struct InocodeKbChangedNotification {
     pub area: String,
 }
 
+/// The model used one of InoCode's own tools (knowledge, evidence, prohibitions). These calls are
+/// not items of the thread; this is what the chat shows for them.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct InocodeToolUsedNotification {
+    pub thread_id: String,
+    /// The id of the tool call.
+    pub call_id: String,
+    /// `search_knowledge`, `read_knowledge`, `search_evidence`, `record_evidence`,
+    /// `verify_evidence_document`, `kb_propose`, `kb_prohibit` or `kb_reject`.
+    pub tool: String,
+    /// One line for the chat ("searched the knowledge: ...").
+    pub text: String,
+    /// The tool's result (a registered record has `kind`, `status`, `title`, `target`).
+    pub result: serde_json::Value,
+}
+
 // ------------------------------------------------------------------- params (S3)
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]

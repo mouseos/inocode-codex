@@ -17,6 +17,7 @@ pub use guard::{GuardAction, action_from_tool_input, builtin_check, GuardHit, Gu
 pub use events::{
     GuardEvent, GuardOutcome, GuardRuleStats, GuardTarget, guard_stats, KnowledgeRecorded, guard_events_path, list_guard_events,
     record_guard_hits, subscribe_guard, subscribe_recorded, KbChanged, subscribe_kb_changed,
+    ToolUsed, subscribe_tool_used, notify_tool_used,
 };
 pub use record::{Confidence, FailureDetail, Kind, MatchSpec, Record, Scope, Severity, Status};
 pub use store::{ListQuery, Store, SummaryRow};

@@ -217,6 +217,37 @@ pub(crate) fn notify_kb_changed(cwd: &std::path::Path, area: &str) {
     let _ = kb_changed_sender().send(KbChanged { cwd: cwd.to_string_lossy().into_owned(), area: area.to_string() });
 }
 
+/// The model used one of InoCode's own tools (knowledge, evidence, prohibitions): what the chat
+/// shows for it. `text` is the one-line row ("searched the knowledge: ..."); `result` is the
+/// tool's result (a record that was registered is shown as a card).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolUsed {
+    pub thread_id: String,
+    pub call_id: String,
+    pub tool: String,
+    pub text: String,
+    pub result: serde_json::Value,
+}
+
+fn tool_used_sender() -> &'static tokio::sync::broadcast::Sender<ToolUsed> {
+    static S: OnceLock<tokio::sync::broadcast::Sender<ToolUsed>> = OnceLock::new();
+    S.get_or_init(|| tokio::sync::broadcast::channel(256).0)
+}
+
+pub fn subscribe_tool_used() -> tokio::sync::broadcast::Receiver<ToolUsed> {
+    tool_used_sender().subscribe()
+}
+
+pub fn notify_tool_used(thread_id: &str, call_id: &str, tool: &str, text: &str, result: &serde_json::Value) {
+    let _ = tool_used_sender().send(ToolUsed {
+        thread_id: thread_id.to_string(),
+        call_id: call_id.to_string(),
+        tool: tool.to_string(),
+        text: text.to_string(),
+        result: result.clone(),
+    });
+}
+
 /// 失敗例などが記録されたことの通知。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnowledgeRecorded {
