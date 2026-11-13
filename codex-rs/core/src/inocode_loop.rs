@@ -219,6 +219,7 @@ struct ThreadStall {
     recent: VecDeque<String>,
     last_error: String,
     tracker: codex_inocode_advisor::StateTracker,
+    research: codex_inocode_advisor::ResearchTracker,
 }
 
 fn detectors() -> &'static Mutex<HashMap<ThreadId, ThreadStall>> {
@@ -378,7 +379,7 @@ pub(crate) fn observe_tool_result(
     let symptom = codex_inocode_advisor::failure_symptom(&obs);
     let cwd = crate::compact_inocode::local_cwd(turn);
     let obs_for_conditions = obs.clone();
-    let (stall, tried, last_error, conditions) = {
+    let (stall, tried, last_error, conditions, research_fact) = {
         let Ok(mut map) = detectors().lock() else {
             return;
         };
@@ -387,6 +388,7 @@ pub(crate) fn observe_tool_result(
             recent: VecDeque::new(),
             last_error: String::new(),
             tracker: Default::default(),
+            research: Default::default(),
         });
         entry.recent.push_back(format!(
             "{summary} -> {}",
@@ -406,8 +408,16 @@ pub(crate) fn observe_tool_result(
         entry.tracker.after(&finished);
         let recent = entry.recent.iter().cloned().collect::<Vec<_>>();
         let conditions = codex_inocode_advisor::call_conditions(&recent, &cwd, &obs_for_conditions);
-        (stall, recent, entry.last_error.clone(), conditions)
+        let research_fact = entry.research.observe(tool, success);
+        (stall, recent, entry.last_error.clone(), conditions, research_fact)
     };
+    // Research that is not recorded: a statement of fact, once. Nothing is required or stopped.
+    if let Some(fact) = research_fact {
+        let session = Arc::clone(session);
+        tokio::spawn(async move {
+            deliver_advice(&session, format!("[host] Fact: {fact}")).await;
+        });
+    }
     // The same call that failed before has now worked: those cases depend on the state.
     if !failed && !read_only {
         if let Err(err) =

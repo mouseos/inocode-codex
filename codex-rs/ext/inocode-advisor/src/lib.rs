@@ -13,7 +13,9 @@ mod events;
 mod failure;
 mod model_hints;
 mod readonly;
+mod research;
 
+pub use research::ResearchTracker;
 pub use model_hints::model_hint;
 pub use model_hints::set_model_hint;
 pub use failure::attempted_text;
