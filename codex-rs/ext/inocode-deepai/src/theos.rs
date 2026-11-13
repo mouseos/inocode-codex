@@ -1,6 +1,10 @@
 //! Theos: the daily credit for the models that consume it. `GET {BASE}/theos` gives the balance;
 //! its `check_in` (nonce, seconds) is kept and sent back on the next read.
 //!
+//! As in the original (DeepAI Code 0.3.35, `checkInLock`), the reads of `/theos` go out one at a
+//! time within the process, and the check-in lives in memory only (a new process starts a new
+//! one, as the original does on each launch).
+//!
 //! The beacon sent with the check-in is `v=<version>;up=<seconds>;pi=<0|1>`. `up` is the seconds
 //! this process has been running and `pi` is whether a model request went out within the
 //! check-in's interval, both real values. `focus` (the window being in front) is added only when
@@ -69,11 +73,18 @@ pub struct Balance {
     pub lane_version: Option<i64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 struct CheckIn {
     nonce: String,
-    seconds: u64,
+    /// As the server wrote it (the original compares the number as it is, fractions included).
+    seconds: f64,
     received: Instant,
+}
+
+impl CheckIn {
+    fn is_valid(&self) -> bool {
+        self.received.elapsed().as_secs_f64() < self.seconds
+    }
 }
 
 #[derive(Default)]
@@ -93,9 +104,9 @@ pub struct TheosClient {
     version: Option<String>,
     started: Instant,
     accounts: Mutex<HashMap<String, Account>>,
-    /// Where the check-ins are kept between runs (`deepai-checkin.json`), once it is set.
-    state_file: Mutex<Option<std::path::PathBuf>>,
-    loaded: std::sync::atomic::AtomicBool,
+    /// The original's `checkInLock` (one permit): one read of `/theos` at a time, so two calls
+    /// never start or renew a check-in side by side.
+    check_in_lock: tokio::sync::Mutex<()>,
 }
 
 /// An answer of the server: the result, and whether its body carried a check-in.
@@ -108,107 +119,17 @@ impl TheosClient {
             version: Some(inocode_version.to_string()),
             started: Instant::now(),
             accounts: Mutex::new(HashMap::new()),
-            state_file: Mutex::new(None),
-            loaded: std::sync::atomic::AtomicBool::new(false),
-        }
-    }
-
-    /// Keeps the check-ins in `file` between runs. A check-in that is still valid when the app
-    /// starts again is carried on instead of starting a new one: the server counts how often a
-    /// check-in is started (a new one without a valid nonce) per day and refuses past a limit
-    /// (HTTP 403 `check_in_refused`), so a restart must not start another one needlessly.
-    pub fn set_state_file(&self, file: std::path::PathBuf) {
-        *self
-            .state_file
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(file);
-    }
-
-    fn state_path(&self) -> Option<std::path::PathBuf> {
-        self.state_file
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-    }
-
-    /// Reads the kept check-ins once (those still valid).
-    fn load_once(&self) {
-        use std::sync::atomic::Ordering;
-        let Some(path) = self.state_path() else {
-            return;
-        };
-        if self.loaded.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            return;
-        };
-        let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&text) else {
-            return;
-        };
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        let mut accounts = self.lock();
-        for (id, entry) in map {
-            let nonce = entry.get("nonce").and_then(Value::as_str).unwrap_or_default();
-            let seconds = entry.get("seconds").and_then(Value::as_u64).unwrap_or(0);
-            let at = entry.get("receivedAt").and_then(Value::as_u64).unwrap_or(0);
-            let age = now.saturating_sub(at);
-            if nonce.len() != 32 || seconds == 0 || age >= seconds {
-                continue;
-            }
-            let account = accounts.entry(id).or_default();
-            if account.check_in.is_none() {
-                account.check_in = Some(CheckIn {
-                    nonce: nonce.to_string(),
-                    seconds,
-                    received: Instant::now()
-                        .checked_sub(Duration::from_secs(age))
-                        .unwrap_or_else(Instant::now),
-                });
-            }
-        }
-    }
-
-    fn save(&self) {
-        let Some(path) = self.state_path() else {
-            return;
-        };
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_secs());
-        let entries: serde_json::Map<String, Value> = self
-            .lock()
-            .iter()
-            .filter_map(|(id, account)| {
-                let check_in = account.check_in.as_ref()?;
-                Some((
-                    id.clone(),
-                    serde_json::json!({
-                        "nonce": check_in.nonce,
-                        "seconds": check_in.seconds,
-                        "receivedAt": now.saturating_sub(check_in.received.elapsed().as_secs()),
-                    }),
-                ))
-            })
-            .collect();
-        if let Ok(text) = serde_json::to_string(&Value::Object(entries)) {
-            let temp = path.with_extension("json.tmp");
-            if std::fs::write(&temp, text).is_ok() {
-                let _ = std::fs::rename(&temp, &path);
-            }
+            check_in_lock: tokio::sync::Mutex::new(()),
         }
     }
 
     /// Whether this key has a check-in that is still valid: a read then continues it instead of
     /// starting a new one.
     pub fn has_valid_check_in(&self, api_key: &str) -> bool {
-        self.load_once();
         self.lock()
             .get(&crate::display_id(api_key))
             .and_then(|account| account.check_in.as_ref())
-            .is_some_and(|check_in| check_in.received.elapsed().as_secs() < check_in.seconds)
+            .is_some_and(CheckIn::is_valid)
     }
 
     /// The endpoint in use: the one given, or (for the process-wide client) the real one, or the
@@ -260,72 +181,79 @@ impl TheosClient {
             .lock()
             .values()
             .filter_map(|account| account.check_in.as_ref().map(|c| c.seconds))
-            .max()
-            .unwrap_or(600);
+            .reduce(f64::max)
+            .unwrap_or(600.0);
         LAST_MODEL_CALL
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some_and(|at| at.elapsed() < Duration::from_secs(window))
+            .is_some_and(|at| at.elapsed().as_secs_f64() < window)
     }
 
-    /// Reads the balance. Automatic reads are at least 30 seconds apart (5 minutes after a
-    /// failure); a read the user asks for (`manual`) is at least 5 seconds apart. Inside the
-    /// interval the earlier answer is returned and nothing is sent.
-    pub async fn read(&self, api_key: &str, manual: bool) -> Result<Balance, DeepAiError> {
-        self.load_once();
-        let id = crate::display_id(api_key);
-        let held = {
-            let accounts = self.lock();
-            let account = accounts.get(&id);
-            let interval = if manual {
-                MIN_MANUAL_INTERVAL
-            } else if account.is_some_and(|a| a.last_failed) {
-                FAILURE_INTERVAL
-            } else {
-                MIN_INTERVAL
-            };
-            account
-                .filter(|a| a.last_attempt.is_some_and(|t| t.elapsed() < interval))
-                .map(|a| match (&a.balance, &a.last_error, a.last_failed) {
-                    (_, Some(error), true) => Err(error.clone()),
-                    (Some(balance), _, _) => Ok(balance.clone()),
-                    _ => Err(DeepAiError::unreachable("no earlier answer")),
-                })
+    /// The earlier answer while the next read is not due yet: automatic reads are at least 30
+    /// seconds apart (5 minutes after a failure), a read the user asks for (`manual`) 5 seconds.
+    fn held(&self, id: &str, manual: bool) -> Option<Result<Balance, DeepAiError>> {
+        let accounts = self.lock();
+        let account = accounts.get(id);
+        let interval = if manual {
+            MIN_MANUAL_INTERVAL
+        } else if account.is_some_and(|a| a.last_failed) {
+            FAILURE_INTERVAL
+        } else {
+            MIN_INTERVAL
         };
-        match held {
-            Some(answer) => answer,
-            None => self.request(api_key).await.0,
-        }
+        account
+            .filter(|a| a.last_attempt.is_some_and(|t| t.elapsed() < interval))
+            .map(|a| match (&a.balance, &a.last_error, a.last_failed) {
+                (_, Some(error), true) => Err(error.clone()),
+                (Some(balance), _, _) => Ok(balance.clone()),
+                _ => Err(DeepAiError::unreachable("no earlier answer")),
+            })
     }
 
-    /// Before every model call, the original client's `ensureCheckedIn`: nothing to do while the
-    /// check-in is younger than half of its interval (or the server is of an older lane);
-    /// otherwise `/theos` is read, and the call goes ahead only when a valid check-in stands
-    /// afterwards. A failed read still lets the call go ahead when the earlier check-in is valid
-    /// and the failure is no answer at all, a 5xx, or an answer that carried a check-in.
+    /// Reads the balance. Inside the interval (see `held`) the earlier answer is returned and
+    /// nothing is sent. The read waits its turn behind any other read of `/theos`; a read that
+    /// finished while this one waited is shared instead of sending another (the original's
+    /// status read joins the one in flight).
+    pub async fn read(&self, api_key: &str, manual: bool) -> Result<Balance, DeepAiError> {
+        let id = crate::display_id(api_key);
+        if let Some(answer) = self.held(&id, manual) {
+            return answer;
+        }
+        let _turn = self.check_in_lock.lock().await;
+        if let Some(answer) = self.held(&id, manual) {
+            return answer;
+        }
+        self.request(api_key).await.0
+    }
+
+    /// Before every model call, the original client's `ensureCheckedIn`, run whole under the
+    /// check-in lock: nothing to do while the check-in is younger than half of its interval (or
+    /// the server is of an older lane); otherwise `/theos` is read, and the call goes ahead only
+    /// when a valid check-in stands afterwards. A failed read still lets the call go ahead when
+    /// the earlier check-in is valid and the failure is no answer at all, a 5xx, or an answer
+    /// that carried a check-in. Calls that waited for the lock see the check-in the first one
+    /// got and send nothing.
     pub async fn ensure_checked_in(&self, api_key: &str) -> Result<(), DeepAiError> {
-        self.load_once();
+        let _turn = self.check_in_lock.lock().await;
         let id = crate::display_id(api_key);
         let state = |client: &Self| {
             let accounts = client.lock();
             let account = accounts.get(&id);
             let check_in = account.and_then(|a| a.check_in.as_ref());
             (
-                check_in.map(|c| (c.seconds, c.received.elapsed())),
+                check_in.map(|c| (c.seconds, c.received.elapsed().as_secs_f64())),
                 account
                     .and_then(|a| a.legacy_at)
                     .is_some_and(|at| at.elapsed() < Duration::from_secs(30)),
             )
         };
         let (check_in, legacy) = state(self);
-        if legacy
-            || check_in.is_some_and(|(seconds, age)| age.as_secs_f64() < seconds as f64 / 2.0)
-        {
+        if legacy || check_in.is_some_and(|(seconds, age)| age < seconds / 2.0) {
             return Ok(());
         }
         let (result, carried_check_in) = self.request(api_key).await;
         let (check_in, legacy) = state(self);
-        let valid_mark = check_in.is_some_and(|(seconds, age)| age.as_secs() < seconds);
+        let valid_mark = check_in.is_some_and(|(seconds, age)| age < seconds);
         match result {
             Err(error) => {
                 if valid_mark && (error.status == 0 || error.status >= 500 || carried_check_in) {
@@ -341,8 +269,9 @@ impl TheosClient {
         }
     }
 
-    /// One `GET /theos` (no spacing check). The state of the account follows the answer: the
-    /// balance, the error, the check-in (from a success or a refusal), the older-lane mark.
+    /// One `GET /theos` (no spacing check; callers hold the check-in lock). The state of the
+    /// account follows the answer: the balance, the error, the check-in (from a success or a
+    /// refusal), the older-lane mark.
     async fn request(&self, api_key: &str) -> Answer {
         let id = crate::display_id(api_key);
         let check_in = self.lock().get(&id).and_then(|a| a.check_in.clone());
@@ -353,7 +282,6 @@ impl TheosClient {
         let mut accounts = self.lock();
         let account = accounts.entry(id).or_default();
         account.last_attempt = Some(Instant::now());
-        let kept = new_check_in.is_some();
         if let Some(new_check_in) = new_check_in {
             account.check_in = Some(new_check_in);
         } else if legacy {
@@ -369,10 +297,6 @@ impl TheosClient {
                 account.last_failed = true;
                 account.last_error = Some(error.clone());
             }
-        }
-        drop(accounts);
-        if kept {
-            self.save();
         }
         (result, carried)
     }
@@ -472,7 +396,7 @@ fn parse_check_in(value: &Value) -> Option<CheckIn> {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
     valid.then(|| CheckIn {
         nonce: nonce.to_string(),
-        seconds: seconds.ceil() as u64,
+        seconds,
         received: Instant::now(),
     })
 }
@@ -499,10 +423,10 @@ pub async fn is_pro(origin: &str, api_key: &str) -> Option<bool> {
     value.get("is_pro").and_then(Value::as_bool)
 }
 
-/// Keeps the check-ins under `dir` (`deepai-checkin.json`) between runs; call once at start-up.
-pub fn set_state_dir(dir: &std::path::Path) {
-    global().set_state_file(dir.join("deepai-checkin.json"));
-}
+/// Formerly kept the check-ins in `dir/deepai-checkin.json` between runs. The original keeps the
+/// check-in in memory only (a new process starts a new one), so this does nothing now; it stays
+/// until its caller (`app-server/src/inocode/accounts.rs`) drops the call.
+pub fn set_state_dir(_dir: &std::path::Path) {}
 
 /// The process-wide client, aimed at the real endpoint.
 pub fn global() -> &'static TheosClient {
@@ -705,52 +629,118 @@ mod tests {
         assert!(!is_older_lane(&serde_json::json!({"balance": "1"})));
     }
 
-    #[tokio::test]
-    async fn a_valid_check_in_survives_a_restart_and_is_carried_on_instead_of_starting_a_new_one() {
+    /// Answers `/theos` with a check-in after `DELAY`, and notes when each request came in.
+    struct Recorder {
+        arrivals: std::sync::Arc<Mutex<Vec<Instant>>>,
+    }
+
+    const DELAY: Duration = Duration::from_millis(200);
+
+    impl wiremock::Respond for Recorder {
+        fn respond(&self, _request: &wiremock::Request) -> ResponseTemplate {
+            self.arrivals
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(Instant::now());
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({
+                    "enabled": true, "lane_version": 4, "balance": "1", "granted": "2",
+                    "check_in": {"nonce": "0123456789abcdef0123456789abcdef", "seconds": 600}
+                }))
+                .set_delay(DELAY)
+        }
+    }
+
+    async fn recording_server() -> (MockServer, std::sync::Arc<Mutex<Vec<Instant>>>) {
         let server = MockServer::start().await;
-        let nonce = "0123456789abcdef0123456789abcdef";
-        // The second client must present the first one's nonce (no new check-in is started).
+        let arrivals = std::sync::Arc::new(Mutex::new(Vec::new()));
         Mock::given(method("GET"))
             .and(path("/theos"))
-            .and(header("X-DeepAI-Code-Check-In", nonce))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "enabled": true, "lane_version": 4, "balance": "1", "granted": "2",
-                "check_in": {"nonce": "fedcba9876543210fedcba9876543210", "seconds": 600}
-            })))
-            .expect(1)
+            .respond_with(Recorder {
+                arrivals: arrivals.clone(),
+            })
             .mount(&server)
             .await;
-        Mock::given(method("GET"))
-            .and(path("/theos"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "enabled": true, "lane_version": 4, "balance": "1", "granted": "2",
-                "check_in": {"nonce": nonce, "seconds": 600}
-            })))
-            .up_to_n_times(1)
-            .mount(&server)
-            .await;
-        let dir = tempfile::tempdir().expect("dir");
-        let file = dir.path().join("deepai-checkin.json");
-        let first = TheosClient::new(&server.uri(), "1");
-        first.set_state_file(file.clone());
-        assert!(!first.has_valid_check_in("k"));
-        first.read("k", true).await.expect("first run");
-        assert!(file.exists(), "the check-in is kept");
-        assert!(!std::fs::read_to_string(&file).expect("text").contains("\"k\""), "no key in the file");
-        // A new process: it knows the check-in and continues it.
-        let second = TheosClient::new(&server.uri(), "1");
-        second.set_state_file(file.clone());
-        assert!(second.has_valid_check_in("k"));
-        second.read("k", true).await.expect("second run carries the nonce");
-        // An expired check-in is not carried on.
-        std::fs::write(
-            &file,
-            serde_json::json!({crate::display_id("k"): {"nonce": nonce, "seconds": 600, "receivedAt": 1}}).to_string(),
-        )
-        .expect("write");
-        let third = TheosClient::new(&server.uri(), "1");
-        third.set_state_file(file);
-        assert!(!third.has_valid_check_in("k"));
+        (server, arrivals)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn simultaneous_model_calls_start_one_check_in_and_the_rest_reuse_it() {
+        let (server, arrivals) = recording_server().await;
+        let client = std::sync::Arc::new(TheosClient::new(&server.uri(), "1"));
+        let calls: Vec<_> = (0..8)
+            .map(|_| {
+                let client = client.clone();
+                tokio::spawn(async move { client.ensure_checked_in("k").await })
+            })
+            .collect();
+        for call in calls {
+            call.await.expect("task").expect("checked in");
+        }
+        assert_eq!(server.received_requests().await.expect("recorded").len(), 1);
+        let first = &server.received_requests().await.expect("recorded")[0];
+        assert!(
+            !first.headers.contains_key("X-DeepAI-Code-Check-In"),
+            "the first check-in has no nonce to send"
+        );
+        assert_eq!(arrivals.lock().expect("arrivals").len(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn reads_of_theos_go_out_one_at_a_time_even_for_different_keys_and_callers() {
+        let (server, arrivals) = recording_server().await;
+        let client = std::sync::Arc::new(TheosClient::new(&server.uri(), "1"));
+        let mut calls = Vec::new();
+        for n in 0..3 {
+            let model = client.clone();
+            calls.push(tokio::spawn(async move {
+                model.ensure_checked_in(&format!("m{n}")).await.map(|_| ())
+            }));
+            let status = client.clone();
+            calls.push(tokio::spawn(async move {
+                status.read(&format!("s{n}"), false).await.map(|_| ())
+            }));
+        }
+        for call in calls {
+            call.await.expect("task").expect("answered");
+        }
+        let mut arrivals = arrivals.lock().expect("arrivals").clone();
+        assert_eq!(arrivals.len(), 6, "one read per key");
+        arrivals.sort();
+        for pair in arrivals.windows(2) {
+            // Each read starts only after the previous answer (which takes DELAY) came back.
+            assert!(
+                pair[1] - pair[0] >= DELAY - Duration::from_millis(20),
+                "two reads overlapped: {:?} apart",
+                pair[1] - pair[0]
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_status_read_that_waited_behind_another_shares_its_answer() {
+        let (server, _arrivals) = recording_server().await;
+        let client = std::sync::Arc::new(TheosClient::new(&server.uri(), "1"));
+        let calls: Vec<_> = (0..4)
+            .map(|_| {
+                let client = client.clone();
+                tokio::spawn(async move { client.read("k", false).await })
+            })
+            .collect();
+        for call in calls {
+            call.await.expect("task").expect("balance");
+        }
+        assert_eq!(server.received_requests().await.expect("recorded").len(), 1);
+        assert!(client.has_valid_check_in("k"));
+    }
+
+    #[test]
+    fn the_interval_is_kept_as_the_server_wrote_it() {
+        let value = serde_json::json!({"check_in": {"nonce": "0123456789abcdef0123456789abcdef", "seconds": 0.5}});
+        let check_in = parse_check_in(&value).expect("check-in");
+        assert_eq!(check_in.seconds, 0.5);
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(!check_in.is_valid(), "half a second has passed");
     }
 
     #[test]
