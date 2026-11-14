@@ -7,11 +7,13 @@
 //!       every CEF process) when the window is closed or --parent-pid dies.
 //!   inocode-browser fetch            download/verify/unpack CEF only
 //!   inocode-browser status           print the running browser's endpoint (exit 1 if none)
+//!   inocode-browser close            close the running browser's window (every process ends)
 //!   inocode-browser mcp-config [--write]
 //!       print (or append to INOCODE_HOME/config.toml) the [mcp_servers.*] tables
 //!   inocode-browser mcp playwright|devtools     MCP server bridge (used by the config entries)
 //!
 //! Windows is the only verified platform; macOS and Linux are not verified.
+mod cdp;
 mod fetch;
 mod host;
 mod mcp;
@@ -68,6 +70,11 @@ fn main() -> ExitCode {
             }
             None => ExitCode::from(1),
         },
+        Some("close") => match state::read_live() {
+            Some(ep) if state::close_windows(ep.pid) > 0 => ExitCode::SUCCESS,
+            Some(_) => fail("no window to close"),
+            None => ExitCode::SUCCESS,
+        },
         Some("mcp-config") => {
             if args.iter().any(|a| a == "--write") {
                 match mcp::write_config(&exe) {
@@ -103,8 +110,13 @@ fn status_json(ep: state::Endpoint) -> String {
 }
 
 fn run(args: &[String]) -> ExitCode {
-    // One browser at a time: hand back the one that is already up.
+    // One browser at a time: hand back the one that is already up (and open --url in it).
     if let Some(ep) = state::read_live() {
+        if let Some(url) = flag(args, "--url") {
+            if let Err(e) = cdp::navigate(ep.port, &url) {
+                return fail(format!("cannot open {url}: {e}"));
+            }
+        }
         println!("{}", status_json(ep));
         return ExitCode::SUCCESS;
     }

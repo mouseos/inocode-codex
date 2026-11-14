@@ -48,3 +48,39 @@ pub fn pick_port() -> u16 {
         .map(|a| a.port())
         .unwrap_or(0)
 }
+
+/// Close the running browser the way its close button does: WM_CLOSE to its top-level windows.
+/// Returns how many windows were asked to close.
+#[cfg(windows)]
+pub fn close_windows(pid: u32) -> usize {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowThreadProcessId, IsWindowVisible, PostMessageW, WM_CLOSE,
+    };
+    struct Seek {
+        pid: u32,
+        found: Vec<HWND>,
+    }
+    unsafe extern "system" fn each(hwnd: HWND, lparam: LPARAM) -> i32 {
+        let seek = unsafe { &mut *(lparam as *mut Seek) };
+        let mut owner = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, &mut owner) };
+        if owner == seek.pid && unsafe { IsWindowVisible(hwnd) } != 0 {
+            seek.found.push(hwnd);
+        }
+        1
+    }
+    let mut seek = Seek { pid, found: Vec::new() };
+    unsafe { EnumWindows(Some(each), &mut seek as *mut Seek as LPARAM) };
+    for &hwnd in &seek.found {
+        unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
+    }
+    seek.found.len()
+}
+
+#[cfg(not(windows))]
+pub fn close_windows(pid: u32) -> usize {
+    // SIGTERM: the CEF message loop ends and every process with it (unverified off Windows).
+    let ok = std::process::Command::new("kill").arg(pid.to_string()).status().is_ok_and(|s| s.success());
+    usize::from(ok)
+}
