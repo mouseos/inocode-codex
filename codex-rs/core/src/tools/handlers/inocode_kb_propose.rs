@@ -126,13 +126,6 @@ impl ToolExecutor<ToolInvocation> for KbProposeHandler {
             let root = codex_inocode_knowledge::kb_root(&cwd);
             let by = format!("model:{}", invocation.session.thread_id);
             let result = codex_inocode_knowledge::kb::propose(&root, &value, &by);
-            let what = match args.kind.as_str() {
-                "failure" => "失敗を記録しました",
-                "fact" => "事実を記録しました",
-                _ => "ページを登録しました",
-            };
-            codex_inocode_knowledge::notify_tool_used(&invocation.session.thread_id.to_string(), &invocation.call_id,
-                KB_PROPOSE_TOOL_NAME, &format!("{what}: {}", args.title), &result);
             Ok(boxed_tool_output(FunctionToolOutput::from_text(
                 serde_json::to_string_pretty(&result).unwrap_or_default(),
                 Some(true),

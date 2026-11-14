@@ -107,8 +107,6 @@ impl ToolExecutor<ToolInvocation> for KbRejectHandler {
             }
             let text = match codex_inocode_knowledge::kb::call("reject", &params) {
                 Ok(v) => {
-                    codex_inocode_knowledge::notify_tool_used(&invocation.session.thread_id.to_string(), &invocation.call_id,
-                        KB_REJECT_TOOL_NAME, &format!("記録を却下しました: {}", v["title"].as_str().or(params["id"].as_str()).unwrap_or("")), &serde_json::Value::Null);
                     serde_json::to_string_pretty(&v).unwrap_or_default()
                 }
                 Err(e) => return Err(FunctionCallError::RespondToModel(e.message)),

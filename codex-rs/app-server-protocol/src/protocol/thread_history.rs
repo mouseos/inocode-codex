@@ -120,6 +120,12 @@ pub fn build_turns_from_rollout_items_for_mode(
     builder.finish()
 }
 
+/// InoCode's own tools, shown in the history as dynamic tool calls.
+const INOCODE_OWN_TOOLS: &[&str] = &[
+    "search_knowledge", "read_knowledge", "search_evidence", "record_evidence",
+    "verify_evidence_document", "kb_propose", "kb_prohibit", "kb_reject",
+];
+
 #[derive(Default)]
 struct ItemTimes {
     started_at_ms: Option<i64>,
@@ -599,6 +605,60 @@ impl ThreadHistoryBuilder {
     }
 
     fn handle_response_item(&mut self, item: &codex_protocol::models::ResponseItem) {
+        // InoCode's own tools (knowledge, evidence, prohibitions) run in the core and emit no
+        // item events: their calls in the history are made into dynamic tool calls here, so a
+        // session opened again shows them as the chat showed them live.
+        match item {
+            codex_protocol::models::ResponseItem::FunctionCall { name, arguments, call_id, .. }
+                if INOCODE_OWN_TOOLS.contains(&name.as_str()) =>
+            {
+                let arguments = serde_json::from_str(arguments).unwrap_or(serde_json::Value::String(arguments.clone()));
+                self.upsert_item(
+                    None,
+                    ThreadItemPayload::DynamicToolCall {
+                        id: call_id.clone(),
+                        namespace: None,
+                        tool: name.clone(),
+                        arguments,
+                        status: DynamicToolCallStatus::InProgress,
+                        content_items: None,
+                        success: None,
+                        duration_ms: None,
+                    },
+                    ItemTimes::default(),
+                );
+                return;
+            }
+            codex_protocol::models::ResponseItem::FunctionCallOutput { call_id: Some(call_id), output, .. } => {
+                let Some(turn) = self.current_turn.as_ref() else { return };
+                let found = turn.items.iter().find_map(|i| match i {
+                    ThreadItemPayload::DynamicToolCall { id, tool, arguments, .. }
+                        if id == call_id && INOCODE_OWN_TOOLS.contains(&tool.as_str()) =>
+                    {
+                        Some((tool.clone(), arguments.clone()))
+                    }
+                    _ => None,
+                });
+                let Some((tool, arguments)) = found else { return };
+                let text = output.text_content().unwrap_or_default().to_string();
+                self.upsert_item(
+                    None,
+                    ThreadItemPayload::DynamicToolCall {
+                        id: call_id.clone(),
+                        namespace: None,
+                        tool,
+                        arguments,
+                        status: DynamicToolCallStatus::Completed,
+                        content_items: Some(vec![DynamicToolCallOutputContentItem::InputText { text }]),
+                        success: Some(true),
+                        duration_ms: None,
+                    },
+                    ItemTimes::default(),
+                );
+                return;
+            }
+            _ => {}
+        }
         let codex_protocol::models::ResponseItem::Message {
             role, content, id, ..
         } = item
@@ -5519,6 +5579,64 @@ mod tests {
                 duration_ms: Some(10_000),
             }]
         );
+    }
+
+    #[test]
+    fn inocode_own_tool_calls_are_rebuilt_as_dynamic_tool_calls() {
+        let call: codex_protocol::models::ResponseItem = serde_json::from_value(serde_json::json!({
+            "type": "function_call", "name": "record_evidence", "call_id": "call-own-1",
+            "arguments": "{\"claim\":\"WAL は追記する\"}"
+        }))
+        .expect("function call");
+        let output: codex_protocol::models::ResponseItem = serde_json::from_value(serde_json::json!({
+            "type": "function_call_output", "call_id": "call-own-1", "output": "{\"status\":\"registered\"}"
+        }))
+        .expect("function call output");
+        let other: codex_protocol::models::ResponseItem = serde_json::from_value(serde_json::json!({
+            "type": "function_call", "name": "some_other_tool", "call_id": "call-other", "arguments": "{}"
+        }))
+        .expect("other call");
+        let items = vec![
+            RolloutItem::EventMsg(EventMsg::TurnStarted(TurnStartedEvent {
+                turn_attribution: None,
+                turn_id: "turn-a".into(),
+                root_turn_id: None,
+                trace_id: None,
+                started_at: None,
+                model_context_window: None,
+                collaboration_mode_kind: Default::default(),
+            })),
+            RolloutItem::ResponseItem(call.into()),
+            RolloutItem::ResponseItem(output.into()),
+            RolloutItem::ResponseItem(other.into()),
+            RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
+                root_turn_id: None,
+                turn_id: "turn-a".into(),
+                started_at: None,
+                last_agent_message: None,
+                error: None,
+                completed_at: None,
+                duration_ms: None,
+                time_to_first_token_ms: None,
+            })),
+        ];
+
+        let turns = build_turns_from_rollout_items(&items);
+
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].items.len(), 1, "only InoCode's own tools become items");
+        match &turns[0].items[0].payload {
+            ThreadItemPayload::DynamicToolCall { id, tool, arguments, status, content_items, .. } => {
+                assert_eq!((id.as_str(), tool.as_str()), ("call-own-1", "record_evidence"));
+                assert_eq!(arguments["claim"], "WAL は追記する");
+                assert_eq!(*status, DynamicToolCallStatus::Completed);
+                assert_eq!(
+                    content_items.clone().unwrap(),
+                    vec![DynamicToolCallOutputContentItem::InputText { text: "{\"status\":\"registered\"}".into() }]
+                );
+            }
+            other => panic!("dynamic tool call expected, got {other:?}"),
+        }
     }
 
     #[test]

@@ -18,6 +18,7 @@ use crate::tools::handlers::ReadMessageHandler;
 use crate::tools::handlers::RecordEvidenceHandler;
 use crate::tools::handlers::KbProposeHandler;
 use crate::tools::handlers::KbProhibitHandler;
+use crate::tools::handlers::OwnTool;
 use crate::tools::handlers::KbRejectHandler;
 use crate::tools::handlers::ReadKnowledgeHandler;
 use crate::tools::handlers::SearchEvidenceHandler;
@@ -1384,19 +1385,19 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, registry: &mut Tool
     // Evidence database tools: how the model records what it found, with its source (Direct, so
     // code mode sees them as `tools.record_evidence` and the model does not need tool_search).
     if codex_inocode_flags::load().evidence_enabled {
-        registry.add(RecordEvidenceHandler);
-        registry.add(SearchEvidenceHandler);
-        registry.add(VerifyEvidenceDocumentHandler);
+        registry.add(OwnTool(RecordEvidenceHandler));
+        registry.add(OwnTool(SearchEvidenceHandler));
+        registry.add(OwnTool(VerifyEvidenceDocumentHandler));
     }
 
     // Knowledge database, read only: the model looks up rules, failure cases and facts when it
     // needs them (the first turn already lists the blocking rules).
     if codex_inocode_flags::load().knowledge_enabled {
-        registry.add(SearchKnowledgeHandler);
-        registry.add(ReadKnowledgeHandler);
-        registry.add(KbProposeHandler);
-        registry.add(KbProhibitHandler);
-        registry.add(KbRejectHandler);
+        registry.add(OwnTool(SearchKnowledgeHandler));
+        registry.add(OwnTool(ReadKnowledgeHandler));
+        registry.add(OwnTool(KbProposeHandler));
+        registry.add(OwnTool(KbProhibitHandler));
+        registry.add(OwnTool(KbRejectHandler));
     }
 
     let current_time_reminder_enabled = features.enabled(Feature::CurrentTimeReminder);

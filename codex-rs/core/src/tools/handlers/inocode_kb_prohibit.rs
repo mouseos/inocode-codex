@@ -108,8 +108,6 @@ impl ToolExecutor<ToolInvocation> for KbProhibitHandler {
             });
             let thread = invocation.session.thread_id.to_string();
             let result = codex_inocode_knowledge::kb::prohibit(&root, &value, &thread);
-            codex_inocode_knowledge::notify_tool_used(&thread, &invocation.call_id, KB_PROHIBIT_TOOL_NAME,
-                &format!("禁止事項を登録しました: {}", value["title"].as_str().unwrap_or("")), &result);
             Ok(boxed_tool_output(FunctionToolOutput::from_text(
                 serde_json::to_string_pretty(&result).unwrap_or_default(),
                 Some(true),
