@@ -1,7 +1,9 @@
 //! `inocode-browser`: the InoCode browser tab host (65). A separate executable that runs only while
 //! the tab is open.
 //!
-//!   inocode-browser [run] [--url URL] [--port N] [--parent-pid PID]
+//!   inocode-browser [run] [--url URL] [--port N] [--parent-pid PID] [--parent-window HWND] [--stdin-control]
+//!       --parent-window: live as a child window of that window (the GUI's tab; placed by the GUI).
+//!       --stdin-control: close when standard input says `close` or ends.
 //!       Fetch CEF on first use, open one window, serve CDP on 127.0.0.1:<random port>, print one
 //!       JSON line `{"event":"ready","pid":..,"port":..,"endpoint":..}` on stdout, and exit (with
 //!       every CEF process) when the window is closed or --parent-pid dies.
@@ -128,17 +130,32 @@ fn run(args: &[String]) -> ExitCode {
 
     // Chromium looks for its helper DLLs next to the executable, so the real browser runs from a
     // copy of this exe placed inside the fetched CEF directory. This process just waits for it.
+    // The copy is named after this build (size and time), so a browser still running from an older
+    // copy does not stop a newer build from starting; older copies are removed when not in use.
     let exe = std::env::current_exe().unwrap_or_default();
-    let name = exe.file_name().map(|n| n.to_os_string()).unwrap_or_default();
-    let inner = cef_dir.join(&name);
     if exe.parent() != Some(cef_dir.as_path()) {
-        let stale = match (std::fs::metadata(&exe), std::fs::metadata(&inner)) {
-            (Ok(a), Ok(b)) => a.len() != b.len() || a.modified().ok() != b.modified().ok(),
-            _ => true,
-        };
-        if stale {
+        let meta = std::fs::metadata(&exe).ok();
+        let stamp = meta
+            .as_ref()
+            .map(|m| {
+                let t = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
+                format!("{}-{t}", m.len())
+            })
+            .unwrap_or_default();
+        let stem = exe.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "inocode-browser".into());
+        let ext = exe.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+        let inner = cef_dir.join(format!("{stem}-{stamp}{ext}"));
+        if !inner.is_file() {
             if let Err(e) = std::fs::copy(&exe, &inner) {
                 return fail(format!("cannot place host in {}: {e}", cef_dir.display()));
+            }
+        }
+        if let Ok(entries) = std::fs::read_dir(&cef_dir) {
+            for e in entries.flatten() {
+                let n = e.file_name().to_string_lossy().to_string();
+                if n.starts_with(&stem) && n.ends_with(&ext) && e.path() != inner {
+                    let _ = std::fs::remove_file(e.path()); // fails while it runs: kept
+                }
             }
         }
         let mut cmd = std::process::Command::new(&inner);
@@ -167,6 +184,8 @@ fn run(args: &[String]) -> ExitCode {
         profile: paths::profile_dir(),
         log_file: paths::log_dir().join("cef.log"),
         parent_pid: flag(args, "--parent-pid").and_then(|p| p.parse().ok()),
+        parent_window: flag(args, "--parent-window").and_then(|p| p.parse().ok()),
+        stdin_control: args.iter().any(|a| a == "--stdin-control"),
     };
 
     // Announce the endpoint once the port really answers.

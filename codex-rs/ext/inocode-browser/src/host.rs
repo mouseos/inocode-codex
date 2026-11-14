@@ -1,6 +1,7 @@
-//! The CEF side: one top-level window (Views, Alloy style: fewest processes, 65 13.4), a CDP port
-//! on 127.0.0.1, an InoCode-only profile. Closing the window ends the message loop, and with it
-//! every process.
+//! The CEF side: one browser (Alloy style: fewest processes, 65 13.4), a CDP port on 127.0.0.1, an
+//! InoCode-only profile. With `parent_window` (the GUI's browser tab, 65 15.2) the browser is a
+//! child window of the GUI's window and links that would open a new window open in it; otherwise it
+//! has its own top-level window (Views). Closing it ends the message loop, and with it every process.
 use cef::*;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -14,6 +15,10 @@ pub struct Options {
     pub log_file: PathBuf,
     /// The window is closed when this process disappears (the GUI that started us).
     pub parent_pid: Option<u32>,
+    /// The GUI window to live in as a child window (Windows: an HWND). None: a top-level window.
+    pub parent_window: Option<isize>,
+    /// Close when standard input says `close` or ends (the GUI that started us holds the pipe).
+    pub stdin_control: bool,
 }
 
 static OPTIONS: OnceLock<Options> = OnceLock::new();
@@ -70,6 +75,7 @@ pub fn run(options: Option<Options>) -> Result<(), String> {
         ..Default::default()
     };
     let parent_pid = opts.parent_pid;
+    let stdin_control = opts.stdin_control;
     let _ = OPTIONS.set(opts);
 
     let mut app = InoApp::new();
@@ -79,14 +85,35 @@ pub fn run(options: Option<Options>) -> Result<(), String> {
     if let Some(pid) = parent_pid {
         std::thread::spawn(move || {
             wait_for_exit(pid);
-            if let Some(h) = Handler::instance() {
-                h.lock().unwrap().close_all_browsers(true);
+            close_then_exit();
+        });
+    }
+    if stdin_control {
+        std::thread::spawn(|| {
+            use std::io::BufRead;
+            for line in std::io::stdin().lock().lines() {
+                match line {
+                    Ok(l) if l.trim() == "close" => break,
+                    Ok(_) => continue,
+                    Err(_) => break,
+                }
             }
+            close_then_exit();
         });
     }
     run_message_loop();
     shutdown();
     Ok(())
+}
+
+/// Close the browsers; if the message loop has not ended a few seconds later (an embedded window
+/// whose parent is gone may never report its close), end the process. CEF's sub-processes follow.
+fn close_then_exit() {
+    if let Some(h) = Handler::instance() {
+        h.lock().unwrap().close_all_browsers(true);
+    }
+    std::thread::sleep(std::time::Duration::from_secs(5));
+    std::process::exit(0);
 }
 
 #[cfg(windows)]
@@ -200,6 +227,34 @@ wrap_life_span_handler! {
             if let Some(b) = browser.cloned() {
                 self.inner.lock().unwrap().browsers.push(b);
             }
+        }
+        // In the tab there is no room for another window: the link opens in the same browser.
+        fn on_before_popup(
+            &self,
+            browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _popup_id: ::std::os::raw::c_int,
+            target_url: Option<&CefString>,
+            _target_frame_name: Option<&CefString>,
+            _target_disposition: WindowOpenDisposition,
+            _user_gesture: ::std::os::raw::c_int,
+            _popup_features: Option<&PopupFeatures>,
+            _window_info: Option<&mut WindowInfo>,
+            _client: Option<&mut Option<Client>>,
+            _settings: Option<&mut BrowserSettings>,
+            _extra_info: Option<&mut Option<DictionaryValue>>,
+            _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
+        ) -> ::std::os::raw::c_int {
+            let embedded = OPTIONS.get().is_some_and(|o| o.parent_window.is_some());
+            if !embedded {
+                return 0;
+            }
+            if let (Some(b), Some(url)) = (browser, target_url) {
+                if let Some(frame) = b.main_frame() {
+                    frame.load_url(Some(url));
+                }
+            }
+            1
         }
         fn do_close(&self, _browser: Option<&mut Browser>) -> i32 {
             0
@@ -327,6 +382,14 @@ wrap_app! {
             let is_browser = process_type.map(|p| p.to_string().is_empty()).unwrap_or(true);
             if let (true, Some(cl)) = (is_browser, command_line) {
                 cl.append_switch(Some(&CefString::from("use-alloy-style")));
+                // In the GUI's tab the browser's window is a child of another process's window, and
+                // Chromium's own occlusion check takes it for hidden: the page stops painting.
+                if OPTIONS.get().is_some_and(|o| o.parent_window.is_some()) {
+                    cl.append_switch_with_value(
+                        Some(&CefString::from("disable-features")),
+                        Some(&CefString::from("CalculateNativeWinOcclusion")),
+                    );
+                }
             }
         }
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
@@ -345,6 +408,22 @@ wrap_browser_process_handler! {
             let mut client = InoClient::new(Handler::new());
             *self.client.borrow_mut() = Some(client.clone());
             let url = CefString::from(opts.url.as_str());
+            #[cfg(windows)]
+            if let Some(parent) = opts.parent_window {
+                // Placed and sized by the GUI (SetWindowPos on this child window).
+                let bounds = Rect { x: 0, y: 0, width: 800, height: 600 };
+                let info = WindowInfo { runtime_style: RuntimeStyle::ALLOY, ..Default::default() }
+                    .set_as_child(sys::HWND(parent as *mut sys::HWND__), &bounds);
+                browser_host_create_browser(
+                    Some(&info),
+                    Some(&mut client),
+                    Some(&url),
+                    Some(&BrowserSettings::default()),
+                    None,
+                    None,
+                );
+                return;
+            }
             let mut delegate = InoBrowserViewDelegate::new(());
             let view = browser_view_create(
                 Some(&mut client),
