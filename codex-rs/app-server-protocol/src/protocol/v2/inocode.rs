@@ -2232,6 +2232,10 @@ macro_rules! kb_responses {
 }
 
 kb_responses!(
+    InocodeImportDetectResponse,
+    InocodeImportRunResponse,
+    InocodeImportStateResponse,
+    InocodeImportDecideResponse,
     InocodeKbProjectGetResponse,
     InocodeKbOverviewReadResponse,
     InocodeKbOverviewWriteResponse,

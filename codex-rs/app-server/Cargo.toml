@@ -73,6 +73,8 @@ codex-inocode-evidence = { workspace = true }
 codex-inocode-protocol = { workspace = true }
 codex-inocode-tool-output = { workspace = true }
 codex-inocode-knowledge = { workspace = true }
+codex-inocode-import = { workspace = true }
+codex-inocode-ledger = { workspace = true }
 codex-inocode-metrics = { workspace = true }
 codex-inocode-team = { workspace = true }
 codex-otel = { workspace = true }

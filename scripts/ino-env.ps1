@@ -1,6 +1,6 @@
 # Shared build environment for every InoCode session (PowerShell). Usage:
 #   . scripts\ino-env.ps1          # CLI (codex-rs) -> cd codex-rs; cargo ... --profile dev-small -p <crate>
-#   . scripts\ino-env.ps1 -Gui     # GUI -> cd gui\inocode-desktop; cargo build -j 1
+#   . scripts\ino-env.ps1 -Gui     # GUI -> cd gui\inocode-desktop-codex; cargo build -j 1
 # Only paths and cargo behaviour live here (no RUSTFLAGS / CARGO_PROFILE_*), so artifact hashes
 # are identical across sessions and nothing is rebuilt or duplicated.
 param([switch]$Gui)
@@ -13,7 +13,7 @@ $env:CARGO_BUILD_JOBS = '8'   # 24 CPUs x several GB per rustc ran out of memory
 $env:RUST_MIN_STACK = '67108864'   # 64MB; 256MB x many rustc threads crashed rustc (0xc0000409)
 foreach ($n in 'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NODE_EXTRA_CA_CERTS') { Remove-Item "Env:$n" -ErrorAction SilentlyContinue }
 if ($Gui) {
-    $env:CARGO_TARGET_DIR = [IO.Path]::GetFullPath("$root\..\..\gui\inocode-desktop\target")
+    $env:CARGO_TARGET_DIR = [IO.Path]::GetFullPath("$root\..\..\gui\inocode-desktop-codex\target")
     Remove-Item Env:CARGO_HOME -ErrorAction SilentlyContinue
     $env:RUST_MIN_STACK = '268435456'   # GUI builds with -j 1
 } else {

@@ -19,6 +19,23 @@
 4. 失敗したものだけを直す。
 5. 通ったブランチから `main` へマージする。
 
+## ビルドの種類と置き場所
+
+用途ごとにプロファイルを選ぶ。迷ったら `dev-small`。
+
+- 静的検査: `cargo check --profile dev-small -p <crate>`。`--profile` を省くと `dev` 用の成果物が別に増える。
+- 日常の実行・テスト: `cargo build|test --profile dev-small -p <crate>`。debug 情報なし、最適化なし。
+- 配布・速度の確認: `cargo build --release`(`scripts/build-win.ps1` は dev-small のまま)。
+- デバッガで中を追うとき: プロファイルを増やさず `CARGO_PROFILE_DEV_SMALL_DEBUG=full` を付ける。
+- スタックや時間の内訳を見るとき: `cargo build --profile profiling`。
+
+`dev-small` は `incremental = false`。このワークスペースでは増分が数十 GB を書き、短縮は小さい。
+増分が要るときだけ `CARGO_INCREMENTAL=1` を付ける。
+
+成果物は `codex-rs/target-win` の1か所だけ(`.cargo/config.toml` の `build.target-dir`)。
+`CARGO_TARGET_DIR` を別の場所に変えない。`cargo test --workspace` や `cargo clean` の後の
+全ビルドは16分以上かかるので、まず変更した crate だけを対象にする。
+
 ## 制約
 
 - `gpt-6-astra` は使わない。API を実際に呼ぶ試験が必要なら `gpt-5.6-luna` のみを、モデル名を固定して使う。

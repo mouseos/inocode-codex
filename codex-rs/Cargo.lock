@@ -2236,7 +2236,9 @@ dependencies = [
  "codex-inocode-deepai",
  "codex-inocode-evidence",
  "codex-inocode-flags",
+ "codex-inocode-import",
  "codex-inocode-knowledge",
+ "codex-inocode-ledger",
  "codex-inocode-metrics",
  "codex-inocode-model-catalog",
  "codex-inocode-protocol",
@@ -4198,6 +4200,19 @@ dependencies = [
  "tempfile",
  "toml 0.9.11+spec-1.1.0",
  "toml_edit 0.24.0+spec-1.1.0",
+]
+
+[[package]]
+name = "codex-inocode-import"
+version = "0.0.0"
+dependencies = [
+ "codex-protocol",
+ "codex-rollout",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
 ]
 
 [[package]]

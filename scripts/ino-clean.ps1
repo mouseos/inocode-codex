@@ -1,12 +1,12 @@
 # Removes stale build output. Safe to run any time: files in use (running exe) cannot be deleted
 # on Windows and are skipped. Never touches the newest executable of each name.
 #   .\scripts\ino-clean.ps1            # CLI target (codex-rs\target-win)
-#   .\scripts\ino-clean.ps1 -Gui       # GUI target (gui\inocode-desktop\target)
+#   .\scripts\ino-clean.ps1 -Gui       # GUI target (gui\inocode-desktop-codex\target)
 #   .\scripts\ino-clean.ps1 -DryRun    # only report
 #   .\scripts\ino-clean.ps1 -Incremental   # also remove the (unused, CARGO_INCREMENTAL=0) incremental dir
 param([switch]$Gui, [switch]$DryRun, [switch]$Incremental, [double]$MinAgeHours = 1)
 $root = Split-Path (Split-Path $MyInvocation.MyCommand.Path -Parent) -Parent
-$target = if ($Gui) { [IO.Path]::GetFullPath("$root\..\..\gui\inocode-desktop\target") } else { "$root\codex-rs\target-win" }
+$target = if ($Gui) { [IO.Path]::GetFullPath("$root\..\..\gui\inocode-desktop-codex\target") } else { "$root\codex-rs\target-win" }
 $freed = 0L
 function Remove-Stale($f) {
     $size = $f.Length

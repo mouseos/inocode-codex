@@ -388,7 +388,7 @@ impl ExternalAgentSessionImporter {
         })
     }
 
-    async fn persist_session(
+    pub(super) async fn persist_session(
         &self,
         session: ImportedExternalAgentSession,
     ) -> Result<ThreadId, SessionImportStepFailure> {
@@ -609,9 +609,9 @@ struct SessionImportFailure {
     sub_error_type: String,
 }
 
-struct SessionImportStepFailure {
+pub(super) struct SessionImportStepFailure {
     sub_error_type: String,
-    message: String,
+    pub(super) message: String,
 }
 
 impl SessionImportStepFailure {

@@ -1,3 +1,8 @@
+# どのプロファイルの成果物も target-win に置く(scripts/build-win.ps1 と同じ場所)。
+# 素の cargo check/build/test が target と target-win に二重に書くのを防ぐ。
+[build]
+target-dir = "target-win"
+
 [env]
 # Roughly one arena per four CPUs reduces idle RSS after Linux musl conversations unload.
 JEMALLOC_SYS_WITH_MALLOC_CONF = "narenas_ratio:0.25"

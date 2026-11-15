@@ -123,6 +123,11 @@ impl ExternalAgentConfigRequestProcessor {
         }
     }
 
+    /// The importer that creates threads (shared with `inocode/import/run`).
+    pub(super) fn session_importer(&self) -> &ExternalAgentSessionImporter {
+        &self.session_importer
+    }
+
     pub(crate) async fn detect(
         &self,
         params: ExternalAgentConfigDetectParams,

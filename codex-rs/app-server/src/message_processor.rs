@@ -1318,6 +1318,12 @@ impl MessageProcessor {
                     .windows_sandbox_readiness(&request_id)
                     .await
             }
+            request @ (ClientRequest::InocodeImportDetect { .. }
+            | ClientRequest::InocodeImportRun { .. }
+            | ClientRequest::InocodeImportState { .. }
+            | ClientRequest::InocodeImportDecide { .. }) => {
+                self.external_agent_config_processor.inocode_import(request).await
+            }
             ClientRequest::ExternalAgentConfigDetect { params, .. } => self
                 .external_agent_config_processor
                 .detect(params)

@@ -77,6 +77,7 @@ members = [
     "ext/image-generation",
     "ext/inocode-flags",
     "ext/inocode-ledger",
+    "ext/inocode-import",
     "ext/inocode-evidence",
     "ext/inocode-knowledge",
     "ext/inocode-checkpoint",
@@ -267,6 +268,7 @@ codex-history-notes-extension = { path = "ext/history-notes" }
 codex-image-generation-extension = { path = "ext/image-generation" }
 codex-inocode-flags = { path = "ext/inocode-flags" }
 codex-inocode-ledger = { path = "ext/inocode-ledger" }
+codex-inocode-import = { path = "ext/inocode-import" }
 codex-inocode-evidence = { path = "ext/inocode-evidence" }
 codex-inocode-knowledge = { path = "ext/inocode-knowledge" }
 codex-inocode-advisor = { path = "ext/inocode-advisor" }
@@ -680,11 +682,15 @@ ignored = [
 # use CARGO_PROFILE_DEV_DEBUG=full (or CARGO_PROFILE_TEST_DEBUG=full) for locals.
 debug = "line-tables-only"
 
+# 日常のビルド・テスト・実行はこのプロファイル。debug 情報を持たず、incremental も使わない:
+# incremental はこのワークスペースでは target 配下に数十 GB を書き、差分ビルドの短縮は小さい
+# (crate 単位の再利用はそのまま効く)。増分が要るときだけ CARGO_INCREMENTAL=1 を付ける。
 [profile.dev-small]
 inherits = "dev"
 opt-level = 0
 debug = "none"
 strip = "symbols"
+incremental = false
 
 [profile.release]
 lto = "thin"

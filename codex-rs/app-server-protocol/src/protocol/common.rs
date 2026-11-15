@@ -732,6 +732,30 @@ client_request_definitions! {
         serialization: None,
         response: v2::InocodeKbRejectResponse,
     },
+    #[experimental("inocode/import/detect")]
+    InocodeImportDetect => "inocode/import/detect" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeImportDetectResponse,
+    },
+    #[experimental("inocode/import/run")]
+    InocodeImportRun => "inocode/import/run" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeImportRunResponse,
+    },
+    #[experimental("inocode/import/state")]
+    InocodeImportState => "inocode/import/state" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeImportStateResponse,
+    },
+    #[experimental("inocode/import/decide")]
+    InocodeImportDecide => "inocode/import/decide" {
+        params: v2::InocodeKbParams,
+        serialization: None,
+        response: v2::InocodeImportDecideResponse,
+    },
     #[experimental("inocode/messages/resolveMany")]
     InocodeMessagesResolveMany => "inocode/messages/resolveMany" {
         params: v2::InocodeMessagesResolveManyParams,
