@@ -65,7 +65,7 @@ pub(crate) fn create_record_evidence_tool() -> ToolSpec {
         ),
         (
             "source_url".to_string(),
-            text_prop("Where you got it: the URL of the page, or a file path. Omit only when there is none."),
+            text_prop("Required. Where you got it: the URL of the page, or a file path. Evidence without an external source cannot be recorded; use `kb_propose` for a summary instead."),
         ),
         (
             "source_title".to_string(),
@@ -82,16 +82,9 @@ pub(crate) fn create_record_evidence_tool() -> ToolSpec {
     ]);
     tool(
         RECORD_EVIDENCE_TOOL_NAME,
-        "Record a fact you found, with its source, on a page of this project's notes. Use it \
-whenever you look something up on the web or in a document and the result matters later, and \
-whenever the user asks you to keep something to read again later: a price, a specification, a \
-date, a figure, a statement. Give the claim, the verbatim quote that supports it and where it came \
-from (URL or file); the retrieval date is added automatically. The original text is kept, the fact \
-and its quote are added to the page (created if needed), and the page is registered at once, \
-marked as a draft until the user confirms it. It is shown in the GUI's evidence tab and mind map \
-and found again with `search_evidence`. Returns the page and the source reference.",
+        "Record an external, verifiable fact with its source, on a page of this project's notes. Pick the tool by kind. Choose this `record_evidence` only when the fact came from an outside source (web page, document, file) and you have a verbatim one-line quote plus its URL or file path (`source_url` is required). Choose `kb_propose` (page) for a readable internal write-up, `kb_propose` (fact) for a one-line internal fact, `kb_propose` (failure) for a reproducible failure with conditions, attempt and outcome, and `kb_prohibit` for a standing ban quoting the user verbatim in this session. Do not put internal summaries, standing rules, or failures here. Search first with `search_evidence` or `search_knowledge`. The original text is kept, the fact and its quote are added to the page (created if needed), and the page is registered at once, marked as a draft until the user confirms it. It is shown in the GUI's evidence tab and mind map and found again with `search_evidence`. Returns the page and the source reference.",
         properties,
-        &["claim", "quote"],
+        &["claim", "quote", "source_url"],
     )
 }
 
@@ -321,8 +314,8 @@ mod tests {
     fn descriptions_say_when_to_call() {
         let (name, d) = name_and_description(create_record_evidence_tool());
         assert_eq!(name, "record_evidence");
-        assert!(d.contains("price") && d.contains("source"));
-        assert!(d.contains("read again later") && d.contains("draft"));
+        assert!(d.contains("external") && d.contains("source_url"));
+        assert!(d.contains("kb_propose") && d.contains("kb_prohibit"));
         let (name, d) = name_and_description(create_search_evidence_tool());
         assert_eq!(name, "search_evidence");
         assert!(d.contains("Check it before looking something up again"));

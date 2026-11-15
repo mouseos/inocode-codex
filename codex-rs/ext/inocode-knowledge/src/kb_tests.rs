@@ -558,7 +558,7 @@ fn record_evidence_writes_the_project_page_and_quote_that_the_screen_reads() {
     assert_eq!(record_evidence(root, &rec("x", "Widget X costs 9 yen"), "m")["status"], "denied");
     assert_eq!(record_evidence(root, &json!({ "claim": "x", "quote": "a\nb" }), "m")["status"], "denied");
     // without a page name, the page is named after the source
-    let other = record_evidence(root, &json!({ "claim": "c", "quote": "q", "source_title": "Memo" }), "m");
+    let other = record_evidence(root, &json!({ "claim": "c", "quote": "q", "source_url": "https://example.com/memo", "source_title": "Memo" }), "m");
     assert_eq!(other["page"], "Memo");
 
     // search finds the page with its quotes and sources

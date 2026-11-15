@@ -472,10 +472,21 @@ fn page_path(dirs: &Dirs, title: &str) -> PathBuf {
 }
 
 fn words(q: Option<&str>) -> Vec<String> {
-    q.unwrap_or("")
-        .split_whitespace()
-        .map(|w| w.chars().map(fullwidth_to_ascii).flat_map(char::to_lowercase).collect())
-        .collect()
+    let mut out = Vec::new();
+    for w in q.unwrap_or("").split_whitespace() {
+        let w: String = w.chars().map(fullwidth_to_ascii).flat_map(char::to_lowercase).collect();
+        // Japanese queries often have no spaces; split a long CJK token into bigrams so substring search works.
+        let has_cjk = w.chars().any(|c| (c as u32) >= 0x3040 && (c as u32) <= 0x30ff || (c as u32) >= 0x3400 && (c as u32) <= 0x9fff || (c as u32) >= 0xf900 && (c as u32) <= 0xfaff);
+        if w.chars().count() > 4 && has_cjk && !w.is_empty() {
+            let chars: Vec<char> = w.chars().collect();
+            for i in 0..chars.len()-1 {
+                out.push(chars[i..=i+1].iter().collect::<String>());
+            }
+        } else if !w.is_empty() {
+            out.push(w);
+        }
+    }
+    out
 }
 
 fn snippet(body: &str, words: &[String]) -> String {
@@ -1833,6 +1844,11 @@ fn model_page_body(kind: &str, payload: &Value) -> String {
     body
 }
 
+fn looks_like_prohibition(s: &str) -> bool {
+    let l = s.to_lowercase();
+    ["してはいけない", "してはなら", "禁止", "never", "must not", "do not", "do_not", "絶対に使わない"].iter().any(|k| l.contains(k))
+}
+
 fn norm_title(t: &str) -> String {
     t.chars()
         .filter(|c| !c.is_whitespace())
@@ -1989,8 +2005,11 @@ fn propose_inner(root: &Path, args: &Value, by: &str) -> Value {
         let params = json!({
             "cwd": root.to_string_lossy(), "title": title, "body": model_page_body(kind, &payload), "by": "model",
         });
+        let prohibition_hint = if looks_like_prohibition(title) || looks_like_prohibition(body) {
+            Some("This looks like a standing prohibition. If it must be enforced, use kb_prohibit with the exact words of the user in this session and a match. A page is only a draft summary and stops nothing.")
+        } else { None };
         return match page_write(&params) {
-            Ok(w) if w["quoteErrors"].as_array().is_none_or(|e| e.is_empty()) => card("registered", None),
+            Ok(w) if w["quoteErrors"].as_array().is_none_or(|e| e.is_empty()) => { let mut v = card("registered", None); if let Some(h) = prohibition_hint { v["hint"] = json!(h); } v },
             Ok(w) => card("denied", Some(format!("a quote is not word for word in its source: {}", w["quoteErrors"]))),
             Err(e) => card("denied", Some(e.message)),
         };
@@ -2293,7 +2312,7 @@ fn record_evidence_inner(root: &Path, args: &Value, by: &str) -> Value {
     if quote.contains('\n') {
         return denied("the quote must be one line; record each line separately");
     }
-    let url = text("source_url");
+    let Some(url) = text("source_url") else { return denied("source_url is required for evidence: give the URL or file path of the outside source. For an internal summary or standing rule use kb_propose (page) or kb_prohibit instead.") };
     let original = text("source_text").unwrap_or(quote);
     if !original.contains(quote) {
         return denied("the quote does not appear word for word in source_text; copy it exactly");
@@ -2305,20 +2324,20 @@ fn record_evidence_inner(root: &Path, args: &Value, by: &str) -> Value {
     }
     let store = sources_store(&dirs);
     // The same page read again is one source.
-    let existing = url.and_then(|u| {
+    let existing = {
         store
             .list_sources()
             .into_iter()
-            .find(|s| s.origin.as_deref() == Some(u) && store.read_source(&s.id).is_some_and(|(_, t)| t == original))
-    });
+            .find(|s| s.origin.as_deref() == Some(url) && store.read_source(&s.id).is_some_and(|(_, t)| t == original))
+    };
     let source = match existing {
         Some(s) => s,
         None => match store.import_bytes(
-            text("source_title").or(url).unwrap_or("note"),
-            if url.is_some_and(|u| u.starts_with("http")) { "web" } else { "text" },
+            text("source_title").unwrap_or(url),
+            if url.starts_with("http") { "web" } else { "text" },
             original.as_bytes(),
             None,
-            url,
+            Some(url),
         ) {
             Ok(s) => s,
             Err(e) => return denied(&format!("could not save the source: {e}")),
@@ -2341,7 +2360,7 @@ fn record_evidence_inner(root: &Path, args: &Value, by: &str) -> Value {
     let (body, base) = match &existing_page {
         Some(pg) => (format!("{}\n{block}", pg.body.trim_end()), Some(pg.rev())),
         None => {
-            let origin = url.map(|u| format!(" {u}")).unwrap_or_default();
+            let origin = format!(" {url}");
             (format!("出典: {}{origin} (checked {day})\n\n{block}", source.title), None)
         }
     };

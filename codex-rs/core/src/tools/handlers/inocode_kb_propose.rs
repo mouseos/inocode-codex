@@ -28,7 +28,7 @@ pub(crate) fn create_kb_propose_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (
             "kind".to_string(),
-            text_prop("`failure` (something that failed), `page` (a write-up worth keeping) or `fact`."),
+            text_prop("`page` (a readable internal write-up worth keeping, for example when the user asks you to keep something to read again later or to sum it up), `fact` (a one-line internal fact), or `failure` (something that failed). Choose `record_evidence` for external facts with a source and quote, and `kb_prohibit` for a standing ban quoting the user verbatim."),
         ),
         ("title".to_string(), text_prop("One short line.")),
         (
@@ -66,7 +66,7 @@ pub(crate) fn create_kb_propose_tool() -> ToolSpec {
     ]);
     ToolSpec::Function(ResponsesApiTool {
         name: KB_PROPOSE_TOOL_NAME.to_string(),
-        description: "Add to this project's knowledge: a page (a write-up worth keeping, for example when the user asks you to keep something to read again later or to sum it up), a fact, or a failure (what was run, the result, the conditions it failed under, how to avoid it). It is registered at once (a page stays a draft until the user confirms it); the user rejects what is wrong. A change to a page that exists replaces it, and the old version is kept. Search first with `search_evidence` or `search_knowledge`. A failure without conditions is refused (write `unknown` if you do not know them). Something the user rejected is refused too. The result says `registered`, or `denied` with the reason."
+        description: "Add to this project's knowledge: a page (a readable internal write-up worth keeping, for example when the user asks you to keep something to read again later or to sum it up), a fact, or a failure (what was run, the result, the conditions it failed under, how to avoid it). Pick the tool by kind: `record_evidence` only for an external, verifiable fact with a verbatim quote and its URL or file path; `kb_prohibit` only for a standing ban quoting the user verbatim in this session; otherwise use this tool. Search first with `search_evidence` or `search_knowledge` to avoid duplicates. It is registered at once (a page stays a draft until the user confirms it); the user rejects what is wrong. A change to a page that exists replaces it, and the old version is kept. A failure without conditions is refused (write `unknown` if you do not know them). Something the user rejected is refused too. The result says `registered`, or `denied` with the reason."
             .to_string(),
         strict: false,
         defer_loading: None,
@@ -149,7 +149,7 @@ mod tests {
         assert!(tool.description.contains("registered at once"));
         assert!(tool.description.contains("the user rejects"));
         assert!(tool.description.contains("`unknown`"));
-        assert!(tool.description.chars().count() < 700);
+        assert!(tool.description.chars().count() < 1100);
     }
 
     #[test]

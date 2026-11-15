@@ -54,7 +54,7 @@ pub(crate) fn create_kb_prohibit_tool() -> ToolSpec {
     ]);
     ToolSpec::Function(ResponsesApiTool {
         name: KB_PROHIBIT_TOOL_NAME.to_string(),
-        description: "Record a prohibition the user states for this project (\"from now on, don't ...\", \"never ...\" — a standing rule, not a one-time instruction), quoting their words. Give `match` so it can be enforced: the operations matching it are then stopped before they run, in this session and later ones. It is registered at once; the user can retract it. The quote must be word for word in what the user typed in this session. The result says `registered`, or `denied` with the reason."
+        description: "Record a prohibition the user states for this project (\"from now on, don't ...\", \"never ...\" — a standing rule, not a one-time instruction), quoting their words. Choose this only for a standing ban; for an internal summary use `kb_propose` (page), for a reproducible failure use `kb_propose` (failure), and for an external fact with a source use `record_evidence`. Give `match` so it can be enforced: the operations matching it are then stopped before they run, in this session and later ones. It is registered at once; the user can retract it. The quote must be word for word in what the user typed in this session. The result says `registered`, or `denied` with the reason."
             .to_string(),
         strict: false,
         defer_loading: None,
